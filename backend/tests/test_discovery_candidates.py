@@ -8,12 +8,15 @@ from app.core.candidates import (
     Candidate,
     _ids,
     from_acm_dl,
+    from_biorxiv,
+    from_biorxiv_entry,
     from_core,
     from_crossref,
     from_doaj,
     from_europe_pmc,
     from_hal,
     from_iacr_eprint,
+    from_medrxiv,
     from_openaire,
     from_pmc,
     from_pubmed,
@@ -364,6 +367,23 @@ def test_iacr_eprint_id_merges_different_sources_into_one_paper():
     assert set(merged.sources) == {"iacr_eprint", "openalex"}
 
 
+def test_biorxiv_id_merges_different_sources_into_one_paper():
+    """Same paper harvested via biorxiv and also found live by another source sharing the same DOI,
+    with titles that differ on purpose: the match must come from the shared id, not the title."""
+    from_biorxiv_side = Candidate(
+        title="Paper (bioRxiv)", doi="10.1101/2026.10.01.000099",
+        external_ids={"biorxiv": "10.1101/2026.10.01.000099"}, sources=("biorxiv",),
+    )
+    from_other_side = Candidate(
+        title="Paper (Other)", doi="10.1101/2026.10.01.000099", sources=("crossref",),
+    )
+
+    [merged] = merge({"biorxiv": [from_biorxiv_side], "crossref": [from_other_side]}, limit=10)
+
+    assert merged.external_ids["biorxiv"] == "10.1101/2026.10.01.000099"
+    assert set(merged.sources) == {"biorxiv", "crossref"}
+
+
 def test_from_pmc_maps_every_field():
     entry = {
         "pmcid": "13647476", "pmid": "42847424", "title": "Protein-Ratio Rheostats",
@@ -687,3 +707,70 @@ def test_from_iacr_eprint_with_no_creators_or_description_maps_without_them():
     assert candidate.abstract is None
     assert candidate.year == 2026
     assert candidate.external_ids == {"iacr_eprint": "2026/0003"}
+
+
+def test_from_biorxiv_entry_maps_every_field():
+    entry = {
+        "title": "A Preprint About Lattices",
+        "authors": "Harvey, D. Y.; Stoll, H.; Hamilton, R. H.",
+        "doi": "10.1101/2026.10.01.000001",
+        "date": "2026-10-01",
+        "abstract": "An overview of lattices.",
+        "published": "NA",
+        "server": "bioRxiv",
+    }
+
+    candidate = from_biorxiv_entry(entry, server="biorxiv")
+
+    assert candidate.title == "A Preprint About Lattices"
+    assert candidate.authors == ["Harvey, D. Y.", "Stoll, H.", "Hamilton, R. H."]
+    assert candidate.year == 2026
+    assert candidate.doi == "10.1101/2026.10.01.000001"
+    assert candidate.external_ids == {"biorxiv": "10.1101/2026.10.01.000001"}
+    assert candidate.abstract == "An overview of lattices."
+    assert candidate.sources == ("biorxiv",)
+    assert candidate.pdf_urls == []  # never attempted -- this plan's own scope is getting it searchable
+
+
+def test_from_biorxiv_entry_for_medrxiv_uses_the_medrxiv_key():
+    entry = {
+        "title": "A medRxiv Study", "authors": "Last, First", "doi": "10.1101/2026.10.01.000002",
+        "date": "2026-10-01", "abstract": "An abstract.", "published": "NA", "server": "medRxiv",
+    }
+
+    candidate = from_biorxiv_entry(entry, server="medrxiv")
+
+    assert candidate.external_ids == {"medrxiv": "10.1101/2026.10.01.000002"}
+    assert candidate.sources == ("medrxiv",)
+
+
+def test_from_biorxiv_entry_with_no_abstract_or_unparseable_date_maps_without_them():
+    entry = {
+        "title": "Bare", "authors": "", "doi": "10.1101/2026.10.01.000003",
+        "date": "", "abstract": None, "published": "NA", "server": "bioRxiv",
+    }
+
+    candidate = from_biorxiv_entry(entry, server="biorxiv")
+
+    assert candidate.authors == []
+    assert candidate.abstract is None
+    assert candidate.year is None
+    assert candidate.external_ids == {"biorxiv": "10.1101/2026.10.01.000003"}
+
+
+def test_from_biorxiv_wraps_the_shared_mapper_for_the_registry():
+    entry = {
+        "title": "A Preprint", "authors": "Last, First", "doi": "10.1101/2026.10.01.000004",
+        "date": "2026-10-01", "abstract": "An abstract.", "published": "NA", "server": "bioRxiv",
+    }
+
+    assert from_biorxiv(entry) == from_biorxiv_entry(entry, server="biorxiv")
+
+
+def test_from_medrxiv_wraps_the_shared_mapper_for_the_registry():
+    entry = {
+        "title": "A Study", "authors": "Last, First", "doi": "10.1101/2026.10.01.000005",
+        "date": "2026-10-01", "abstract": "An abstract.", "published": "NA", "server": "medRxiv",
+    }
+
+    assert from_medrxiv(entry) == from_biorxiv_entry(entry, server="medrxiv")

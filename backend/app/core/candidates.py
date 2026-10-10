@@ -389,6 +389,43 @@ def from_iacr_eprint(entry: Mapping[str, Any]) -> Candidate:
     )
 
 
+def from_biorxiv_entry(entry: Mapping[str, Any], *, server: str) -> Candidate:
+    """An entry from providers/biorxiv.py's own fetch_page() 'collection' list, for either server
+    ("biorxiv" or "medrxiv") -- the real API's own response shape is identical between the two, only
+    values differ. The DOI (confirmed live, present on virtually every real record -- unlike IACR eprints,
+    which mostly have none) becomes both Candidate.doi (the universal field) AND this source's own
+    external_ids key, the same value in both places: bioRxiv/medRxiv preprints have no other native id, so
+    the external_ids entry exists purely so harvest_ingest_candidate's own find-by-source-key lookup and
+    search_page's own per-server isolation filter have something to key on. `authors` is a single "; "-joined
+    string in the real API ("Last, F.; Last2, F2."), confirmed live -- split and stripped. `date` is the
+    record's own real publication date (confirmed live: unlike IACR's OAI datestamp, which is last-MODIFIED,
+    this is the preprint's own posting date), so year comes directly from it, no id-prefix workaround needed.
+    Never a PDF: this plan's own scope is getting these two sources searchable, not fetching their files."""
+    doi = entry["doi"]
+    authors = [name.strip() for name in (entry.get("authors") or "").split(";") if name.strip()]
+    date = entry.get("date") or ""
+    return Candidate(
+        title=entry.get("title") or "Untitled",
+        authors=authors[:MAX_AUTHORS],
+        year=int(date[:4]) if date[:4].isdigit() else None,
+        doi=doi,
+        external_ids={server: doi},
+        abstract=entry.get("abstract") or None,
+        sources=(server,),
+    )
+
+
+def from_biorxiv(entry: Mapping[str, Any]) -> Candidate:
+    """Single-arg wrapper around from_biorxiv_entry for the registry's own Mapper slot
+    (Callable[[Any], Candidate | None], no room for a server argument)."""
+    return from_biorxiv_entry(entry, server="biorxiv")
+
+
+def from_medrxiv(entry: Mapping[str, Any]) -> Candidate:
+    """Single-arg wrapper around from_biorxiv_entry for the registry's own Mapper slot."""
+    return from_biorxiv_entry(entry, server="medrxiv")
+
+
 def normal_title(title: str) -> str:
     return re.sub(r"\W+", " ", title).strip().casefold()
 
@@ -417,6 +454,8 @@ def _ids(candidate: Candidate) -> set[str]:
         "doaj": candidate.external_ids.get("doaj"),
         "openaire": candidate.external_ids.get("openaire"),
         "iacr_eprint": candidate.external_ids.get("iacr_eprint"),
+        "biorxiv": candidate.external_ids.get("biorxiv"),
+        "medrxiv": candidate.external_ids.get("medrxiv"),
     }
     return {f"{kind}:{value.lower()}" for kind, value in keys.items() if value}
 
@@ -448,6 +487,7 @@ def _combined(records: list[Candidate]) -> Candidate:
             "core": first_id("core"), "pubmed": first_id("pubmed"), "pmc": first_id("pmc"),
             "zenodo": first_id("zenodo"), "hal": first_id("hal"), "doaj": first_id("doaj"),
             "openaire": first_id("openaire"), "iacr_eprint": first_id("iacr_eprint"),
+            "biorxiv": first_id("biorxiv"), "medrxiv": first_id("medrxiv"),
         }.items()
         if v
     }
