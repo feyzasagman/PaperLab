@@ -39,6 +39,8 @@ async def test_the_defaults_come_back_without_a_row(client, no_row):
         ("doaj", "DOAJ", True, None),
         ("openaire", "OpenAIRE", True, None),
         ("iacr_eprint", "IACR ePrint", True, None),
+        ("biorxiv", "bioRxiv", True, None),
+        ("medrxiv", "medRxiv", True, None),
     ]
 
 
