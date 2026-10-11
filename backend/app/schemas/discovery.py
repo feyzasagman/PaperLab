@@ -23,6 +23,8 @@ SOURCE_ID_PATTERNS: dict[str, re.Pattern[str]] = {
     "doaj": re.compile(r"^[0-9a-f]{32}$"),
     "openaire": re.compile(r"^[0-9a-z_]{1,20}::[0-9a-f]{32}$"),
     "iacr_eprint": re.compile(r"^\d{4}/\d{1,6}$"),
+    "biorxiv": re.compile(r"^10\.\d{4,9}/\S+$"),
+    "medrxiv": re.compile(r"^10\.\d{4,9}/\S+$"),
 }
 
 

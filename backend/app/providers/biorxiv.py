@@ -19,6 +19,11 @@ documented rate limit.
 """
 
 import httpx
+from sqlalchemy import and_, or_, select
+
+from app.db import SessionLocal
+from app.models import ExternalRef
+from app.providers.arxiv import title_words
 
 BASE_URL = "https://api.biorxiv.org"
 TIMEOUT = httpx.Timeout(30.0)
@@ -70,3 +75,48 @@ async def fetch_page(
     total = int(message["total"])
     next_cursor = cursor + len(entries) if cursor + len(entries) < total else None
     return entries, next_cursor
+
+
+async def _search_page(
+    server: str, http: httpx.AsyncClient, term: str, page_size: int, cursor: int
+) -> tuple[list[dict], int | None]:
+    """Shared local-query implementation for both search_page_biorxiv and search_page_medrxiv --
+    `http` is unused (satisfying the uniform PageFunc signature every registry entry shares); the real
+    work is a local Postgres query against external_refs, scoped to only THIS server's own harvested
+    rows via the external_ids->>'<server>' IS NOT NULL filter -- a bare title match against the whole
+    external_refs table would also return every other source's rows, including the other bioRxiv/
+    medRxiv-family source. Words ANDed, matched against either title or abstract, the same shape as
+    arxiv.py's/iacr_eprint.py's own title_words() usage."""
+    words = title_words(term)
+    if not words:
+        return [], None
+    async with SessionLocal() as session:
+        query = (
+            select(ExternalRef)
+            .where(ExternalRef.external_ids[server].astext.isnot(None))
+            .where(and_(*(or_(ExternalRef.title.icontains(w, autoescape=True),
+                              ExternalRef.abstract.icontains(w, autoescape=True)) for w in words)))
+            .order_by(ExternalRef.id)
+            .offset(cursor)
+            .limit(page_size)
+        )  # fmt: skip
+        rows = (await session.execute(query)).scalars().all()
+        entries = [
+            {"doi": r.external_ids[server], "authors": "; ".join(r.authors),
+             "date": f"{r.year}-01-01" if r.year else None, "title": r.title, "abstract": r.abstract}
+            for r in rows
+        ]  # fmt: skip
+        next_cursor = cursor + page_size if len(rows) == page_size else None
+        return entries, next_cursor
+
+
+async def search_page_biorxiv(
+    http: httpx.AsyncClient, term: str, page_size: int, cursor: int
+) -> tuple[list[dict], int | None]:
+    return await _search_page("biorxiv", http, term, page_size, cursor)
+
+
+async def search_page_medrxiv(
+    http: httpx.AsyncClient, term: str, page_size: int, cursor: int
+) -> tuple[list[dict], int | None]:
+    return await _search_page("medrxiv", http, term, page_size, cursor)

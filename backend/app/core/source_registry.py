@@ -19,12 +19,14 @@ from app.core.candidates import (
     Candidate,
     from_acm_dl,
     from_arxiv,
+    from_biorxiv,
     from_core,
     from_crossref,
     from_doaj,
     from_europe_pmc,
     from_hal,
     from_iacr_eprint,
+    from_medrxiv,
     from_openaire,
     from_pmc,
     from_pubmed,
@@ -36,6 +38,7 @@ from app.core.candidates import (
 from app.providers import (
     acm_dl,
     arxiv,
+    biorxiv,
     core_ac,
     crossref,
     doaj,
@@ -233,6 +236,14 @@ REGISTRY: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="iacr_eprint", name="IACR ePrint", keyed=False, enabled_by_default=True, is_discovery_source=True,
         new_client=iacr_eprint.new_client, page=iacr_eprint.search_page, mapper=from_iacr_eprint, page_size=50,
+    ),
+    SourceSpec(
+        id="biorxiv", name="bioRxiv", keyed=False, enabled_by_default=True, is_discovery_source=True,
+        new_client=biorxiv.new_client, page=biorxiv.search_page_biorxiv, mapper=from_biorxiv, page_size=30,
+    ),
+    SourceSpec(
+        id="medrxiv", name="medRxiv", keyed=False, enabled_by_default=True, is_discovery_source=True,
+        new_client=biorxiv.new_client, page=biorxiv.search_page_medrxiv, mapper=from_medrxiv, page_size=30,
     ),
 )
 

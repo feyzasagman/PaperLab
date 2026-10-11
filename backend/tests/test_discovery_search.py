@@ -268,6 +268,8 @@ async def test_each_source_that_is_on_gets_a_client_and_keys_travel_in_headers()
             "doaj": False,
             "openaire": False,
             "iacr_eprint": False,
+            "biorxiv": False,
+            "medrxiv": False,
         },
         api_keys={"openalex": "oa-key-0123456789", "semantic_scholar": None, "core": "core-key-0123456789"},
     )
@@ -304,7 +306,7 @@ async def test_unpaywall_and_openalex_stay_off_by_default_and_without_an_email()
     assert (providers.client("openalex"), providers.client("unpaywall")) == (None, None)
     for source in (
         "crossref", "semantic_scholar", "arxiv", "core", "pubmed", "pmc", "europe_pmc", "zenodo", "hal", "doaj",
-        "openaire", "iacr_eprint",
+        "openaire", "iacr_eprint", "biorxiv", "medrxiv",
     ):
         assert providers.client(source) is not None
     await providers.aclose()
