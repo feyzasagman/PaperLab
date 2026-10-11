@@ -199,3 +199,85 @@ async def test_a_record_with_no_doi_is_skipped_not_crashed_on(session, monkeypat
     ).scalars().all()
     assert len(rows) == 1
     assert rows[0].external_ids["biorxiv"] == "10.1101/2026.10.01.999099"
+
+
+async def test_running_the_biorxiv_harvest_twice_does_not_duplicate_rows(session, monkeypatch):
+    from app.providers import biorxiv
+    from app.workers import harvest
+
+    call_count = 0
+    from_dates = []
+
+    async def fake_fetch_page(http, server, *, from_date=None, until_date=None, cursor=0):
+        nonlocal call_count
+        call_count += 1
+        from_dates.append(from_date)
+        if call_count == 1:
+            return [{"title": "Only Preprint", "authors": "Last, First", "doi": "10.1101/2026.10.01.999001",
+                      "date": "2026-10-01", "abstract": None, "published": "NA", "server": "bioRxiv"}], None
+        return [], None  # second run: nothing new since last_synced_at
+
+    monkeypatch.setattr(biorxiv, "fetch_page", fake_fetch_page)
+    monkeypatch.setattr(harvest, "SessionLocal", lambda: _reuse_test_session(session))
+
+    await harvest.harvest_biorxiv({})
+    await harvest.harvest_biorxiv({})
+
+    from sqlalchemy import select
+
+    from app.models import ExternalRef
+
+    rows = (
+        await session.execute(
+            select(ExternalRef).where(ExternalRef.external_ids["biorxiv"].astext == "10.1101/2026.10.01.999001")
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert call_count == 2
+    assert from_dates[0] == harvest.BIORXIV_BOOTSTRAP_DATE  # first run starts from the bounded bootstrap
+    assert from_dates[1] != harvest.BIORXIV_BOOTSTRAP_DATE  # second run resumed from the advanced cursor
+
+
+async def test_the_medrxiv_harvest_follows_a_multi_page_cursor_chain_to_completion(session, monkeypatch):
+    from app.providers import biorxiv
+    from app.workers import harvest
+
+    pages = [
+        ([{"title": "Page 1", "authors": "Last, First", "doi": "10.1101/2026.10.01.999002",
+           "date": "2026-10-01", "abstract": None, "published": "NA", "server": "medRxiv"}], 1),
+        ([{"title": "Page 2", "authors": "Last, First", "doi": "10.1101/2026.10.01.999003",
+           "date": "2026-10-01", "abstract": None, "published": "NA", "server": "medRxiv"}], None),
+    ]
+    calls = iter(pages)
+
+    async def fake_fetch_page(http, server, *, from_date=None, until_date=None, cursor=0):
+        return next(calls)
+
+    monkeypatch.setattr(biorxiv, "fetch_page", fake_fetch_page)
+    monkeypatch.setattr(harvest, "SessionLocal", lambda: _reuse_test_session(session))
+
+    await harvest.harvest_medrxiv({})
+
+    from sqlalchemy import select
+
+    from app.models import ExternalRef
+
+    rows = (
+        await session.execute(select(ExternalRef).where(ExternalRef.external_ids["medrxiv"].astext.isnot(None)))
+    ).scalars().all()
+    assert {r.external_ids["medrxiv"] for r in rows} == {"10.1101/2026.10.01.999002", "10.1101/2026.10.01.999003"}
+
+
+async def test_hitting_the_biorxiv_page_ceiling_with_a_pending_cursor_raises_and_does_not_advance(session, monkeypatch):
+    from app.providers import biorxiv
+    from app.workers import harvest
+
+    async def fake_fetch_page(http, server, *, from_date=None, until_date=None, cursor=0):
+        return [], cursor + 1  # always claims there's another page -- never actually finishes
+
+    monkeypatch.setattr(biorxiv, "fetch_page", fake_fetch_page)
+    monkeypatch.setattr(harvest, "SessionLocal", lambda: _reuse_test_session(session))
+    monkeypatch.setattr(harvest, "BIORXIV_MAX_HARVEST_PAGES", 2)
+
+    with pytest.raises(RuntimeError, match="BIORXIV_MAX_HARVEST_PAGES"):
+        await harvest.harvest_biorxiv({})

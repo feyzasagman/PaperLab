@@ -4,6 +4,7 @@ import pytest
 from app.providers import (
     acm_dl,
     arxiv,
+    biorxiv,
     core_ac,
     crossref,
     doaj,
@@ -828,3 +829,81 @@ async def test_iacr_eprint_search_page_paginates_with_a_plain_offset(session, mo
     assert cursor_1 == 2
     assert len(page_2) == 1
     assert cursor_2 is None
+
+
+# --- biorxiv / medrxiv ------------------------------------
+
+
+async def test_biorxiv_search_page_only_returns_biorxivs_own_rows_not_medrxivs_or_anyone_elses(session, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    from app.models import ExternalRef
+
+    @asynccontextmanager
+    async def _reuse_test_session():
+        yield session
+
+    monkeypatch.setattr(biorxiv, "SessionLocal", _reuse_test_session)
+
+    session.add(ExternalRef(title="A bioRxiv Paper", external_ids={"biorxiv": "10.1101/2026.10.01.999010"}, sources=["biorxiv"]))
+    session.add(ExternalRef(title="A medRxiv Paper", external_ids={"medrxiv": "10.1101/2026.10.01.999011"}, sources=["medrxiv"]))
+    session.add(ExternalRef(title="A Different Source's Paper", external_ids={"doaj": "0" * 32}, sources=["doaj"]))
+    await session.flush()
+
+    entries, _ = await biorxiv.search_page_biorxiv(None, "Paper", 10, 0)
+
+    assert len(entries) == 1
+    assert entries[0]["doi"] == "10.1101/2026.10.01.999010"
+
+
+async def test_medrxiv_search_page_paginates_with_a_plain_offset(session, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    from app.models import ExternalRef
+
+    @asynccontextmanager
+    async def _reuse_test_session():
+        yield session
+
+    monkeypatch.setattr(biorxiv, "SessionLocal", _reuse_test_session)
+
+    for i in range(3):
+        session.add(
+            ExternalRef(title=f"Study {i}", external_ids={"medrxiv": f"10.1101/2026.10.01.99902{i}"}, sources=["medrxiv"])
+        )
+    await session.flush()
+
+    page_1, cursor_1 = await biorxiv.search_page_medrxiv(None, "Study", 2, 0)
+    page_2, cursor_2 = await biorxiv.search_page_medrxiv(None, "Study", 2, cursor_1)
+
+    assert len(page_1) == 2
+    assert cursor_1 == 2
+    assert len(page_2) == 1
+    assert cursor_2 is None
+
+
+async def test_biorxiv_search_page_preserves_year_through_from_biorxiv_entry(session, monkeypatch):
+    """The local query's own synthesized `date` field (reconstructed from the stored year, since bioRxiv/
+    medRxiv's external_ids value is a bare DOI with no parseable year) must round-trip correctly back
+    through from_biorxiv_entry -- unlike IACR ePrint, this source has no id-prefix fallback for year."""
+    from contextlib import asynccontextmanager
+
+    from app.core.candidates import from_biorxiv_entry
+    from app.models import ExternalRef
+
+    @asynccontextmanager
+    async def _reuse_test_session():
+        yield session
+
+    monkeypatch.setattr(biorxiv, "SessionLocal", _reuse_test_session)
+
+    session.add(ExternalRef(
+        title="Zzyxqplorp Fixturewidget Preprint", year=2025, authors=["Ada Fixture"],
+        external_ids={"biorxiv": "10.1101/2026.10.01.999030"}, sources=["biorxiv"],
+    ))
+    await session.flush()
+
+    entries, _ = await biorxiv.search_page_biorxiv(None, "Zzyxqplorp Fixturewidget", 10, 0)
+    [entry] = entries
+
+    assert from_biorxiv_entry(entry, server="biorxiv").year == 2025
