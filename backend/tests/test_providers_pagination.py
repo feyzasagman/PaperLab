@@ -845,8 +845,12 @@ async def test_biorxiv_search_page_only_returns_biorxivs_own_rows_not_medrxivs_o
 
     monkeypatch.setattr(biorxiv, "SessionLocal", _reuse_test_session)
 
-    session.add(ExternalRef(title="A bioRxiv Paper", external_ids={"biorxiv": "10.1101/2026.10.01.999010"}, sources=["biorxiv"]))
-    session.add(ExternalRef(title="A medRxiv Paper", external_ids={"medrxiv": "10.1101/2026.10.01.999011"}, sources=["medrxiv"]))
+    session.add(
+        ExternalRef(title="A bioRxiv Paper", external_ids={"biorxiv": "10.1101/2026.10.01.999010"}, sources=["biorxiv"])
+    )
+    session.add(
+        ExternalRef(title="A medRxiv Paper", external_ids={"medrxiv": "10.1101/2026.10.01.999011"}, sources=["medrxiv"])
+    )
     session.add(ExternalRef(title="A Different Source's Paper", external_ids={"doaj": "0" * 32}, sources=["doaj"]))
     await session.flush()
 
@@ -869,7 +873,9 @@ async def test_medrxiv_search_page_paginates_with_a_plain_offset(session, monkey
 
     for i in range(3):
         session.add(
-            ExternalRef(title=f"Study {i}", external_ids={"medrxiv": f"10.1101/2026.10.01.99902{i}"}, sources=["medrxiv"])
+            ExternalRef(
+                title=f"Study {i}", external_ids={"medrxiv": f"10.1101/2026.10.01.99902{i}"}, sources=["medrxiv"]
+            )
         )
     await session.flush()
 
