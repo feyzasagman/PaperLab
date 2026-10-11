@@ -61,6 +61,20 @@ def test_harvest_iacr_eprint_is_registered_as_a_cron_job():
     assert "harvest_iacr_eprint" in names
 
 
+def test_harvest_biorxiv_is_registered_as_a_cron_job():
+    from app.workers.settings import WorkerSettings
+
+    names = {job.name for job in WorkerSettings.cron_jobs}
+    assert "harvest_biorxiv" in names
+
+
+def test_harvest_medrxiv_is_registered_as_a_cron_job():
+    from app.workers.settings import WorkerSettings
+
+    names = {job.name for job in WorkerSettings.cron_jobs}
+    assert "harvest_medrxiv" in names
+
+
 async def test_running_the_harvest_twice_does_not_duplicate_rows(session, monkeypatch):
     from app.providers import iacr_eprint
     from app.workers import harvest
@@ -157,3 +171,31 @@ async def test_the_harvest_follows_a_multi_page_resumption_chain_to_completion(s
         await session.execute(select(ExternalRef).where(ExternalRef.external_ids["iacr_eprint"].astext.isnot(None)))
     ).scalars().all()
     assert {r.external_ids["iacr_eprint"] for r in rows} == {"2026/6001", "2026/6002"}
+
+
+async def test_a_record_with_no_doi_is_skipped_not_crashed_on(session, monkeypatch):
+    from app.providers import biorxiv
+    from app.workers import harvest
+
+    async def fake_fetch_page(http, server, *, from_date=None, until_date=None, cursor=0):
+        return [
+            {"title": "No DOI Here", "authors": "Last, First", "doi": None,
+             "date": "2026-10-01", "abstract": None, "published": "NA", "server": "bioRxiv"},
+            {"title": "Has A DOI", "authors": "Last, First", "doi": "10.1101/2026.10.01.999099",
+             "date": "2026-10-01", "abstract": None, "published": "NA", "server": "bioRxiv"},
+        ], None
+
+    monkeypatch.setattr(biorxiv, "fetch_page", fake_fetch_page)
+    monkeypatch.setattr(harvest, "SessionLocal", lambda: _reuse_test_session(session))
+
+    await harvest.harvest_biorxiv({})
+
+    from sqlalchemy import select
+
+    from app.models import ExternalRef
+
+    rows = (
+        await session.execute(select(ExternalRef).where(ExternalRef.external_ids["biorxiv"].astext.isnot(None)))
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].external_ids["biorxiv"] == "10.1101/2026.10.01.999099"

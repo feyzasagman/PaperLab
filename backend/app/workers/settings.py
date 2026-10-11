@@ -5,7 +5,13 @@ from arq.connections import RedisSettings
 from arq.cron import cron
 
 from app.config import settings
-from app.workers.harvest import HARVEST_JOB_TIMEOUT, harvest_iacr_eprint
+from app.workers.harvest import (
+    BIORXIV_HARVEST_JOB_TIMEOUT,
+    HARVEST_JOB_TIMEOUT,
+    harvest_biorxiv,
+    harvest_iacr_eprint,
+    harvest_medrxiv,
+)
 from app.workers.ingest import ingest_paper, reembed_paper
 from app.workers.references import fetch_references
 from app.workers.screening_suggest import SUGGEST_JOB_TIMEOUT, suggest_screening
@@ -35,6 +41,22 @@ class WorkerSettings:
             minute={0},
             run_at_startup=True,
             timeout=HARVEST_JOB_TIMEOUT,
+        ),
+        cron(
+            harvest_biorxiv,
+            name="harvest_biorxiv",
+            hour={4},
+            minute={0},
+            run_at_startup=True,
+            timeout=BIORXIV_HARVEST_JOB_TIMEOUT,
+        ),
+        cron(
+            harvest_medrxiv,
+            name="harvest_medrxiv",
+            hour={4},
+            minute={30},
+            run_at_startup=True,
+            timeout=BIORXIV_HARVEST_JOB_TIMEOUT,
         ),
     ]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
