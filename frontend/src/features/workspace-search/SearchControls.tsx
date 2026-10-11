@@ -14,10 +14,12 @@ import type { SearchRunCreate, SearchRunSource } from '@/api/client'
 // is only ever reached through a Workspace Search run, so this Start-button source list is the one place IACR's
 // harvested rows can actually surface (M32 batch6a final review,
 // fix 1 -- the prior exclusion here, following Task 8's own brief, made the whole feature unreachable from the UI).
+// bioRxiv and medRxiv share this same reasoning: neither has a one-shot `ask` either, both only ever surface
+// through their own harvested local index via `page()`, so they belong here too.
 const SEARCH_SOURCES: Record<SearchRunSource, true> = {
   arxiv: true, crossref: true, core: true, semantic_scholar: true, openalex: true, pubmed: true,
   pmc: true, europe_pmc: true, zenodo: true, hal: true, acm_dl: true, ssrn: true, doaj: true, openaire: true,
-  iacr_eprint: true,
+  iacr_eprint: true, biorxiv: true, medrxiv: true,
 }
 
 function isSearchSource(id: string): id is SearchRunSource {

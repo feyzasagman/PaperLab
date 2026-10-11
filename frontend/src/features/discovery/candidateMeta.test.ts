@@ -52,6 +52,14 @@ describe('pageLink', () => {
   it('falls back to IACR ePrint when nothing else is set', () => {
     expect(pageLink({ ...ids, external_ids: { iacr_eprint: '2026/2368' } })).toBe('https://eprint.iacr.org/2026/2368')
   })
+
+  it('falls back to bioRxiv when nothing else is set', () => {
+    expect(pageLink({ ...ids, external_ids: { biorxiv: '10.1101/2026.10.01.000001' } })).toBe('https://doi.org/10.1101/2026.10.01.000001')
+  })
+
+  it('falls back to medRxiv when nothing else is set', () => {
+    expect(pageLink({ ...ids, external_ids: { medrxiv: '10.1101/2026.10.01.000002' } })).toBe('https://doi.org/10.1101/2026.10.01.000002')
+  })
 })
 
 describe('citationsLabel', () => {

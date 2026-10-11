@@ -18,6 +18,8 @@ export const DESCRIPTIONS: Record<PaperSourceId, string> = {
   doaj: 'Peer-reviewed open-access journal articles via the Directory of Open Access Journals. Free, no key needed.',
   openaire: 'Open-access research and data via OpenAIRE, aggregating European repositories. Free, no key needed.',
   iacr_eprint: 'Cryptology preprints from the IACR ePrint Archive, synced periodically in the background. Free, no key needed.',
+  biorxiv: 'Biology preprints from bioRxiv, synced periodically in the background. Free, no key needed.',
+  medrxiv: 'Medical preprints from medRxiv, synced periodically in the background. Free, no key needed.',
 }
 
 /** The "May cost money" badge plus its price line, for sources that can charge even without a key. Only OpenAlex

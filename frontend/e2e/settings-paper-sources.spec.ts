@@ -102,6 +102,8 @@ const NAMES: Record<SourceId, string> = {
   doaj: 'DOAJ',
   openaire: 'OpenAIRE',
   iacr_eprint: 'IACR ePrint',
+  biorxiv: 'bioRxiv',
+  medrxiv: 'medRxiv',
 }
 const KEYED: SourceId[] = ['openalex', 'semantic_scholar', 'core', 'pubmed', 'pmc', 'zenodo']
 
