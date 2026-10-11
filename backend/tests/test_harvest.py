@@ -232,10 +232,50 @@ async def test_running_the_biorxiv_harvest_twice_does_not_duplicate_rows(session
             select(ExternalRef).where(ExternalRef.external_ids["biorxiv"].astext == "10.1101/2026.10.01.999001")
         )
     ).scalars().all()
+    from datetime import UTC, datetime, timedelta
+
+    expected_bootstrap = (
+        datetime.now(UTC) - timedelta(days=harvest.BIORXIV_BOOTSTRAP_LOOKBACK_DAYS)
+    ).strftime("%Y-%m-%d")
     assert len(rows) == 1
     assert call_count == 2
-    assert from_dates[0] == harvest.BIORXIV_BOOTSTRAP_DATE  # first run starts from the bounded bootstrap
-    assert from_dates[1] != harvest.BIORXIV_BOOTSTRAP_DATE  # second run resumed from the advanced cursor
+    assert from_dates[0] == expected_bootstrap  # first run starts from the relative bootstrap lookback
+    assert from_dates[1] != expected_bootstrap  # second run resumed from the advanced cursor
+
+
+async def test_the_same_doi_appearing_twice_in_one_run_updates_not_duplicates(session, monkeypatch):
+    """~13% of real bioRxiv records are repeat DOIs within the SAME harvest run (multiple preprint
+    versions) -- confirmed live. Correctness here relies on SQLAlchemy's own default autoflush=True
+    (the SELECT inside harvest_ingest_candidate sees the uncommitted INSERT from earlier in this same
+    run) -- this test exists so a future no_autoflush or bulk-insert change breaks loudly instead of
+    silently becoming a permanent IntegrityError."""
+    from app.providers import biorxiv
+    from app.workers import harvest
+
+    async def fake_fetch_page(http, server, *, from_date=None, until_date=None, cursor=0):
+        return [
+            {"title": "Version 1", "authors": "Last, First", "doi": "10.1101/2026.10.01.999100",
+             "date": "2026-10-01", "abstract": None, "published": "NA", "server": "bioRxiv"},
+            {"title": "Version 2 (revised)", "authors": "Last, First", "doi": "10.1101/2026.10.01.999100",
+             "date": "2026-10-02", "abstract": None, "published": "NA", "server": "bioRxiv"},
+        ], None
+
+    monkeypatch.setattr(biorxiv, "fetch_page", fake_fetch_page)
+    monkeypatch.setattr(harvest, "SessionLocal", lambda: _reuse_test_session(session))
+
+    await harvest.harvest_biorxiv({})
+
+    from sqlalchemy import select
+
+    from app.models import ExternalRef
+
+    rows = (
+        await session.execute(
+            select(ExternalRef).where(ExternalRef.external_ids["biorxiv"].astext == "10.1101/2026.10.01.999100")
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].title == "Version 2 (revised)"
 
 
 async def test_the_medrxiv_harvest_follows_a_multi_page_cursor_chain_to_completion(session, monkeypatch):

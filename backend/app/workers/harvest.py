@@ -6,7 +6,7 @@ the same generic store every live source's own candidates already land in.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,26 +27,32 @@ HARVEST_JOB_TIMEOUT = 1800
 # uses -- a first-ever harvest needs ~57 pages; 200 leaves headroom without looping forever on a bug.
 MAX_HARVEST_PAGES = 200
 
-# The first-ever bioRxiv bootstrap run, using the prior "2024-01-01" window (~6,193 pages), genuinely
-# timed out after running its FULL 7200s job budget without completing (confirmed live:
-# ERROR:arq.worker:7200.06s ! harvest_biorxiv failed, TimeoutError). Per-page latency alone (~0.96s/page,
-# confirmed live) doesn't explain it -- 6,193 pages * 0.96s ~= 5,950s, under budget -- the real cost is
-# _sync_biorxiv_source's own single open transaction degrading as its uncommitted row count grows into
-# the tens of thousands over thousands of pages. medRxiv's own identical-shaped harvest, same bootstrap
-# date, needed only ~1,683 pages (3.7x fewer) and completed within budget (41,674 rows landed). Moving
-# BIORXIV_BOOTSTRAP_DATE forward shrinks the first-ever run's own scope for BOTH sources -- confirmed
-# live this window needs only ~1,356 pages for bioRxiv (total=40,674 records) and ~396 pages for medRxiv
-# (total=11,878 records), both comfortably under medRxiv's own already-proven-successful ~1,683-page
-# threshold. Every run AFTER the first picks up from the advancing cursor, independent of this constant
-# -- it only matters once, for a never-before-synced source.
-BIORXIV_BOOTSTRAP_DATE = "2026-04-01"
-# At 30 records/page, the new bootstrap window's own first-ever need is ~1,356 pages for bioRxiv (the
-# larger of the two sources). 3000 keeps ~2.2x headroom over that real need, the same proportional
-# backstop logic IACR's own MAX_HARVEST_PAGES (200, for a ~57-page real need) used.
+# A relative lookback, not a fixed calendar date -- a fixed date's own gap-to-today only grows the
+# longer this code sits undeployed, and would eventually exceed BIORXIV_MAX_HARVEST_PAGES permanently
+# for any fresh install's first-ever bootstrap (confirmed by the final review: bioRxiv's own ~212
+# records/day means a fixed "2026-04-01" window would hit the page cap around 2027-05-31, after which
+# every single day's retry reuses the same too-wide window and fails again, forever). 180 days mirrors
+# the same real margin the original live-confirmed figure gave (the "2026-04-01" window was ~193 days
+# back from the date this was fixed), just computed fresh on every never-before-synced run instead of
+# going stale.
+BIORXIV_BOOTSTRAP_LOOKBACK_DAYS = 180
+# A few days of overlap on every incremental run (not just the bootstrap) -- cheap insurance against
+# the real API exposing a record more than a day or two after its own `date` field (the posting date),
+# which an incremental run that already advanced past that date would otherwise miss permanently.
+# harvest_ingest_candidate is already fully idempotent, so re-fetching the overlap costs nothing.
+INCREMENTAL_LOOKBACK_DAYS = 3
+# At 30 records/page, the bootstrap window's own first-ever need is ~1,356 pages for bioRxiv (the
+# larger of the two sources, confirmed live for a similarly-sized window). 3000 keeps ~2.2x headroom
+# over that real need, the same proportional backstop logic IACR's own MAX_HARVEST_PAGES (200, for a
+# ~57-page real need) used.
 BIORXIV_MAX_HARVEST_PAGES = 3000
-# The scope reduction above (BIORXIV_BOOTSTRAP_DATE) is what actually fixes the timeout -- this budget
-# is extra margin on top of that, not a substitute for it. 3 hours instead of 2, headroom beyond the new
-# window's own expected page count in case per-page latency drifts from the ~0.96s/page confirmed live.
+# The bounded bootstrap window above is what actually keeps a first-ever run's page count in budget --
+# this timeout is extra margin on top of that, not a substitute for it. The prior fixed-window bootstrap
+# genuinely timed out at the old 7200s budget (confirmed live: ERROR:arq.worker:7200.06s !
+# harvest_biorxiv failed, TimeoutError) from plain linear per-page cost alone -- 6,193 pages at the
+# real successful run's own ~1.23s/page rate (1671s / 1,356 pages, confirmed live) is ~7,617s, already
+# over budget with no other cause needed. 3 hours instead of 2 gives headroom beyond the current
+# window's own expected page count in case per-page latency drifts further.
 BIORXIV_HARVEST_JOB_TIMEOUT = 10800
 
 
@@ -125,7 +131,10 @@ async def _sync_biorxiv_source(session: AsyncSession, server: str) -> None:
     if cursor is None:
         cursor = HarvestCursor(source=server, last_synced_at=None)
         session.add(cursor)
-    from_date = cursor.last_synced_at.strftime("%Y-%m-%d") if cursor.last_synced_at else BIORXIV_BOOTSTRAP_DATE
+    if cursor.last_synced_at:
+        from_date = (cursor.last_synced_at - timedelta(days=INCREMENTAL_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    else:
+        from_date = (datetime.now(UTC) - timedelta(days=BIORXIV_BOOTSTRAP_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
     until_date = datetime.now(UTC).strftime("%Y-%m-%d")
 
     http = biorxiv.new_client()
