@@ -147,3 +147,28 @@ async def add_paper(identifier: str, workspace: str | None = None) -> pipeline.A
     Give `workspace` to file it there too."""
     async with sessions() as session:
         return await pipeline.add_paper(session, identifier, workspace)
+
+
+@mcp.tool()
+@recoverable
+async def start_search_run(workspace: str, query: str, sources: list[str] | None = None) -> pipeline.SearchRunOut:
+    """Use to search the paper sources for a topic and collect every result into the workspace's hits for screening.
+    Runs in the background; poll get_search_run. `sources` defaults to the ones turned on in Settings."""
+    async with sessions() as session:
+        return await pipeline.start_search_run(session, workspace, query, sources)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def get_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
+    """Use to check a search run's progress: status (running, exhausted, stopped) and per-source counts in stats."""
+    async with sessions() as session:
+        return await pipeline.get_search_run(session, run_id)
+
+
+@mcp.tool()
+@recoverable
+async def stop_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
+    """Use to stop a running search early. Hits found so far stay."""
+    async with sessions() as session:
+        return await pipeline.stop_search_run(session, run_id)
