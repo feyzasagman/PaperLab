@@ -137,3 +137,13 @@ async def remove_paper_from_workspace(workspace: str, paper_id: uuid.UUID) -> pi
     """Use to take a paper out of a workspace. The paper and its notes stay in the library."""
     async with sessions() as session:
         return await pipeline.remove_paper_from_workspace(session, workspace, paper_id)
+
+
+@mcp.tool()
+@recoverable
+async def add_paper(identifier: str, workspace: str | None = None) -> pipeline.AddPaperResult:
+    """Use to bring one paper into the library by DOI, arXiv ID or a direct PDF link (free copies only). Returns
+    `queued` (ingesting now), `ingested` (already in the library and ready) or `no_free_pdf` with its landing page.
+    Give `workspace` to file it there too."""
+    async with sessions() as session:
+        return await pipeline.add_paper(session, identifier, workspace)

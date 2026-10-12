@@ -7,7 +7,7 @@ import pytest
 from conftest import FakeArq
 from mcp import Client
 
-from app.core import discovery, queue
+from app.core import discovery, pdf_links, queue
 from app.core.paper_sources import SourceSettings
 from app.core.source_registry import SOURCE_IDS
 from app.providers import discovery_fake
@@ -44,6 +44,25 @@ def fake_providers(monkeypatch):
             await providers.aclose()
 
     monkeypatch.setattr(discovery, "open_providers", offline)
+
+
+@pytest.fixture(autouse=True)
+def stored_pdfs(pdf_dir):
+    """Downloaded PDFs land in a temp dir, never the real /data/pdfs."""
+
+
+PUBLIC_IP = "93.184.216.34"
+
+
+@pytest.fixture(autouse=True)
+def public_dns(monkeypatch):
+    """Every host name resolves to one public address; IP literals are taken as they are (pdf_links parses them
+    before resolving)."""
+
+    async def resolve(host: str) -> list[str]:
+        return [PUBLIC_IP]
+
+    monkeypatch.setattr(pdf_links, "resolve_host", resolve)
 
 
 async def call(tool: str, **arguments):
