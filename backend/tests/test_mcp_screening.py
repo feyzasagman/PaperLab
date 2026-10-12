@@ -6,6 +6,7 @@ import uuid
 import pytest
 from mcp_fixtures import *  # noqa: F403
 from mcp_fixtures import call, result
+from pdf_papers import chunked_paper
 
 from app.core import discovery, paper_sources, workspace_search, workspaces
 from app.core.paper_sources import SourceSettings
@@ -174,3 +175,58 @@ async def test_import_of_an_unknown_hit_is_not_found(session):
     await new_workspace(session, "Ghost")
     response = await call("import_hit", workspace=f"Ghost {RUN}", hit_id=str(uuid.uuid4()))
     assert response.is_error and response.structured_content["error"] == "hit_not_found"
+
+
+async def test_snowball_from_a_library_paper_adds_hits(session, tmp_path):
+    ws = await new_workspace(session, "Snow")
+    paper, _, _ = await chunked_paper(session, tmp_path, title="Seed paper")
+    paper.doi = f"{discovery_fake.DOI_PREFIX}free"
+    await session.commit()
+    await workspaces.add_paper(session, ws.id, paper.id)
+
+    snow = result(await call("snowball", workspace=f"Snow {RUN}", seed_paper_ids=[str(paper.id)], direction="both"))
+
+    assert set(snow) == {"new_hits", "skipped_seeds", "errors"}
+
+
+async def test_snowball_direction_is_checked(session):
+    await new_workspace(session, "Dir")
+    response = await call("snowball", workspace=f"Dir {RUN}", seed_paper_ids=[str(uuid.uuid4())], direction="up")
+    assert response.is_error and response.structured_content["error"] == "invalid_input"
+
+
+async def test_eligibility_then_prisma_counts_it(session, tmp_path):
+    ws, run = await run_with_hits(session, "Elig")
+    paper, _, _ = await chunked_paper(session, tmp_path, title="Full text read")
+    await workspaces.add_paper(session, ws.id, paper.id)
+    # PRISMA's stage 2 only counts papers behind a hit the owner marked relevant.
+    hit = result(await call("list_hits", workspace=f"Elig {RUN}"))["hits"][0]
+    await call("review_hits", workspace=f"Elig {RUN}", hit_ids=[hit["id"]], decision="relevant")
+    row = await session.get(workspace_search.WorkspaceSearchHit, uuid.UUID(hit["id"]))
+    row.paper_id = paper.id
+    await session.commit()
+
+    verdict = result(await call(
+        "set_eligibility", workspace=f"Elig {RUN}", paper_id=str(paper.id), run_id=str(run.id), verdict="exclude",
+        reason="no outcome measure",
+    ))
+    prisma = result(await call("get_prisma", workspace=f"Elig {RUN}", run_id=str(run.id)))
+    combined = result(await call("get_prisma", workspace=f"Elig {RUN}"))
+
+    assert verdict["verdict"] == "exclude" and verdict["reason"] == "no outcome measure"
+    assert prisma["stage2_assessed"] == 1 and prisma["stage2_excluded_by_reason"] == {"no outcome measure": 1}
+    assert combined["stage2_excluded"] == 1
+
+
+async def test_a_bad_verdict_and_an_unknown_run_are_readable(session, tmp_path):
+    ws = await new_workspace(session, "Bad elig")
+    paper, _, _ = await chunked_paper(session, tmp_path, title="P")
+    await workspaces.add_paper(session, ws.id, paper.id)
+    bad = await call(
+        "set_eligibility", workspace=f"Bad elig {RUN}", paper_id=str(paper.id), run_id=str(uuid.uuid4()), verdict="maybe"
+    )
+    ghost = await call(
+        "set_eligibility", workspace=f"Bad elig {RUN}", paper_id=str(paper.id), run_id=str(uuid.uuid4()), verdict="include"
+    )
+    assert bad.structured_content["error"] == "invalid_decision"
+    assert ghost.structured_content["error"] == "not_found"

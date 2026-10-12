@@ -7,6 +7,7 @@ fields.
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Literal
 from urllib.parse import urlsplit
@@ -14,7 +15,7 @@ from urllib.parse import urlsplit
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core import discovery, paper_sources, papers, pdf_links, queue, workspace_search, workspaces
+from app.core import discovery, paper_sources, papers, pdf_links, prisma_export, queue, workspace_search, workspaces
 from app.core.errors import Conflict, InvalidInput, NotFound
 from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import PaperStatus
@@ -207,3 +208,46 @@ async def import_hit(session: AsyncSession, workspace: str, hit_id: uuid.UUID) -
     for paper_id in imported.paper_ids:
         await queue.enqueue("ingest_paper", str(paper_id))
     return imported
+
+
+DIRECTIONS = {"backward": (True, False), "forward": (False, True), "both": (True, True)}
+VERDICTS = ("include", "exclude")
+
+
+@dataclass(frozen=True)
+class EligibilityView:
+    paper_id: uuid.UUID
+    run_id: uuid.UUID
+    verdict: str | None
+    reason: str | None
+    assessed_at: datetime | None
+
+
+async def snowball(
+    session: AsyncSession, workspace: str, seed_paper_ids: list[uuid.UUID], direction: str
+) -> workspace_search.SnowballResult:
+    if direction not in DIRECTIONS:
+        raise InvalidInput(f"direction is one of {', '.join(DIRECTIONS)}")
+    backward, forward = DIRECTIONS[direction]
+    ws = await workspace_id(session, workspace)
+    async with discovery.open_providers(session) as providers:
+        return await workspace_search.snowball(session, providers, ws, seed_paper_ids, [], backward, forward)
+
+
+async def set_eligibility(
+    session: AsyncSession, workspace: str, paper_id: uuid.UUID, run_id: uuid.UUID, verdict: str,
+    reason: str | None = None,
+) -> EligibilityView:
+    if verdict not in VERDICTS:
+        raise InvalidInput("invalid_decision", verdicts=list(VERDICTS))
+    ws = await workspace_id(session, workspace)
+    row = await workspace_search.set_eligibility(session, ws, paper_id, run_id, verdict, reason)
+    return EligibilityView(
+        row.paper_id, row.search_run_id, row.stage2_status, row.stage2_exclude_reason, row.assessed_at
+    )
+
+
+async def get_prisma(
+    session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None
+) -> prisma_export.PrismaExport:
+    return await prisma_export.prisma_export(session, await workspace_id(session, workspace), run_id)

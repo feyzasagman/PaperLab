@@ -205,3 +205,34 @@ async def import_hit(workspace: str, hit_id: uuid.UUID) -> pipeline.workspace_se
     free copy was found."""
     async with sessions() as session:
         return await pipeline.import_hit(session, workspace, hit_id)
+
+
+@mcp.tool()
+@recoverable
+async def snowball(
+    workspace: str, seed_paper_ids: list[uuid.UUID], direction: str
+) -> pipeline.workspace_search.SnowballResult:
+    """Use to find papers a workspace's seed papers cite (backward), are cited by (forward) or both, one hop via
+    Semantic Scholar. New ones land in the hits for screening."""
+    async with sessions() as session:
+        return await pipeline.snowball(session, workspace, seed_paper_ids, direction)
+
+
+@mcp.tool()
+@recoverable
+async def set_eligibility(
+    workspace: str, paper_id: uuid.UUID, run_id: uuid.UUID, verdict: str, reason: str | None = None
+) -> pipeline.EligibilityView:
+    """Use after reading an imported paper's full text to record the owner's stage-2 verdict for a run: include or
+    exclude (give the reason)."""
+    async with sessions() as session:
+        return await pipeline.set_eligibility(session, workspace, paper_id, run_id, verdict, reason)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def get_prisma(workspace: str, run_id: uuid.UUID | None = None) -> pipeline.prisma_export.PrismaExport:
+    """Use to get the PRISMA flow counts for one run, or for the whole workspace when run_id is left out. Counts
+    only the owner's decisions."""
+    async with sessions() as session:
+        return await pipeline.get_prisma(session, workspace, run_id)
