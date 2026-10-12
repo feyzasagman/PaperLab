@@ -24,8 +24,14 @@ from app.db import SessionLocal
 mcp = MCPServer(
     "paperlab",
     instructions=(
-        "PaperLab is the owner's research library. Search it with search_library, read a paper's outline and notes "
-        "with get_paper, walk to connected papers with related_papers, and save a note on a passage with create_note."
+        "PaperLab is the owner's research library. Learn workspace names with list_workspaces. "
+        "Library: search_library, get_paper, related_papers, list_papers; add papers by DOI, arXiv ID or PDF link "
+        "with add_paper (free copies only) and file them with add_paper_to_workspace. "
+        "Systematic search: start_search_run, then get_search_run until it finishes; read results with list_hits, "
+        "record the owner's screening with review_hits, pull papers in with import_hit, widen with snowball. "
+        "After full-text reading, record set_eligibility; get_prisma gives the flow counts. "
+        "Notes: list_notes reads them, create_note saves one on a passage it quotes exactly. "
+        "An AI suggestion on a hit is a suggestion, never a decision; only review_hits records one."
     ),
 )
 sessions = SessionLocal  # tests point this at their rolled-back session

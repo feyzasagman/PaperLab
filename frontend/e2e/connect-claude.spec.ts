@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures'
 
 // Read-only: the page reads the folder Compose was started in, and the server check only reads the library.
-const FOUR_TOOLS = 'The server answers with its four tools: create_note, get_paper, related_papers, search_library.'
+const TOOLS_LINE = 'The server answers with its tools, from add_paper to stop_search_run.'
 
 test('the library header opens Connect Claude with the folder filled in, and Copy puts the config on the clipboard', async ({
   page,
@@ -39,7 +39,7 @@ test('the Windows tab calls docker compose directly', async ({ page }) => {
   )
 })
 
-test('Check the server starts the MCP server and lists its four tools', async ({ page }) => {
+test('Check the server starts the MCP server and lists its tools', async ({ page }) => {
   await page.goto('/#/connect-claude')
   const section = page.getByRole('region', { name: "Check PaperLab's side" })
 
@@ -47,7 +47,7 @@ test('Check the server starts the MCP server and lists its four tools', async ({
 
   // A real `python -m mcp_server` in the api container: a second or two, more under a parallel run. A cold check
   // measured 29 s once, and the first run after a container recreate is a coin flip.
-  await expect(section.getByRole('status')).toHaveText(FOUR_TOOLS, { timeout: 45_000 })
+  await expect(section.getByRole('status')).toHaveText(TOOLS_LINE, { timeout: 45_000 })
 })
 
 test('a failed check shows why', async ({ page }) => {

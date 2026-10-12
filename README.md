@@ -364,11 +364,35 @@ the folder you unpacked):
 - **Windows:** give `mcpServers.paperlab` the `"command": "docker"` and the
   `"args": ["compose", "-f", "<folder>\\docker-compose.yml", "exec", "-T", "api", "python", "-m", "mcp_server"]`.
 
-The server has four tools:
+The server's tools:
+
+Library:
 - `search_library`: passages closest to a question, in the whole library or one workspace;
 - `get_paper`: a paper's details, your reading pass and decision (`reading_pass`, `triage`), section outline,
   workspaces and every note with who wrote it;
 - `related_papers`: library papers connected to one, up to three links away;
+- `list_workspaces`: your workspaces, with their names;
+- `create_workspace`: a new workspace;
+- `list_papers`: the papers in a workspace.
+
+Adding papers:
+- `add_paper`: a paper by DOI, arXiv ID or PDF link, free copies only, optionally into a workspace;
+- `add_paper_to_workspace`: files a library paper in a workspace;
+- `remove_paper_from_workspace`: takes a paper out of a workspace (it stays in the library).
+
+Systematic search and screening:
+- `start_search_run`: searches the chosen sources for a query, for a workspace;
+- `get_search_run`: how a search run is going, and what it found;
+- `stop_search_run`: stops a search run that is still going;
+- `list_hits`: a run's results, filtered by your decision, with any AI suggestion;
+- `review_hits`: records your screening decisions on hits, with a reason when you exclude;
+- `import_hit`: brings a hit into the library and the workspace;
+- `snowball`: finds papers a paper cites, or that cite it, as new hits;
+- `set_eligibility`: records include or exclude after full-text reading;
+- `get_prisma`: the PRISMA flow counts for a workspace or one run.
+
+Notes:
+- `list_notes`: the notes on a workspace or a paper, labelled You, AI or AI · edited;
 - `create_note`: a note on a passage it quotes exactly.
 
 The first search takes a few seconds while the search model loads. Without it, `search_library` answers that search isn't set up.

@@ -191,7 +191,7 @@ export function ConnectClaudePage() {
         {check.data?.ok && (
           <p role="status" className="flex items-center gap-1.5 text-sm">
             <CircleCheck aria-hidden className="size-4 shrink-0 text-primary" />
-            The server answers with its four tools: create_note, get_paper, related_papers, search_library.
+            The server answers with its tools, from add_paper to stop_search_run.
           </p>
         )}
         {check.data?.detail && <ErrorAlert message={check.data.detail} />}
