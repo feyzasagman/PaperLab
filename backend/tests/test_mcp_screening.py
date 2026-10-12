@@ -9,8 +9,11 @@ from mcp_fixtures import call, result
 from pdf_papers import chunked_paper
 
 from app.core import discovery, paper_sources, workspace_search, workspaces
+from app.core import notes as notes_core
 from app.core.paper_sources import SourceSettings
 from app.core.source_registry import SOURCE_IDS
+from app.models import Note
+from app.models.note import Provenance
 from app.providers import discovery_fake
 
 pytestmark = pytest.mark.anyio
@@ -227,3 +230,41 @@ async def test_a_bad_verdict_and_an_unknown_run_are_readable(session, tmp_path):
     ghost = await call("set_eligibility", verdict="include", **args)
     assert bad.structured_content["error"] == "invalid_decision"
     assert ghost.structured_content["error"] == "not_found"
+
+
+async def notes_on(session, tmp_path, label):
+    ws = await new_workspace(session, label)
+    paper, _, _ = await chunked_paper(session, tmp_path, title=f"{label} paper")
+    await workspaces.add_paper(session, ws.id, paper.id)
+    made = {}
+    for provenance in Provenance:
+        note = Note(body=f"{provenance} note", provenance=provenance)
+        session.add(note)
+        await session.flush()
+        await notes_core.set_papers(session, note.id, [paper.id])
+        made[provenance] = note.id
+    return ws, paper, made
+
+
+@pytest.mark.parametrize(
+    "author,expected", [("you", {"human"}), ("ai", {"llm", "llm_edited"}), ("all", {"human", "llm", "llm_edited"})]
+)
+async def test_list_notes_filters_by_author_and_labels_them(session, tmp_path, author, expected):
+    _, paper, _ = await notes_on(session, tmp_path, f"Notes {author}")
+    rows = result(await call("list_notes", paper_id=str(paper.id), author=author))
+    assert {r["provenance"] for r in rows} == expected
+    assert {r["provenance"]: r["author"] for r in rows}.items() <= {
+        "human": "You", "llm": "AI", "llm_edited": "AI · edited"
+    }.items()
+
+
+async def test_list_notes_by_workspace(session, tmp_path):
+    _, _, made = await notes_on(session, tmp_path, "Notes ws")
+    rows = result(await call("list_notes", workspace=f"Notes ws {RUN}"))
+    assert {r["id"] for r in rows} == {str(i) for i in made.values()}
+
+
+@pytest.mark.parametrize("args", [{}, {"workspace": "x", "paper_id": str(uuid.uuid4())}])
+async def test_list_notes_needs_exactly_one_scope(args):
+    response = await call("list_notes", **args)
+    assert response.is_error and response.structured_content["error"] == "notes_scope"

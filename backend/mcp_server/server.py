@@ -236,3 +236,15 @@ async def get_prisma(workspace: str, run_id: uuid.UUID | None = None) -> pipelin
     only the owner's decisions."""
     async with sessions() as session:
         return await pipeline.get_prisma(session, workspace, run_id)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def list_notes(
+    workspace: str | None = None, paper_id: uuid.UUID | None = None, author: str = "all"
+) -> list[pipeline.LabelledNote]:
+    """Use to read what has been noted on a workspace's papers or on one paper: give exactly one of workspace or
+    paper_id. author: you (the owner's), ai (written by a model, including ones the owner edited, labelled AI · edited)
+    or all."""
+    async with sessions() as session:
+        return await pipeline.list_notes(session, workspace, paper_id, author)

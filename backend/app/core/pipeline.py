@@ -6,7 +6,7 @@ fields.
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Literal
@@ -15,7 +15,17 @@ from urllib.parse import urlsplit
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core import discovery, paper_sources, papers, pdf_links, prisma_export, queue, workspace_search, workspaces
+from app.core import (
+    discovery,
+    notes,
+    paper_sources,
+    papers,
+    pdf_links,
+    prisma_export,
+    queue,
+    workspace_search,
+    workspaces,
+)
 from app.core.errors import Conflict, InvalidInput, NotFound
 from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import PaperStatus
@@ -251,3 +261,31 @@ async def get_prisma(
     session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None
 ) -> prisma_export.PrismaExport:
     return await prisma_export.prisma_export(session, await workspace_id(session, workspace), run_id)
+
+
+AUTHORS = {"you": {"human"}, "ai": {"llm", "llm_edited"}, "all": {"human", "llm", "llm_edited"}}
+LABELS = {"human": "You", "llm": "AI", "llm_edited": "AI · edited"}
+
+
+@dataclass(frozen=True)
+class LabelledNote(notes.NoteView):
+    author: str = ""
+
+
+async def list_notes(
+    session: AsyncSession, workspace: str | None = None, paper_id: uuid.UUID | None = None, author: str = "all"
+) -> list[LabelledNote]:
+    if (workspace is None) == (paper_id is None):
+        raise InvalidInput("notes_scope", hint="Give either workspace or paper_id.")
+    if author not in AUTHORS:
+        raise InvalidInput(f"author is one of {', '.join(AUTHORS)}")
+    views = (
+        await workspaces.notes(session, await workspace_id(session, workspace))
+        if workspace is not None
+        else await notes.list_notes_for_paper(session, paper_id)
+    )
+    return [
+        LabelledNote(**{f.name: getattr(v, f.name) for f in fields(v)}, author=LABELS[v.provenance])
+        for v in views
+        if v.provenance in AUTHORS[author]
+    ]
