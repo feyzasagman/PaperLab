@@ -19,7 +19,7 @@ from app.core.errors import Conflict, InvalidInput, NotFound
 from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import PaperStatus
 from app.schemas.papers import PaperOut
-from app.schemas.workspace_search import SearchRunOut
+from app.schemas.workspace_search import HitOut, SearchRunOut
 
 workspace_id = workspaces.by_name
 
@@ -151,3 +151,59 @@ async def get_search_run(session: AsyncSession, run_id: uuid.UUID) -> SearchRunO
 
 async def stop_search_run(session: AsyncSession, run_id: uuid.UUID) -> SearchRunOut:
     return SearchRunOut.model_validate(await workspace_search.stop_run(session, run_id))
+
+
+DECISIONS = ("relevant", "not_relevant", "maybe")
+REASONS = ("wrong_topic", "wrong_study_type", "duplicate", "language", "inaccessible", "other")
+MAX_HITS = 100
+
+
+@dataclass(frozen=True)
+class HitPage:
+    hits: list[HitOut]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class ReviewResult:
+    updated: int
+    skipped: list[uuid.UUID]
+
+
+async def list_hits(
+    session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None, status: str | None = None,
+    cursor: str | None = None, limit: int = 50,
+) -> HitPage:
+    if status is not None and status not in (*DECISIONS, "undecided"):
+        raise InvalidInput("invalid_decision", valid=[*DECISIONS, "undecided"])
+    ws = await workspace_id(session, workspace)
+    items, next_cursor = await workspace_search.list_hits(
+        session, ws, limit=max(1, min(limit, MAX_HITS)), after=cursor, stage1_status=status, run_id=run_id
+    )
+    return HitPage(hits=[HitOut.model_validate(item) for item in items], next_cursor=next_cursor)
+
+
+async def review_hits(
+    session: AsyncSession, workspace: str, hit_ids: list[uuid.UUID], decision: str, reason: str | None = None
+) -> ReviewResult:
+    """Records the owner's stage-1 decision (Claude Code asks before each call). Hits outside the workspace are
+    skipped, never written (D218)."""
+    if decision not in DECISIONS or (reason is not None and reason not in REASONS):
+        raise InvalidInput("invalid_decision", decisions=list(DECISIONS), reasons=list(REASONS))
+    if decision == "not_relevant" and reason is None:
+        raise InvalidInput("reason_required", reasons=list(REASONS))
+    ws = await workspace_id(session, workspace)
+    own = await workspace_search.owned_hit_ids(session, ws, hit_ids)
+    updated = await workspace_search.bulk_review_hits(session, ws, list(own), decision, reason, None)
+    return ReviewResult(updated=updated, skipped=[h for h in hit_ids if h not in own])
+
+
+async def import_hit(session: AsyncSession, workspace: str, hit_id: uuid.UUID) -> workspace_search.ImportResult:
+    ws = await workspace_id(session, workspace)
+    if hit_id not in await workspace_search.owned_hit_ids(session, ws, [hit_id]):
+        raise NotFound("hit_not_found", hit_id=str(hit_id))
+    async with discovery.open_providers(session) as providers:
+        imported = await workspace_search.import_hits(session, providers, ws, [hit_id])
+    for paper_id in imported.paper_ids:
+        await queue.enqueue("ingest_paper", str(paper_id))
+    return imported

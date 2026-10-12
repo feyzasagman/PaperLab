@@ -172,3 +172,36 @@ async def stop_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
     """Use to stop a running search early. Hits found so far stay."""
     async with sessions() as session:
         return await pipeline.stop_search_run(session, run_id)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def list_hits(
+    workspace: str, run_id: uuid.UUID | None = None, status: str | None = None, cursor: str | None = None,
+    limit: int = 50,
+) -> pipeline.HitPage:
+    """Use to read search results waiting for screening. Filter by run and by status (undecided, relevant,
+    not_relevant, maybe); pass next_cursor back to page. Each hit may carry an AI suggestion — a suggestion only,
+    never a decision."""
+    async with sessions() as session:
+        return await pipeline.list_hits(session, workspace, run_id, status, cursor, limit)
+
+
+@mcp.tool()
+@recoverable
+async def review_hits(
+    workspace: str, hit_ids: list[uuid.UUID], decision: str, reason: str | None = None
+) -> pipeline.ReviewResult:
+    """Use to record the owner's title/abstract screening decision on hits: relevant, not_relevant (needs a reason:
+    wrong_topic, wrong_study_type, duplicate, language, inaccessible, other) or maybe."""
+    async with sessions() as session:
+        return await pipeline.review_hits(session, workspace, hit_ids, decision, reason)
+
+
+@mcp.tool()
+@recoverable
+async def import_hit(workspace: str, hit_id: uuid.UUID) -> pipeline.workspace_search.ImportResult:
+    """Use to pull a screened hit into the library: downloads its free PDF and starts ingesting. failed=1 means no
+    free copy was found."""
+    async with sessions() as session:
+        return await pipeline.import_hit(session, workspace, hit_id)

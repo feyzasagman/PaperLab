@@ -7,7 +7,10 @@ import pytest
 from mcp_fixtures import *  # noqa: F403
 from mcp_fixtures import call, result
 
-from app.core import paper_sources, workspaces
+from app.core import discovery, paper_sources, workspace_search, workspaces
+from app.core.paper_sources import SourceSettings
+from app.core.source_registry import SOURCE_IDS
+from app.providers import discovery_fake
 
 pytestmark = pytest.mark.anyio
 RUN = uuid.uuid4().hex[:8]
@@ -69,3 +72,105 @@ async def test_a_double_stop_is_a_readable_conflict(session):
 async def test_an_unknown_run_is_not_found():
     response = await call("get_search_run", run_id=str(uuid.uuid4()))
     assert response.is_error and response.structured_content["error"] == "not_found"
+
+
+async def run_with_hits(session, label: str, query: str = "bert"):
+    """A workspace with one finished batch of hits from the offline fake sources (arXiv + Semantic Scholar)."""
+    ws = await new_workspace(session, label)
+    run = await workspace_search.start_run(session, ws.id, query, {}, ["arxiv", "semantic_scholar"])
+    every = SourceSettings(contact_email=discovery_fake.MAILTO, enabled=dict.fromkeys(SOURCE_IDS, True))
+    providers = discovery.build_providers(every, discovery_fake.transport())
+    try:
+        await workspace_search.search_batch(session, providers, run)
+    finally:
+        await providers.aclose()
+    return ws, run
+
+
+async def test_list_hits_walks_one_run_with_a_cursor(session):
+    ws, run = await run_with_hits(session, "Walk")
+    other = await workspace_search.start_run(session, ws.id, "other", {}, ["arxiv"])  # a second run: no hits yet
+    seen, cursor = [], None
+    while True:
+        page = result(await call("list_hits", workspace=f"Walk {RUN}", run_id=str(run.id), cursor=cursor, limit=1))
+        seen += [h["id"] for h in page["hits"]]
+        cursor = page["next_cursor"]
+        if not cursor:
+            break
+    assert seen and len(seen) == len(set(seen))
+    assert all(h["run_id"] == str(run.id) for h in result(await call("list_hits", workspace=f"Walk {RUN}"))["hits"])
+    assert result(await call("list_hits", workspace=f"Walk {RUN}", run_id=str(other.id)))["hits"] == []
+
+
+async def test_review_hits_then_filter_undecided(session):
+    ws, run = await run_with_hits(session, "Review")
+    hits = result(await call("list_hits", workspace=f"Review {RUN}"))["hits"]
+    first, rest = hits[0]["id"], [h["id"] for h in hits[1:]]
+
+    reviewed = result(await call("review_hits", workspace=f"Review {RUN}", hit_ids=[first], decision="relevant"))
+    undecided = result(await call("list_hits", workspace=f"Review {RUN}", status="undecided"))["hits"]
+
+    assert reviewed == {"updated": 1, "skipped": []}
+    assert sorted(h["id"] for h in undecided) == sorted(rest)
+
+
+async def test_not_relevant_needs_a_reason(session):
+    await run_with_hits(session, "Reason")
+    hit = result(await call("list_hits", workspace=f"Reason {RUN}"))["hits"][0]["id"]
+    response = await call("review_hits", workspace=f"Reason {RUN}", hit_ids=[hit], decision="not_relevant")
+    assert response.is_error and response.structured_content["error"] == "reason_required"
+
+
+async def test_a_bad_decision_or_reason_is_refused(session):
+    await run_with_hits(session, "Bad")
+    hit = result(await call("list_hits", workspace=f"Bad {RUN}"))["hits"][0]["id"]
+    bad = await call("review_hits", workspace=f"Bad {RUN}", hit_ids=[hit], decision="include")
+    bad_reason = await call(
+        "review_hits", workspace=f"Bad {RUN}", hit_ids=[hit], decision="not_relevant", reason="boring"
+    )
+    assert bad.structured_content["error"] == "invalid_decision"
+    assert bad_reason.structured_content["error"] == "invalid_decision"
+
+
+async def test_foreign_and_unknown_hits_are_skipped_not_written(session):
+    await run_with_hits(session, "Mine")
+    await run_with_hits(session, "Theirs")
+    mine = result(await call("list_hits", workspace=f"Mine {RUN}"))["hits"][0]["id"]
+    theirs = result(await call("list_hits", workspace=f"Theirs {RUN}"))["hits"][0]["id"]
+    ghost = str(uuid.uuid4())
+
+    reviewed = result(
+        await call("review_hits", workspace=f"Mine {RUN}", hit_ids=[mine, theirs, ghost], decision="maybe")
+    )
+
+    assert reviewed["updated"] == 1 and sorted(reviewed["skipped"]) == sorted([theirs, ghost])
+    after = result(await call("list_hits", workspace=f"Theirs {RUN}"))["hits"]
+    assert next(h for h in after if h["id"] == theirs)["stage1_status"] is None
+
+
+async def test_import_hit_queues_ingest_for_a_free_pdf_and_not_for_a_failure(session, jobs):
+    ws, _ = await run_with_hits(session, "Import")
+    # The offline search routes only serve the pagination fixtures; the free/closed papers come from a snowball hop
+    # (Semantic Scholar's references route), which lands them in the same hit pool.
+    seed = result(await call("list_hits", workspace=f"Import {RUN}"))["hits"][0]["id"]
+    every = SourceSettings(contact_email=discovery_fake.MAILTO, enabled=dict.fromkeys(SOURCE_IDS, True))
+    providers = discovery.build_providers(every, discovery_fake.transport())
+    try:
+        await workspace_search.snowball(session, providers, ws.id, [], [uuid.UUID(seed)], backward=True, forward=False)
+    finally:
+        await providers.aclose()
+    hits = result(await call("list_hits", workspace=f"Import {RUN}"))["hits"]
+    free = next(h for h in hits if h["doi"] == f"{discovery_fake.DOI_PREFIX}free")
+    closed = next(h for h in hits if h["doi"] == f"{discovery_fake.DOI_PREFIX}closed")
+
+    ok = result(await call("import_hit", workspace=f"Import {RUN}", hit_id=free["id"]))
+    failed = result(await call("import_hit", workspace=f"Import {RUN}", hit_id=closed["id"]))
+
+    assert ok["imported"] == 1 and jobs.jobs == [("ingest_paper", ok["paper_ids"][0])]
+    assert failed == {"imported": 0, "failed": 1, "paper_ids": []}
+
+
+async def test_import_of_an_unknown_hit_is_not_found(session):
+    await new_workspace(session, "Ghost")
+    response = await call("import_hit", workspace=f"Ghost {RUN}", hit_id=str(uuid.uuid4()))
+    assert response.is_error and response.structured_content["error"] == "hit_not_found"
