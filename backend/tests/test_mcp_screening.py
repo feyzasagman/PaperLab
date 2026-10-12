@@ -222,11 +222,8 @@ async def test_a_bad_verdict_and_an_unknown_run_are_readable(session, tmp_path):
     ws = await new_workspace(session, "Bad elig")
     paper, _, _ = await chunked_paper(session, tmp_path, title="P")
     await workspaces.add_paper(session, ws.id, paper.id)
-    bad = await call(
-        "set_eligibility", workspace=f"Bad elig {RUN}", paper_id=str(paper.id), run_id=str(uuid.uuid4()), verdict="maybe"
-    )
-    ghost = await call(
-        "set_eligibility", workspace=f"Bad elig {RUN}", paper_id=str(paper.id), run_id=str(uuid.uuid4()), verdict="include"
-    )
+    args = {"workspace": f"Bad elig {RUN}", "paper_id": str(paper.id), "run_id": str(uuid.uuid4())}
+    bad = await call("set_eligibility", verdict="maybe", **args)
+    ghost = await call("set_eligibility", verdict="include", **args)
     assert bad.structured_content["error"] == "invalid_decision"
     assert ghost.structured_content["error"] == "not_found"
