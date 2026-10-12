@@ -15,7 +15,7 @@ import uuid
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from app.core import graph, library, notes
+from app.core import graph, library, notes, pipeline, workspaces
 from app.core.errors import Conflict, DomainError, InvalidInput, NotFound
 from app.db import SessionLocal
 
@@ -97,3 +97,43 @@ async def create_note(body: str, paper_id: uuid.UUID, quoted_text: str) -> notes
     returned for this paper, long enough to occur only once. The note is shown to the owner as written by AI."""
     async with sessions() as session:
         return await notes.create_llm_note(session, paper_id, body, quoted_text)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def list_workspaces() -> list[workspaces.WorkspaceView]:
+    """Use first, to learn the exact workspace names every other tool takes. Each has its paper and note counts."""
+    async with sessions() as session:
+        return await workspaces.list_workspaces(session)
+
+
+@mcp.tool()
+@recoverable
+async def create_workspace(name: str, description: str | None = None) -> workspaces.WorkspaceView:
+    """Use when starting a new research topic: makes an empty workspace (name up to 80 characters)."""
+    async with sessions() as session:
+        return await workspaces.create(session, name, description)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def list_papers(workspace: str) -> list[pipeline.PaperOut]:
+    """Use to see which papers a workspace holds and whether each finished ingesting (status `ready`), newest first."""
+    async with sessions() as session:
+        return await pipeline.list_papers(session, workspace)
+
+
+@mcp.tool()
+@recoverable
+async def add_paper_to_workspace(workspace: str, paper_id: uuid.UUID) -> pipeline.PaperOut:
+    """Use to file a paper already in the library into a workspace. Adding it twice is harmless."""
+    async with sessions() as session:
+        return await pipeline.add_paper_to_workspace(session, workspace, paper_id)
+
+
+@mcp.tool()
+@recoverable
+async def remove_paper_from_workspace(workspace: str, paper_id: uuid.UUID) -> pipeline.Removed:
+    """Use to take a paper out of a workspace. The paper and its notes stay in the library."""
+    async with sessions() as session:
+        return await pipeline.remove_paper_from_workspace(session, workspace, paper_id)

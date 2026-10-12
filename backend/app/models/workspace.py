@@ -14,6 +14,7 @@ class Workspace(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, server_default=text("gen_random_uuid()"))
     name: Mapped[str] = mapped_column(Text, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+    description: Mapped[str | None] = mapped_column(Text, default=None)  # M39 F1
     # M31 (spec §3.5, §4.1, §4.2).
     screening_criteria: Mapped[str | None] = mapped_column(Text, default=None)
     screening_ranked_used: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))

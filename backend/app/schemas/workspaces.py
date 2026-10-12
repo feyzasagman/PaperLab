@@ -20,3 +20,4 @@ class WorkspaceOut(BaseModel):
     paper_count: int
     note_count: int
     created_at: datetime
+    description: str | None = None
