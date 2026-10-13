@@ -25,6 +25,7 @@ JOB_TIMEOUT = 20 * 60  # seconds; the job's registered timeout. A card `generati
 OUTPUT_KIND = "evidence_card"
 PER_FIELD = 4
 MAX_PASSAGES = 16
+LEAD_CHUNKS = 2  # the abstract and opening: where the question, sample and headline effect are stated
 CAPS = {"findings": 5, "effect_sizes": 8, "limitations": 5}
 SYSTEM_PROMPT, PROMPT_TEMPLATE = prompts.load("evidence_card", CARD_PROMPT_VERSION).split("\n<!-- prompt -->\n")
 FIELD_QUERIES = {
@@ -136,11 +137,17 @@ def _fields(reply: _CardReply, passages: list[dict], texts: list[str]) -> dict:
 
 
 async def _passages(session: AsyncSession, paper_id: uuid.UUID) -> tuple[list[dict], list[str]]:
-    """The best chunks per field, interleaved so no field starves, deduped and capped."""
+    """The opening chunks, then the best chunks per field interleaved so no field starves; deduped and capped."""
     per_field = [
         await retrieval.retrieve(session, query, paper_ids=[paper_id], k=PER_FIELD) for query in FIELD_QUERIES.values()
     ]
-    chosen: dict[uuid.UUID, retrieval.RetrievedChunk] = {}
+    opening = await session.execute(
+        select(Chunk).where(Chunk.paper_id == paper_id).order_by(Chunk.ordinal).limit(LEAD_CHUNKS)
+    )
+    chosen: dict[uuid.UUID, retrieval.RetrievedChunk] = {
+        c.id: retrieval.RetrievedChunk(c.id, c.paper_id, c.page, c.section_title, c.bbox, c.text)
+        for c in opening.scalars()
+    }
     for rank in range(PER_FIELD):
         for found in per_field:
             if rank < len(found):

@@ -5,7 +5,7 @@ from pdf_papers import chunked_paper
 from sqlalchemy import func, select
 
 from app.core import evidence_cards, retrieval
-from app.models import EvidenceCard, LLMOutput, Paper, PaperStatus
+from app.models import Chunk, EvidenceCard, LLMOutput, Paper, PaperStatus
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 
@@ -207,3 +207,14 @@ def test_prompt_v2_asks_for_the_statistic_as_printed():
 
     text = prompts.load("evidence_card", 2)
     assert "exactly as the paper prints it" in text and "participants" in text
+
+
+async def test_the_opening_chunks_always_lead_the_passages_even_when_retrieval_misses_them(session, paper, monkeypatch):
+    async def nothing(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(retrieval, "retrieve", nothing)
+    first = (await session.execute(select(Chunk).where(Chunk.paper_id == paper.id).order_by(Chunk.ordinal))).scalars()
+    lead = [c.id for c in first][: evidence_cards.LEAD_CHUNKS]
+    passages, texts = await evidence_cards._passages(session, paper.id)
+    assert [p["chunk_id"] for p in passages] == lead and len(texts) == len(lead)
