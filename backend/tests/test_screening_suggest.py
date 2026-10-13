@@ -99,3 +99,33 @@ async def test_a_reason_on_an_include_is_dropped_and_an_unknown_reason_is_refuse
 def test_build_prompt_v2_tolerates_braces_in_the_abstract_and_criteria():
     prompt = build_prompt_v2("q {x}", "RCTs {adults}", None, "T {t}", "Set {1, 2} was used")
     assert "Set {1, 2} was used" in prompt and "RCTs {adults}" in prompt and "(none given)" in prompt
+
+
+def _reply(quotes):
+    import json
+    return json.dumps({"relevance": 4, "decision": "include", "reason": None, "quotes": quotes, "why": "x"})
+
+
+async def test_a_one_word_quote_is_dropped_but_a_three_word_phrase_is_kept():
+    s = await suggest(Scripted(_reply(["the"])), "q", "i", "e", "T", ABSTRACT)
+    assert s.quotes == [] and s.confidence == "low" and s.flags == ["quote_dropped"]
+    s = await suggest(Scripted(_reply(["creative writing. Outputs"])), "q", "i", "e", "T", ABSTRACT)
+    assert s.quotes == ["creative writing. Outputs"] and s.confidence == "high"
+
+
+async def test_a_quote_over_300_characters_is_dropped():
+    long_abstract = " ".join(["word"] * 100)
+    s = await suggest(Scripted(_reply([long_abstract])), "q", "i", "e", "T", long_abstract)
+    assert s.quotes == [] and s.flags == ["quote_dropped"] and s.confidence == "low"
+
+
+async def test_bad_quotes_are_dropped_before_the_cap_so_good_later_ones_survive():
+    bad = ["the", "a", "of", "large language models homogenize creative writing", "Outputs were 23% less diverse"]
+    s = await suggest(Scripted(_reply(bad)), "q", "i", "e", "T", ABSTRACT)
+    assert s.quotes == bad[3:] and s.flags == ["quote_dropped"] and s.confidence == "low"
+
+
+async def test_a_hyphen_broken_across_a_line_still_matches():
+    abstract = "A cost-\neffective approach to screening was evaluated."
+    s = await suggest(Scripted(_reply(["A cost-effective approach"])), "q", "i", "e", "T", abstract)
+    assert s.quotes == ["A cost-effective approach"] and s.flags == []

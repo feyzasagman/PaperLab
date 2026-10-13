@@ -17,6 +17,8 @@ SYSTEM_PROMPT_V2, PROMPT_TEMPLATE_V2 = prompts.load("screening_suggest", SCREENI
     "\n<!-- prompt -->\n"
 )
 MAX_QUOTES = 3
+QUOTE_MIN_WORDS = 3  # one or two words match any abstract and prove nothing
+QUOTE_MAX_CHARS = 300  # a whole-abstract copy proves nothing either
 EXCLUDE_REASONS = ("wrong_topic", "wrong_study_type", "duplicate", "language", "inaccessible", "other")
 NOTE_CHARS = 300
 
@@ -74,6 +76,19 @@ def build_prompt_v2(question, inclusion, exclusion, title, abstract) -> str:
     )
 
 
+def _fold(text: str) -> str:
+    # A hyphen broken across a line folds to "cost- effective"; rejoin it on both sides.
+    return notes.fold(text).replace("- ", "-")
+
+
+def _quote_ok(folded_quote: str, folded_abstract: str) -> bool:
+    return (
+        len(folded_quote.split()) >= QUOTE_MIN_WORDS
+        and len(folded_quote) <= QUOTE_MAX_CHARS
+        and folded_quote in folded_abstract
+    )
+
+
 async def suggest(llm, question, inclusion, exclusion, title, abstract) -> SuggestionV2:
     """One hit's suggestion. No abstract -> unsure + no_abstract without a model call. Quotes are kept only when they
     are in the abstract (notes.fold); any drop, or an include/exclude with no kept quote, makes it low confidence."""
@@ -84,10 +99,11 @@ async def suggest(llm, question, inclusion, exclusion, title, abstract) -> Sugge
     )
     if reply is None:
         return SuggestionV2("unsure", None, "model error", flags=["model_error"])
-    folded = notes.fold(abstract)
-    asked = [q.strip() for q in reply.quotes if q.strip()][:MAX_QUOTES]
-    kept = [q for q in asked if notes.fold(q) in folded]
-    flags = ["quote_dropped"] if len(kept) < len(asked) else []
+    folded = _fold(abstract)
+    asked = [q.strip() for q in reply.quotes if q.strip()]
+    valid = [q for q in asked if _quote_ok(_fold(q), folded)]
+    kept = valid[:MAX_QUOTES]
+    flags = ["quote_dropped"] if len(valid) < len(asked) else []
     low = bool(flags) or (reply.decision != "unsure" and not kept)
     return SuggestionV2(
         verdict=reply.decision, reason=reply.reason if reply.decision == "exclude" else None,
