@@ -33,7 +33,7 @@ You need [Docker](https://www.docker.com/) and [Ollama](https://ollama.com/).
 
 ```sh
 ollama pull qwen3:8b                  # the default chat model
-docker compose up -d --build          # db (:5433), redis, api (:8000), worker, frontend (:5180)
+docker compose up -d --build          # db (:5433), redis, api (:8000), worker, ingest-worker, frontend (:5180)
 open http://localhost:5180
 ```
 
@@ -77,9 +77,9 @@ same way:
 
 ```sh
 cd frontend && npx playwright install chromium           # once
-LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker
+LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker ingest-worker
 cd frontend && npm run typecheck:e2e && npm run e2e
-docker compose up -d api worker                          # put the real providers back
+docker compose up -d api worker ingest-worker                          # put the real providers back
 ```
 
 Two things that will waste your afternoon if nobody tells you:

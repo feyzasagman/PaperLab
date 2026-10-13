@@ -37,6 +37,8 @@ import {
   type ReferencesDirection,
   type ScreeningState,
   type SearchResult,
+  type SavedSearchCreate,
+  type SavedSearchUpdate,
   type SearchRun,
   type SearchRunCreate,
   type SearchSourceIn,
@@ -61,6 +63,7 @@ export const keys = {
   workspacePapers: (id: string) => ['workspaces', id, 'papers'] as const,
   workspaceNotes: (id: string) => ['workspaces', id, 'notes'] as const,
   searchRuns: (workspaceId: string) => ['workspaces', workspaceId, 'search', 'runs'] as const,
+  savedSearches: (workspaceId: string) => ['workspaces', workspaceId, 'saved-searches'] as const,
   searchRun: (workspaceId: string, runId: string) => ['workspaces', workspaceId, 'search', 'runs', runId] as const,
   searchHits: (workspaceId: string, stage1Status: string, acquisitionStatus: string) =>
     ['workspaces', workspaceId, 'search', 'hits', stage1Status, acquisitionStatus] as const,
@@ -391,6 +394,32 @@ export function useStartSearchRun(workspaceId: string) {
     onSuccess: () => client.invalidateQueries({ queryKey: keys.searchRuns(workspaceId) }),
   })
 }
+
+export const useSavedSearches = (workspaceId: string) =>
+  useQuery({ queryKey: keys.savedSearches(workspaceId), queryFn: () => api.listSavedSearches(workspaceId) })
+
+function useSavedSearchMutation<V, R>(workspaceId: string, mutationFn: (variables: V) => Promise<R>, alsoRuns = false) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn,
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: keys.savedSearches(workspaceId) }),
+        ...(alsoRuns ? [client.invalidateQueries({ queryKey: keys.searchRuns(workspaceId) })] : []),
+      ]),
+  })
+}
+
+export const useCreateSavedSearch = (workspaceId: string) =>
+  useSavedSearchMutation(workspaceId, (body: SavedSearchCreate) => api.createSavedSearch(workspaceId, body))
+export const useUpdateSavedSearch = (workspaceId: string) =>
+  useSavedSearchMutation(workspaceId, (v: { id: string; body: SavedSearchUpdate }) =>
+    api.updateSavedSearch(workspaceId, v.id, v.body))
+export const useDeleteSavedSearch = (workspaceId: string) =>
+  useSavedSearchMutation(workspaceId, (id: string) => api.deleteSavedSearch(workspaceId, id))
+/** Resolves with the new run, so the caller can switch the Search tab to it. */
+export const useRunSavedSearchNow = (workspaceId: string) =>
+  useSavedSearchMutation(workspaceId, (id: string) => api.runSavedSearchNow(workspaceId, id), true)
 
 /** Stops a running search run. `stop_run` 409s ("search_run_not_running") when the run already finished naturally
  * right as the user clicked Stop — a harmless race (Minor 5), not a real error, so it's swallowed here: the mutation

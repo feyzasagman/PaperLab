@@ -5,6 +5,11 @@ from arq.connections import ArqRedis, RedisSettings
 
 from app.config import settings
 
+# A paper's ingest and re-embed run one at a time on their own worker (workers.settings.IngestWorkerSettings): ten at
+# once ran the worker out of memory (2026-10-13). Every enqueue of these jobs passes _queue_name=INGEST_QUEUE.
+INGEST_QUEUE = "arq:ingest"
+INGEST_JOBS = frozenset({"ingest_paper", "reembed_paper"})
+
 _pool: ArqRedis | None = None  # tests replace it with conftest.FakeArq
 
 
@@ -13,4 +18,4 @@ async def enqueue(job: str, *args) -> None:
     global _pool
     if _pool is None:
         _pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    await _pool.enqueue_job(job, *args)
+    await _pool.enqueue_job(job, *args, _queue_name=INGEST_QUEUE if job in INGEST_JOBS else None)

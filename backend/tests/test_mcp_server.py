@@ -44,6 +44,7 @@ EXPECTED_TOOLS = {
     "start_search_run": None, "get_search_run": True, "stop_search_run": None,
     "list_hits": True, "review_hits": None, "import_hit": None, "snowball": None,
     "set_eligibility": None, "get_prisma": True, "list_notes": True,
+    "create_saved_search": None, "list_saved_searches": True, "set_saved_search_enabled": None,
 }
 
 

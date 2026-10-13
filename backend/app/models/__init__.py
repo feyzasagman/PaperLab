@@ -10,6 +10,7 @@ from app.models.note import Note, Provenance, note_anchors, note_papers
 from app.models.paper import Chunk, Paper, PaperStatus
 from app.models.paper_sources import PaperSources
 from app.models.references import ExternalRef, NoteEmbedding, paper_references
+from app.models.saved_search import SavedSearch
 from app.models.setup import Setup
 from app.models.workspace import Workspace, workspace_papers
 
@@ -34,6 +35,7 @@ __all__ = [
     "PaperSources",
     "PaperStatus",
     "Provenance",
+    "SavedSearch",
     "Setup",
     "Workspace",
     "cell_table",

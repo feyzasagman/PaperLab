@@ -12,7 +12,7 @@ from app.core import embedding_sources, enrichment, paper_sources, papers
 from app.models import Author, Chunk, Paper, PaperStatus, paper_authors, paper_topics
 from app.providers import embedding
 from app.workers import ingest
-from app.workers.settings import WorkerSettings
+from app.workers.settings import IngestWorkerSettings, WorkerSettings
 
 pytestmark = pytest.mark.anyio
 
@@ -76,7 +76,8 @@ async def test_the_worker_loads_the_model_on_its_first_job_and_keeps_it(
 
     assert loads == ["load"]
     assert len(embedder.calls) == 2
-    assert getattr(WorkerSettings, "on_startup", None) is None  # nothing loads at start (D136)
+    for worker in (WorkerSettings, IngestWorkerSettings):
+        assert getattr(worker, "on_startup", None) is None  # nothing loads at start (D136)
 
 
 async def test_with_no_search_model_a_paper_is_ready_without_vectors(worker_session, sample_pdf, monkeypatch):

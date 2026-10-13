@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from app.api.deps import DiscoveryDep, SessionDep
 from app.config import settings
 from app.core import discovery, enrichment, papers, workspaces
+from app.core.queue import INGEST_QUEUE
 from app.models import PaperStatus
 from app.schemas.discovery import CandidateOut
 from app.schemas.papers import ChunkOut, PaperOut, PaperUpdate, ReadingIn
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/papers", tags=["papers"])
 
 
 async def _enqueue_ingest(request: Request, paper_id: uuid.UUID) -> None:
-    await request.app.state.arq.enqueue_job("ingest_paper", str(paper_id))
+    await request.app.state.arq.enqueue_job("ingest_paper", str(paper_id), _queue_name=INGEST_QUEUE)
 
 
 @router.post("", status_code=201)

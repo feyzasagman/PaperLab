@@ -9,6 +9,10 @@ Embedder, so tests run it with a fake session and a tiny tokenizer.
 import numpy as np
 
 BATCH_SIZE = 16  # texts per model run; memory grows with batch x longest text, and chunks are paragraphs
+# Each run pads its texts to the longest, and attention memory grows with the run's rows x that length squared: one
+# 7,000-character chunk among fifteen paragraphs took an ingest to ~5 GB (2026-10-13). So runs hold texts of similar
+# length, and stop at this many padded characters; a longer text runs alone. Sixteen of chunking's longest paragraphs.
+BATCH_CHARS = BATCH_SIZE * 1500
 MAX_TOKENS = 8192  # sentence_bert_config.json's max_seq_length, [CLS] and [SEP] included
 PAD_ID = 0  # tokenizer.json's [PAD]
 OUTPUT = "last_hidden_state"  # the export's token embeddings, (batch, tokens, 768)
@@ -25,6 +29,18 @@ def normalize(vectors: np.ndarray) -> np.ndarray:
     return vectors / np.clip(np.linalg.norm(vectors, axis=1, keepdims=True), 1e-12, None)
 
 
+def _runs(order: list[int], texts: list[str]) -> list[list[int]]:
+    """`order` (indices, shortest text first) cut into runs of at most BATCH_SIZE texts and BATCH_CHARS padded."""
+    runs: list[list[int]] = []
+    for i in order:
+        run = runs[-1] if runs else None
+        if run is None or len(run) == BATCH_SIZE or (len(run) + 1) * len(texts[i]) > BATCH_CHARS:
+            runs.append([i])
+        else:
+            run.append(i)
+    return runs
+
+
 class Embedder:
     """An ONNX Runtime session and its tokenizer. `session` needs get_inputs() and run(), as InferenceSession has."""
 
@@ -39,7 +55,11 @@ class Embedder:
 
     def encode(self, texts: list[str]) -> np.ndarray:
         """One unit-length float32 row per text, in order. `texts` is never empty (embedding._encode checks)."""
-        return np.concatenate([self._batch(texts[i : i + BATCH_SIZE]) for i in range(0, len(texts), BATCH_SIZE)])
+        order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+        rows = np.concatenate([self._batch([texts[i] for i in run]) for run in _runs(order, texts)])
+        vectors = np.empty_like(rows)
+        vectors[order] = rows  # back in the caller's order
+        return vectors
 
     def _batch(self, texts: list[str]) -> np.ndarray:
         encodings = self._tokenizer.encode_batch(texts)

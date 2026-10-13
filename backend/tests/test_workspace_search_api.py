@@ -1457,3 +1457,14 @@ async def test_prisma_export_route_rejects_malformed_runs_value(client):
     assert resp.status_code == 422
     body = resp.json()
     assert "invalid runs value" in body["detail"].lower()
+
+
+async def test_start_run_stores_a_year_range_and_rejects_other_filters(client):
+    ws = await client.post("/api/workspaces", json={"name": "Search years API"})
+    url = f"/api/workspaces/{ws.json()['id']}/search/runs"
+
+    ok = await client.post(url, json={"query": "bert", "filters": {"year_from": 2023}, "sources": ["arxiv"]})
+    bad = await client.post(url, json={"query": "bert", "filters": {"bogus": 1}, "sources": ["arxiv"]})
+
+    assert ok.status_code == 201 and ok.json()["filters_json"] == {"year_from": 2023}
+    assert bad.status_code == 422

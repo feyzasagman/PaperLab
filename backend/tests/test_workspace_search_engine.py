@@ -1235,3 +1235,15 @@ async def test_prisma_combined_does_not_leak_another_workspaces_eligibility_verd
     assert result_b.stage2_excluded == 1
     assert result_b.stage2_excluded_by_reason == {"wrong_topic": 1}
     assert result_b.included == 0
+
+
+async def test_search_batch_drops_known_out_of_range_years_and_keeps_undated(session, fake_providers):
+    run = await _new_run(session, ["arxiv"])
+    run.filters_json = {"year_from": 2100}  # every dated fixture paper is older
+    await session.commit()
+
+    result = await search_batch(session, fake_providers, run)
+
+    assert result.out_of_range["arxiv"] >= 1
+    assert result.raw_counts["arxiv"] + result.out_of_range["arxiv"] == 3  # PAGE_PAPERS page size
+    assert result.new_hits == result.raw_counts["arxiv"]  # only undated fixtures, if any, are stored

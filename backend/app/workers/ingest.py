@@ -12,6 +12,15 @@ from app.providers.extraction import ExtractedDoc, extract
 
 logger = logging.getLogger(__name__)
 
+# arq's own default, set on IngestWorkerSettings so the two can't drift. arq never runs a job past it, so the last try
+# ends the paper failed instead of starting again: a paper that stops the worker every time would otherwise sit
+# mid-ingest forever, as 67 did when ten ingests at once ran the worker out of memory (2026-10-13).
+MAX_TRIES = 5
+INTERRUPTED = (
+    "Ingesting stopped before it finished {times} times (the worker restarted or ran out of memory). "
+    "Re-ingest to try again."
+)
+
 
 async def _enrich(session, transport, paper_id: uuid.UUID, doc: ExtractedDoc) -> None:
     """Asks OpenAlex only while it is on in Settings → Paper sources, read here so a change applies to the next ingest
@@ -69,6 +78,11 @@ async def ingest_paper(ctx: dict, paper_id: str) -> None:
     ctx["embedder"] and an httpx transport in ctx["transport"].
     """
     pid = uuid.UUID(paper_id)
+    if ctx.get("job_try", 1) >= MAX_TRIES:
+        async with SessionLocal() as session:
+            await papers.set_status(session, pid, PaperStatus.FAILED, error=INTERRUPTED.format(times=MAX_TRIES - 1))
+        logger.warning("ingest of %s stopped %d times; marked failed", pid, MAX_TRIES - 1)
+        return
     async with SessionLocal() as session:
         paper = await papers.get_paper(session, pid)
         try:

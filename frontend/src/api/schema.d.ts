@@ -724,6 +724,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/saved-searches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Saved Searches */
+        get: operations["list_saved_searches_api_workspaces__workspace_id__saved_searches_get"];
+        put?: never;
+        /** Create Saved Search */
+        post: operations["create_saved_search_api_workspaces__workspace_id__saved_searches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/saved-searches/{saved_search_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Saved Search */
+        delete: operations["delete_saved_search_api_workspaces__workspace_id__saved_searches__saved_search_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Saved Search */
+        patch: operations["patch_saved_search_api_workspaces__workspace_id__saved_searches__saved_search_id__patch"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/saved-searches/{saved_search_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Saved Search */
+        post: operations["run_saved_search_api_workspaces__workspace_id__saved_searches__saved_search_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/papers/{paper_id}/tables/preview": {
         parameters: {
             query?: never;
@@ -3276,6 +3329,104 @@ export interface components {
             /** Paper Ids */
             paper_ids: string[];
         };
+        /** SavedSearchCreate */
+        SavedSearchCreate: {
+            /** Query */
+            query: string;
+            /**
+             * Sources
+             * @default []
+             */
+            sources: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv")[];
+            /** Year From */
+            year_from?: number | null;
+            /** Year To */
+            year_to?: number | null;
+            /**
+             * Schedule Kind
+             * @enum {string}
+             */
+            schedule_kind: "daily" | "weekly" | "custom";
+            /** Time */
+            time?: string | null;
+            /** Weekday */
+            weekday?: number | null;
+            /** Cron */
+            cron?: string | null;
+            /** Timezone */
+            timezone: string;
+        };
+        /** SavedSearchOut */
+        SavedSearchOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+            /** Query */
+            query: string;
+            /** Sources */
+            sources: string[];
+            /** Year From */
+            year_from: number | null;
+            /** Year To */
+            year_to: number | null;
+            /** Schedule */
+            schedule: string;
+            /** Timezone */
+            timezone: string;
+            /** Schedule Kind */
+            schedule_kind: string;
+            /** Time */
+            time: string | null;
+            /** Weekday */
+            weekday: number | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Last Run At */
+            last_run_at: string | null;
+            /** Next Run At */
+            next_run_at: string | null;
+            /** Last Run Id */
+            last_run_id: string | null;
+            /** Last Run Status */
+            last_run_status: string | null;
+            /** Last Error */
+            last_error: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** SavedSearchUpdate */
+        SavedSearchUpdate: {
+            /** Query */
+            query?: string | null;
+            /** Sources */
+            sources?: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv")[] | null;
+            /** Year From */
+            year_from?: number | null;
+            /** Year To */
+            year_to?: number | null;
+            /** Schedule Kind */
+            schedule_kind?: ("daily" | "weekly" | "custom") | null;
+            /** Time */
+            time?: string | null;
+            /** Weekday */
+            weekday?: number | null;
+            /** Cron */
+            cron?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+        };
         /** ScreeningCriteriaUpdate */
         ScreeningCriteriaUpdate: {
             /** Criteria */
@@ -3704,6 +3855,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Description */
+            description?: string | null;
         };
         /** WorkspaceRename */
         WorkspaceRename: {
@@ -5376,6 +5529,170 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PrismaExportOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_saved_searches_api_workspaces__workspace_id__saved_searches_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedSearchOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_saved_search_api_workspaces__workspace_id__saved_searches_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedSearchCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedSearchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_saved_search_api_workspaces__workspace_id__saved_searches__saved_search_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                saved_search_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_saved_search_api_workspaces__workspace_id__saved_searches__saved_search_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                saved_search_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedSearchUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedSearchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_saved_search_api_workspaces__workspace_id__saved_searches__saved_search_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                saved_search_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchRunOut"];
                 };
             };
             /** @description Validation Error */

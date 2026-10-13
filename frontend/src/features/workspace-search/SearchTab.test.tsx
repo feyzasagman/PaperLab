@@ -140,3 +140,12 @@ test('a 409 from Stop (the run already finished naturally) is swallowed, not sho
 // with no known next page, real new progress triggers exactly one refetch" test). SearchTab's status line above
 // stays real-time regardless (covered by the "shows a status indicator" test above), since it's just the
 // already-polled run object rendered directly — no separate fetch of its own to gate.
+
+test('a refused start shows its reason as a readable sentence', async () => {
+  vi.mocked(api.startSearchRun).mockRejectedValue(new Error('invalid_years'))
+  renderWithClient(<Harness workspaceId="ws-1" />)
+  fireEvent.change(screen.getByLabelText('Search query'), { target: { value: 'q' } })
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/first year must not be after/))
+})
