@@ -132,3 +132,34 @@ async def test_more_than_thirty_cited_claims_is_refused(session):
     with pytest.raises(InvalidInput) as raised:
         await claims.verify_claims(session, text)
     assert str(raised.value.args[0]) == "too_many_claims"
+
+
+def test_a_sentence_opening_word_before_a_year_is_not_a_surname():
+    assert citations.find("In (2021) the models grew.") == []
+    assert citations.find("Since 2021 they grew. After (2020) too.") == []
+
+
+def test_a_bracketed_abbreviation_does_not_split_a_sentence():
+    assert citations.split_sentences("Results (p. 4). Next one.") == ["Results (p. 4).", "Next one."]
+    assert citations.split_sentences("Results [p. 4] Next.") == ["Results [p. 4] Next."]
+
+
+async def test_one_failing_check_does_not_lose_the_others(session):
+    from app.providers.base import LLMError
+
+    class Flaky(Scripted):
+        calls = 0
+
+        async def stream(self, system, prompt):
+            Flaky.calls += 1
+            if Flaky.calls == 2:
+                raise LLMError("boom")
+            async for part in super().stream(system, prompt):
+                yield part
+
+    for n, name in enumerate(("Aaflaky", "Bbflaky", "Ccflaky")):
+        await add(session, f"Flaky {n}", [f"X {name}"], 1987)
+    text = "One (Aaflaky, 1987). Two (Bbflaky, 1987). Three (Ccflaky, 1987)."
+    items = await claims.verify_claims(session, text, llm=Flaky())
+    assert [bool(i.check) for i in items] == [True, False, True]
+    assert items[1].error == "check_failed"

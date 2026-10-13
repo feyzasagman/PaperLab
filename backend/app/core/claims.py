@@ -12,8 +12,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import citations, llm_connections, llm_json, notes, prompts, quotes, retrieval
-from app.core.errors import InvalidInput, NotFound
+from app.core.errors import DomainError, InvalidInput, NotFound
 from app.models import Chunk, LLMOutput, Paper, PaperStatus
+from app.providers.base import LLMError, LLMUnavailable
 from app.providers.llm import build_llm
 
 CLAIM_PROMPT_VERSION = 1
@@ -203,8 +204,9 @@ async def verify_claims(
 ) -> list[ClaimItem]:
     """Checks every cited claim in `text`, in order: one item per citation (a sentence citing two papers is two
     claims). A citation that matches no paper is `citation_not_found`, several is `ambiguous_citation` with the
-    titles; neither is guessed. More than 30 cited claims raises InvalidInput("too_many_claims") before any model
-    call. `workspace_id` limits matching to one workspace (the caller resolves a name with workspaces.by_name).
+    titles; neither is guessed. A check that fails for one claim (its error code, or `check_failed` when the
+    model can't be reached) is that item's error and the rest still run. More than 30 cited claims
+    raises InvalidInput("too_many_claims") before any model call. `workspace_id` limits matching to one workspace (the caller resolves a name with workspaces.by_name).
     """
     pending = [
         (_without(s, found), c) for s in citations.split_sentences(text) if (found := citations.find(s)) for c in found
@@ -219,6 +221,13 @@ async def verify_claims(
         elif len(found.paper_ids) > 1:
             items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=found.titles))
         else:
-            check = await verify_claim(session, claim, paper_id=found.paper_ids[0], llm=llm, save=save)
-            items.append(ClaimItem(claim, citation, check=check))
+            llm = await _llm(session, llm)  # no default model fails the whole batch, once, before any check
+            try:
+                check = await verify_claim(session, claim, paper_id=found.paper_ids[0], llm=llm, save=save)
+            except DomainError as exc:
+                items.append(ClaimItem(claim, citation, error=str(exc) or "check_failed"))
+            except (LLMError, LLMUnavailable):
+                items.append(ClaimItem(claim, citation, error="check_failed"))
+            else:
+                items.append(ClaimItem(claim, citation, check=check))
     return items

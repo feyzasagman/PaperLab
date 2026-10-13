@@ -37,6 +37,7 @@ ABBREVIATIONS = {
     "pp.",
     "p.",
 }
+SENTENCE_STARTERS = {"In", "On", "Since", "After", "By", "Until", "During", "From", "Before", "For", "As", "At"}
 _BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
 _DOI = re.compile(r"(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?(10\.\d{4,9}/[^\s]+)", re.I)
 _PAREN = re.compile(r"\(([^()]*?(?:19|20)\d{2}[a-z]?[^()]*)\)")
@@ -68,7 +69,7 @@ def split_sentences(text: str) -> list[str]:
     """Splits on . ! ? followed by a capital, digit or opening bracket, except after "et al.", "e.g.", "Fig." etc."""
     out: list[str] = []
     for piece in _BOUNDARY.split(text.strip()):
-        if out and out[-1].split()[-1].lower() in ABBREVIATIONS:
+        if out and out[-1].split()[-1].lstrip("([").lower() in ABBREVIATIONS:
             out[-1] = f"{out[-1]} {piece}"
         elif piece.strip():
             out.append(piece.strip())
@@ -94,6 +95,8 @@ def find(sentence: str) -> list[Citation]:
                     Citation("author_year", part.strip(), group.span(), surname=surname, year=int(parsed["year"]))
                 )
     for m in _NARRATIVE.finditer(sentence):
+        if m["names"] in SENTENCE_STARTERS:
+            continue
         surname = _FIRST_AUTHOR.split(m["names"])[0].strip()
         found.append(Citation("author_year", m.group(0), m.span(), surname=surname, year=int(m["year"])))
     return sorted(found, key=lambda c: c.span)
