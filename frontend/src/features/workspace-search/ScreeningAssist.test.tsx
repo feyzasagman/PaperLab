@@ -64,7 +64,7 @@ describe('ScreeningAssist', () => {
   })
 
   it('shows the server message when criteria cannot change while suggestions run', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) =>
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) =>
       init?.method === 'PUT'
         ? new Response(JSON.stringify({ detail: 'Stop the suggestions before changing the criteria' }), { status: 409 })
         : new Response(JSON.stringify(state({ criteria: null })), { status: 200 })))
