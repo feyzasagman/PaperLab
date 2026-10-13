@@ -240,6 +240,9 @@ async def request_cards(
     """
     if not paper_ids:
         return []
+    known = await session.scalar(select(func.count()).select_from(Paper).where(Paper.id.in_(set(paper_ids))))
+    if known != len(set(paper_ids)):
+        raise NotFound("paper_not_found")
     if regenerate and not confirm and await session.scalar(
         select(func.count()).select_from(EvidenceCard).where(
             EvidenceCard.paper_id.in_(paper_ids), EvidenceCard.status == "ready",
