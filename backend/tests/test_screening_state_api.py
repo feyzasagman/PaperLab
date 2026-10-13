@@ -113,3 +113,34 @@ async def test_prescreen_settings_save_and_validate(session):
     with pytest.raises(Conflict):
         await screening.set_prescreen_settings(session, workspace.id, after_scheduled_runs=None,
                                                auto_import_min_relevance=3)
+
+
+async def test_put_saves_the_two_prescreen_settings_in_any_subset(client, session):
+    workspace, _ = await make_pool(session, [])
+    first = (await client.put(_url(workspace), json={"auto_import_min_relevance": 4})).json()
+    assert (first["auto_import_min_relevance"], first["prescreen_after_scheduled_runs"]) == (4, True)
+    second = (await client.put(_url(workspace), json={"prescreen_after_scheduled_runs": False})).json()
+    assert (second["auto_import_min_relevance"], second["prescreen_after_scheduled_runs"]) == (4, False)
+    third = (await client.put(_url(workspace), json={"auto_import_min_relevance": None})).json()
+    assert (third["auto_import_min_relevance"], third["prescreen_after_scheduled_runs"]) == (None, False)
+
+
+async def test_put_criteria_and_settings_together(client, session):
+    workspace, _ = await make_pool(session, [])
+    body = (await client.put(_url(workspace), json={
+        "research_question": "Does sleep help?", "exclusion_criteria": "animals", "auto_import_min_relevance": 5,
+    })).json()
+    assert (body["research_question"], body["exclusion_criteria"], body["auto_import_min_relevance"]) == (
+        "Does sleep help?", "animals", 5)
+
+
+@pytest.mark.parametrize("value", [3, 6, 0])
+async def test_put_rejects_an_auto_import_bar_outside_4_and_5(client, session, value):
+    workspace, _ = await make_pool(session, [])
+    assert (await client.put(_url(workspace), json={"auto_import_min_relevance": value})).status_code == 422
+
+
+async def test_put_criteria_alone_still_means_inclusion(client, session):
+    workspace, _ = await make_pool(session, [])
+    body = (await client.put(_url(workspace), json={"criteria": "RCTs"})).json()
+    assert (body["criteria"], body["inclusion_criteria"], body["auto_import_min_relevance"]) == ("RCTs", "RCTs", None)

@@ -81,6 +81,11 @@ class HitOut(BaseModel):
     suggestion_note: str | None = None
     suggestion_model: str | None = None
     suggested_at: datetime | None = None
+    suggestion_relevance: int | None = None
+    suggestion_quotes: list[str] | None = None
+    suggestion_confidence: str | None = None
+    suggestion_flags: list[str] | None = None
+    suggestion_prompt_version: int | None = None
 
 
 class HitListOut(BaseModel):
@@ -122,10 +127,22 @@ class ScreeningCriteriaUpdate(BaseModel):
     research_question: str | None = Field(default=None, max_length=4000)
     inclusion_criteria: str | None = Field(default=None, max_length=4000)
     exclusion_criteria: str | None = Field(default=None, max_length=4000)
+    prescreen_after_scheduled_runs: bool | None = None
+    auto_import_min_relevance: Literal[4, 5] | None = None  # None = off
 
 
 class SuggestStart(BaseModel):
     confirm_remote: bool = False
+    run_id: uuid.UUID | None = None
+
+
+class AcceptSuggestions(BaseModel):
+    hit_ids: list[uuid.UUID]
+
+
+class AcceptSuggestionsOut(BaseModel):
+    accepted: int
+    skipped: list[uuid.UUID]
 
 
 def _reason_required_on_exclude(status: str | None, reason: str | None) -> None:
