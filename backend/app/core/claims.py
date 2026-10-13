@@ -206,8 +206,8 @@ async def verify_claims(
     claims). A citation that matches no paper is `citation_not_found`, several is `ambiguous_citation` with the
     titles; neither is guessed. A check that fails for one claim (its error code, or `check_failed` when the
     model can't be reached) is that item's error and the rest still run. More than 30 cited claims
-    raises InvalidInput("too_many_claims") before any model call. `workspace_id` limits matching to one workspace (the caller resolves a name with
-    workspaces.by_name).
+    raises InvalidInput("too_many_claims") before any model call. `workspace_id` limits matching to one
+    workspace (the caller resolves a name with workspaces.by_name).
     """
     pending = [
         (_without(s, found), c) for s in citations.split_sentences(text) if (found := citations.find(s)) for c in found
