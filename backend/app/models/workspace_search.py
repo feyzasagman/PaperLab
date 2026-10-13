@@ -21,6 +21,9 @@ class WorkspaceSearchRun(Base):
     started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     stopped_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), default=None)
     stats_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    saved_search_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("saved_searches.id", ondelete="SET NULL"), default=None
+    )  # M39 F2
 
 
 class WorkspaceSearchCursor(Base):
