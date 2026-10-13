@@ -615,7 +615,7 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
 async def list_hits(
     session: AsyncSession, workspace_id, limit: int = 50, after: str | None = None,
     stage1_status: str | None = None, acquisition_status: str | None = None, run_id: uuid.UUID | None = None,
-    sort: str | None = None, min_relevance: int | None = None,
+    sort: str | None = None, min_relevance: int | None = None, suggested_only: bool = False,
 ) -> tuple[list[dict], str | None]:
     """Keyset-paginated hit listing, ordered by (first_seen_at, id) so the cursor is stable even when several
     hits share a first_seen_at timestamp. `tuple_()` on both sides makes SQLAlchemy emit a real SQL row-value
@@ -641,6 +641,8 @@ async def list_hits(
         query = query.where(WorkspaceSearchHit.stage1_status.is_(None))
     elif stage1_status:
         query = query.where(WorkspaceSearchHit.stage1_status == stage1_status)
+    if suggested_only:
+        query = query.where(WorkspaceSearchHit.suggestion.is_not(None))
     if run_id is not None:
         query = query.where(WorkspaceSearchHit.run_id == run_id)
     if acquisition_status:

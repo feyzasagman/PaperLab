@@ -386,6 +386,9 @@ Systematic search and screening:
 - `stop_search_run`: stops a search run that is still going;
 - `list_hits`: a run's results, filtered by your decision, with any AI suggestion;
 - `review_hits`: records your screening decisions on hits, with a reason when you exclude;
+- `run_prescreen`: has your default model suggest include, exclude or unsure for undecided hits (a remote model is refused, since your abstracts would leave your machine);
+- `get_screening_suggestions`: undecided hits with a suggestion, best score first;
+- `accept_suggestions`: records your decision from the suggestions you pick;
 - `import_hit`: brings a hit into the library and the workspace;
 - `snowball`: finds papers a paper cites, or that cite it, as new hits;
 - `set_eligibility`: records include or exclude after full-text reading;
@@ -395,6 +398,8 @@ Scheduled searches:
 - `create_saved_search`: runs a search by itself, daily or weekly at a time you choose (or on a cron schedule), in your time zone;
 - `list_saved_searches`: a workspace's scheduled searches, with their last and next run and any error;
 - `set_saved_search_enabled`: pauses or resumes one.
+
+AI pre-screening: your default model reads each undecided hit's abstract and suggests include, exclude or unsure, with a score and the sentences it relied on. A local model is used by default, so abstracts stay on your machine. Suggestions never decide anything: a hit stays undecided until you accept the suggestion or screen it yourself. Importing papers automatically from high-scoring suggestions is off unless you turn it on, and a scheduled search can pre-screen its new hits overnight.
 
 Scheduled searches run while PaperLab is running: the desktop app with **Keep running** on (Settings → Desktop app), or `docker compose up -d`. A time that passed while it was closed runs once when it next starts. New results land in the workspace for you to screen.
 

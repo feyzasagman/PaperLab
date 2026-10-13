@@ -13,6 +13,7 @@ from mcp import Client, StdioServerParameters
 BACKEND = Path(__file__).resolve().parents[2]
 SERVER_MODULE = "mcp_server"  # tests point this at a module that doesn't exist
 TOOLS = [
+    "accept_suggestions",
     "add_paper",
     "add_paper_to_workspace",
     "create_note",
@@ -20,6 +21,7 @@ TOOLS = [
     "create_workspace",
     "get_paper",
     "get_prisma",
+    "get_screening_suggestions",
     "get_search_run",
     "import_hit",
     "list_hits",
@@ -30,6 +32,7 @@ TOOLS = [
     "related_papers",
     "remove_paper_from_workspace",
     "review_hits",
+    "run_prescreen",
     "search_library",
     "set_eligibility",
     "set_saved_search_enabled",

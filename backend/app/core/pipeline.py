@@ -25,6 +25,7 @@ from app.core import (
     queue,
     saved_searches,
     schedules,
+    screening,
     workspace_search,
     workspaces,
 )
@@ -32,7 +33,7 @@ from app.core.errors import Conflict, InvalidInput, NotFound
 from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import PaperStatus
 from app.schemas.papers import PaperOut
-from app.schemas.workspace_search import HitOut, SearchRunOut
+from app.schemas.workspace_search import HitOut, ScreeningStateOut, SearchRunOut
 
 workspace_id = workspaces.by_name
 
@@ -211,6 +212,39 @@ async def list_hits(
         session, ws, limit=max(1, min(limit, MAX_HITS)), after=cursor, stage1_status=status, run_id=run_id
     )
     return HitPage(hits=[HitOut.model_validate(item) for item in items], next_cursor=next_cursor)
+
+
+async def get_screening_suggestions(
+    session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None, min_relevance: int | None = None,
+    cursor: str | None = None, limit: int = 50,
+) -> HitPage:
+    """Undecided hits the model has a suggestion for, best score first."""
+    ws = await workspace_id(session, workspace)
+    items, next_cursor = await workspace_search.list_hits(
+        session, ws, limit=max(1, min(limit, MAX_HITS)), after=cursor, stage1_status="undecided", run_id=run_id,
+        sort="ai", min_relevance=min_relevance, suggested_only=True,
+    )
+    return HitPage(hits=[HitOut.model_validate(item) for item in items], next_cursor=next_cursor)
+
+
+async def run_prescreen(session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None) -> ScreeningStateOut:
+    """Starts AI pre-screening. There is no confirm dialog over MCP, so a remote default model is refused."""
+    ws = await workspace_id(session, workspace)
+    if run_id is not None:
+        await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
+    model = await screening._default_model(session)
+    if model is not None and not model[1]:
+        raise Conflict("remote_model_needs_confirm", model=model[0])
+    state = await screening.start_suggestions(session, ws, False, run_id)
+    await queue.enqueue("suggest_screening", str(ws))
+    return ScreeningStateOut.model_validate(state)
+
+
+async def accept_suggestions(
+    session: AsyncSession, workspace: str, hit_ids: list[uuid.UUID]
+) -> screening.AcceptResult:
+    """Records the owner's decision from each suggestion: include becomes relevant, exclude not_relevant."""
+    return await screening.accept_suggestions(session, await workspace_id(session, workspace), hit_ids[:MAX_HITS])
 
 
 async def review_hits(
