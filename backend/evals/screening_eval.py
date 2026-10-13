@@ -56,6 +56,7 @@ def load_config(path: Path) -> Config:
 @dataclass(frozen=True)
 class Metrics:
     decided: int
+    skipped_no_abstract: int  # decided hits left out: the model is never asked about them
     agreement: float
     missed_relevant_rate: float | None  # None: no relevant/maybe hits, nothing to miss
     exclude_precision: float | None
@@ -77,7 +78,7 @@ def _share(count: int, total: int) -> float:
     return count / total if total else 0.0
 
 
-def score(rows: list[dict]) -> Metrics:
+def score(rows: list[dict], skipped_no_abstract: int = 0) -> Metrics:
     n = len(rows)
     positives = [r for r in rows if r["label"] in POSITIVE]
     excludes = [r for r in rows if r["verdict"] == "exclude"]
@@ -87,6 +88,7 @@ def score(rows: list[dict]) -> Metrics:
             relevance.setdefault(r["label"], []).append(r["relevance"])
     return Metrics(
         decided=n,
+        skipped_no_abstract=skipped_no_abstract,
         agreement=_share(sum(_agrees(r["label"], r["verdict"]) for r in rows), n),
         missed_relevant_rate=_share(sum(r["verdict"] == "exclude" for r in positives), len(positives))
         if positives else None,
@@ -118,10 +120,13 @@ async def evaluate(session: AsyncSession, workspace_name: str, llm, limit: int |
     if not (question or inclusion or exclusion):
         raise EvalError("This workspace has no screening criteria yet.")
     epoch = datetime.min.replace(tzinfo=timezone.utc)  # decisions without a time (pre-M31) sort last
-    decided = sorted(
+    every = sorted(
         (row for row in pool.rows if row[0].stage1_status),
         key=lambda row: (row[0].stage1_decided_at or epoch, row[0].first_seen_at), reverse=True,
-    )[:limit]
+    )
+    # The eval measures the model; the no-abstract path is deterministic and unit-tested elsewhere.
+    withabs = [row for row in every if row[1] is not None and (row[1].abstract or "").strip()]
+    decided = withabs[:limit]
     rows = []
     for hit, ref in decided:
         title = ref.title if ref else hit.normalized_title
@@ -132,7 +137,7 @@ async def evaluate(session: AsyncSession, workspace_name: str, llm, limit: int |
             "relevance": s.relevance, "confidence": s.confidence, "flags": s.flags,
             "seconds": time.perf_counter() - start,
         })
-    return score(rows), rows
+    return score(rows, len(every) - len(withabs)), rows
 
 
 async def execute(session, config: Config, workspace: str, llm, limit: int | None, out: Path | None) -> int:
@@ -144,6 +149,9 @@ async def execute(session, config: Config, workspace: str, llm, limit: int | Non
     if out:
         out.write_text("".join(json.dumps(r) + "\n" for r in rows))
     print(metrics)
+    if not any("model_error" not in r["flags"] for r in rows):
+        print("FAIL: no real model answer (no hits evaluated, or every reply was a model error)")
+        return 1
     ok = passes(metrics, config)
     if metrics.missed_relevant_rate is None:
         print("FAIL: no relevant hits to measure misses against")

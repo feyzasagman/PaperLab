@@ -152,3 +152,32 @@ async def test_a_decision_with_no_decided_at_still_counts_and_sorts_last(session
     assert metrics.decided == 5 and rows[-1]["title"] == "paper 0"
     _, limited = await ev.evaluate(session, workspace.name, Scripted(REPLIES[:4]), 4)
     assert "paper 0" not in [row["title"] for row in limited]
+
+
+async def test_only_abstract_hits_are_evaluated(session):
+    rows = [(ABSTRACT, "relevant"), (None, "relevant"), ("  ", "not_relevant"), (ABSTRACT, "not_relevant")]
+    workspace, _ = await make_pool(session, rows)
+    workspace.research_question = "q"
+    await session.flush()
+    replies = [reply("exclude", 1, reason="wrong_topic"), reply("include", 5)]
+    metrics, out = await ev.evaluate(session, workspace.name, Scripted(replies), None)
+    assert (metrics.decided, metrics.skipped_no_abstract) == (2, 2)
+    assert [r["label"] for r in out] == ["not_relevant", "relevant"]
+    # --limit counts abstract hits only: the newest one alone
+    workspace2, _ = await make_pool(session, rows)
+    workspace2.research_question = "q"
+    await session.flush()
+    metrics, out = await ev.evaluate(session, workspace2.name, Scripted(replies[:1]), 1)
+    assert (metrics.decided, metrics.skipped_no_abstract) == (1, 2)
+
+
+async def test_all_model_errors_fail(session, capsys):
+    workspace, _ = await make_pool(session, [(ABSTRACT, "relevant")] * 3)
+    workspace.research_question = "q"
+    await session.flush()
+    code = await ev.execute(session, config(), workspace.name, Scripted(["garbage"] * 6), None, None)
+    assert code == 1 and "no real model answer" in capsys.readouterr().out
+    empty, _ = await make_pool(session, [(None, "relevant")])
+    empty.research_question = "q"
+    await session.flush()
+    assert await ev.execute(session, config(), empty.name, Scripted([]), None, None) == 1
