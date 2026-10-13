@@ -138,6 +138,7 @@ def _arxiv_search_page_feed(params: httpx.QueryParams) -> str:
     <id>http://arxiv.org/abs/2609.{index:05d}v1</id>
     <published>2026-01-05T00:00:00Z</published>
     <title>{title}</title>
+    <summary>{title} reports a controlled study of pagination in fixture search results.</summary>
     <author><name>Ada Fixture</name></author>
     <arxiv:doi>{doi}</arxiv:doi>
   </entry>"""
