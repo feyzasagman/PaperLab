@@ -256,6 +256,38 @@ def fake_screening_reply(prompt: str) -> str:
     )
 
 
+_FIRST_PASSAGE = re.compile(r"\[1\] \(page [^)]*\) (.*?)(?:\n\n\[2\] |\Z)", re.DOTALL)
+
+
+def fake_evidence_card_reply(prompt: str) -> str:
+    """The evidence-card JSON on the fake stack: the first numbered passage's first words, copied exactly, as the
+    research question, design and one finding. The value is the quote itself, so every number in it is in the quote."""
+    passage = _FIRST_PASSAGE.search(prompt)
+    quote = " ".join(passage.group(1).split()[:10]) if passage else ""
+    item = {"value": quote, "passage": 1, "quote": quote}
+    if len(quote.split()) < 3:
+        return json.dumps(
+            {
+                "research_question": None,
+                "design": None,
+                "sample": None,
+                "findings": [],
+                "effect_sizes": [],
+                "limitations": [],
+            }
+        )
+    return json.dumps(
+        {
+            "research_question": item,
+            "design": item,
+            "sample": None,
+            "findings": [item],
+            "effect_sizes": [],
+            "limitations": [],
+        }
+    )
+
+
 # Asked for notes, in either chat: two suggested notes, the first citing a passage and the second nothing, then a line
 # after them, as the note-suggestion end-to-end spec expects.
 FAKE_NOTES_TOKENS = [
@@ -306,6 +338,7 @@ class FakeLLM:
         from app.core.chat import WORKSPACE_SYSTEM_PROMPT
 
         # Same reason: note_suggestions → core.chat → retrieval → embedding → http_embedders → this module.
+        from app.core.evidence_cards import SYSTEM_PROMPT as EVIDENCE_CARD_SYSTEM_PROMPT
         from app.core.note_suggestions import SYSTEM_PROMPT as NOTE_SUGGESTIONS_SYSTEM_PROMPT
         from app.core.screening_suggest import SYSTEM_PROMPT as SCREENING_SYSTEM_PROMPT
         from app.core.screening_suggest import SYSTEM_PROMPT_V2 as SCREENING_SYSTEM_PROMPT_V2
@@ -321,6 +354,8 @@ class FakeLLM:
             tokens = FAKE_SCREENING_TOKENS
         elif system == SCREENING_SYSTEM_PROMPT_V2:
             tokens = [fake_screening_reply(prompt)]
+        elif system == EVIDENCE_CARD_SYSTEM_PROMPT:
+            tokens = [fake_evidence_card_reply(prompt)]
         else:
             tokens = FAKE_TOKENS
         for index, token in enumerate(tokens):
