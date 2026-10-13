@@ -53,7 +53,11 @@ def pytest_collection_modifyitems(items):
     # Tests on the OpenAlex recordings all write the same UNIQUE papers and authors; on parallel workers their
     # transactions deadlock. `--dist loadgroup` (pyproject addopts) runs one xdist_group on a single worker.
     for item in items:
-        if "fake_openalex" in item.fixturenames:
+        # A test already in the "references" group stays only there: a second group name would make a third worker
+        # ("openalex_references") that deadlocks with the "references" one on external_refs.
+        if "fake_openalex" in item.fixturenames and not any(
+            m.args == ("references",) for m in item.iter_markers("xdist_group")
+        ):
             item.add_marker(pytest.mark.xdist_group("openalex"))
 
 
