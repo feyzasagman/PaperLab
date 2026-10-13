@@ -161,12 +161,14 @@ async def _sources(session: AsyncSession, sources: list[str] | None) -> list[str
 
 
 async def start_search_run(
-    session: AsyncSession, workspace: str, query: str, sources: list[str] | None = None
+    session: AsyncSession, workspace: str, query: str, sources: list[str] | None = None,
+    year_from: int | None = None, year_to: int | None = None,
 ) -> SearchRunOut:
     ws = await workspace_id(session, workspace)
     if not query.strip():
         raise InvalidInput("Give the search a query.")
-    run = await workspace_search.start_run(session, ws, query.strip(), {}, await _sources(session, sources))
+    filters = {"year_from": year_from, "year_to": year_to}
+    run = await workspace_search.start_run(session, ws, query.strip(), filters, await _sources(session, sources))
     await queue.enqueue("run_workspace_search", str(run.id))
     return SearchRunOut.model_validate(run)
 

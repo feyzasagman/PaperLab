@@ -159,11 +159,15 @@ async def add_paper(identifier: str, workspace: str | None = None) -> pipeline.A
 
 @mcp.tool()
 @recoverable
-async def start_search_run(workspace: str, query: str, sources: list[str] | None = None) -> pipeline.SearchRunOut:
+async def start_search_run(
+    workspace: str, query: str, sources: list[str] | None = None,
+    year_from: int | None = None, year_to: int | None = None,
+) -> pipeline.SearchRunOut:
     """Use to search the paper sources for a topic and collect every result into the workspace's hits for screening.
-    Runs in the background; poll get_search_run. `sources` defaults to the ones turned on in Settings."""
+    Runs in the background; poll get_search_run. `sources` defaults to the ones turned on in Settings. Give
+    year_from/year_to to keep only papers published in that range (undated ones stay)."""
     async with sessions() as session:
-        return await pipeline.start_search_run(session, workspace, query, sources)
+        return await pipeline.start_search_run(session, workspace, query, sources, year_from, year_to)
 
 
 @mcp.tool(annotations=READ_ONLY)

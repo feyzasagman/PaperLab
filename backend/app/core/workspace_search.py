@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core import discovery
+from app.core import discovery, year_range
 from app.core.candidates import Candidate, from_s2, merge, normal_title
 from app.core.discovery import Providers, _add_unpaywall_links, download_pdf
 from app.core.references import _same_reference
@@ -64,6 +64,7 @@ class BatchResult:
     # PRISMA "identified" number, which can't be reconstructed later once a run is exhausted (I1). The worker
     # accumulates these into run.stats_json across iterations; search_batch itself stays stateless.
     raw_counts: dict[str, int] = field(default_factory=dict)
+    out_of_range: dict[str, int] = field(default_factory=dict)  # M39 F2: dropped by the run's year range (D221)
 
 
 async def _find_or_create_external_ref(session: AsyncSession, candidate: Candidate) -> ExternalRef:
@@ -169,6 +170,8 @@ async def search_batch(session: AsyncSession, providers: Providers, run: Workspa
     errors: dict[str, str] = {}
     exhausted: list[str] = []
     raw_counts: dict[str, int] = {}
+    years = year_range.parse(run.filters_json)
+    out_of_range: dict[str, int] = {}
 
     now = _now()
     for source in run.sources_json:
@@ -218,8 +221,12 @@ async def search_batch(session: AsyncSession, providers: Providers, run: Workspa
             continue
         # `from_crossref` returns `None` for a non-paper record (D73's Crossref filter); the other four mappers
         # always return a Candidate. `is not None` below is a no-op for those four and the real filter for crossref.
-        found[source] = [c for raw in raw_items if (c := _MAPPERS[source](raw)) is not None]
-        raw_counts[source] = len(raw_items)
+        mapped = [c for raw in raw_items if (c := _MAPPERS[source](raw)) is not None]
+        # ponytail: filtered here, not by each source's own year parameter, so out-of-range pages still count toward
+        # the run's iteration cap; pass native year params per source if broad runs hit the cap (D221).
+        found[source] = [c for c in mapped if years is None or years.keeps(c.year)]
+        out_of_range[source] = len(mapped) - len(found[source])
+        raw_counts[source] = len(raw_items) - out_of_range[source]
         cursor.last_error = None
         if next_cursor is None:
             cursor.exhausted = True
@@ -231,7 +238,8 @@ async def search_batch(session: AsyncSession, providers: Providers, run: Workspa
 
     new_hits = await _store_candidates_as_hits(session, run, "database_search", found)
 
-    return BatchResult(new_hits=new_hits, sources_exhausted=exhausted, errors=errors, raw_counts=raw_counts)
+    return BatchResult(new_hits=new_hits, sources_exhausted=exhausted, errors=errors, raw_counts=raw_counts,
+                       out_of_range=out_of_range)
 
 
 async def _store_candidates_as_hits(
@@ -322,10 +330,8 @@ async def start_run(
         await session.commit()
         return run
 
-    if filters:
-        # Real per-source filter translation is out of scope for this fix wave — recording a filter the run never
-        # actually applied would misreport the search strategy a PRISMA methods section later cites (I6 part 2).
-        raise InvalidInput("search run filters are not supported yet")
+    years = year_range.parse(filters)  # raises InvalidInput("invalid_years")
+    filters = years.as_filters() if years else {}
 
     # D73's merge trust order (app/core/paper_sources.SOURCES) is what search_batch's `found` dict — insertion
     # ordered, fed straight into merge()'s ranking — relies on; storing sources in whatever order the caller sent

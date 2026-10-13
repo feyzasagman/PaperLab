@@ -299,3 +299,17 @@ async def test_list_notes_by_workspace(session, tmp_path):
 async def test_list_notes_needs_exactly_one_scope(args):
     response = await call("list_notes", **args)
     assert response.is_error and response.structured_content["error"] == "notes_scope"
+
+
+async def test_start_search_run_with_a_year_range_stores_it(session, jobs):
+    await new_workspace(session, "Years")
+    run = result(await call("start_search_run", workspace=f"Years {RUN}", query="q", sources=["arxiv"],
+                            year_from=2023, year_to=2026))
+    assert run["filters_json"] == {"year_from": 2023, "year_to": 2026}
+
+
+async def test_a_backwards_year_range_is_invalid_years(session):
+    await new_workspace(session, "Bad years")
+    response = await call("start_search_run", workspace=f"Bad years {RUN}", query="q", sources=["arxiv"],
+                          year_from=2026, year_to=2023)
+    assert response.is_error and response.structured_content["error"] == "invalid_years"

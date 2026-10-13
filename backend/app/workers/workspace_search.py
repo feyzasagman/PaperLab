@@ -111,10 +111,14 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
                     per_source_raw = dict(run.stats_json.get("per_source_raw_count", {}))
                     for source, count in result.raw_counts.items():
                         per_source_raw[source] = per_source_raw.get(source, 0) + count
+                    per_source_out = dict(run.stats_json.get("per_source_out_of_range", {}))
+                    for source, count in result.out_of_range.items():
+                        per_source_out[source] = per_source_out.get(source, 0) + count
                     run.stats_json = {
                         **run.stats_json,
                         "last_batch_new_hits": result.new_hits,
                         "per_source_raw_count": per_source_raw,
+                        "per_source_out_of_range": per_source_out,
                     }
                     await session.commit()
 
