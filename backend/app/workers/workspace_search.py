@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, text, update
 
 from app.config import settings
-from app.core import discovery, paper_sources
+from app.core import discovery, paper_sources, queue, screening
 from app.core.workspace_search import SEARCH_RUN_JOB_TIMEOUT, get_run, search_batch
 from app.db import SessionLocal
 from app.models.workspace_search import WorkspaceSearchCursor, WorkspaceSearchRun
@@ -70,6 +70,11 @@ async def _mark_exhausted_unless_stopped(session, run: WorkspaceSearchRun) -> No
         run.status = "exhausted"
         run.stopped_at = datetime.now(timezone.utc)
         await session.commit()
+        try:  # a pre-screening hiccup must not turn a finished run into a failed one
+            if await screening.prescreen_after_run(session, run) is None:
+                await queue.enqueue("suggest_screening", str(run.workspace_id))
+        except Exception:
+            logger.exception("pre-screening after run %s did not start", run.id)
 
 
 async def run_workspace_search(ctx: dict, run_id: str) -> None:

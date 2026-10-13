@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core import discovery, year_range
+from app.core import ai_sort, discovery, year_range
 from app.core.candidates import Candidate, from_s2, merge, normal_title
 from app.core.discovery import Providers, _add_unpaywall_links, download_pdf
 from app.core.references import _same_reference
@@ -615,6 +615,7 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
 async def list_hits(
     session: AsyncSession, workspace_id, limit: int = 50, after: str | None = None,
     stage1_status: str | None = None, acquisition_status: str | None = None, run_id: uuid.UUID | None = None,
+    sort: str | None = None, min_relevance: int | None = None,
 ) -> tuple[list[dict], str | None]:
     """Keyset-paginated hit listing, ordered by (first_seen_at, id) so the cursor is stable even when several
     hits share a first_seen_at timestamp. `tuple_()` on both sides makes SQLAlchemy emit a real SQL row-value
@@ -644,12 +645,20 @@ async def list_hits(
         query = query.where(WorkspaceSearchHit.run_id == run_id)
     if acquisition_status:
         query = query.where(WorkspaceSearchHit.acquisition_status == acquisition_status)
-    if after:
-        seen_at, hit_id = _decode_cursor(after)
-        query = query.where(
-            tuple_(WorkspaceSearchHit.first_seen_at, WorkspaceSearchHit.id) > tuple_(seen_at, hit_id)
-        )
-    query = query.order_by(WorkspaceSearchHit.first_seen_at, WorkspaceSearchHit.id).limit(limit)
+    if min_relevance is not None:
+        query = query.where(WorkspaceSearchHit.suggestion_relevance >= min_relevance)
+    if sort not in (None, "ai"):
+        raise InvalidInput("sort must be 'ai' or empty")
+    if sort == "ai":  # offset cursor, see ai_sort
+        offset = ai_sort.decode_offset(after)
+        query = query.order_by(*ai_sort.AI_ORDER).offset(offset).limit(limit)
+    else:
+        if after:
+            seen_at, hit_id = _decode_cursor(after)
+            query = query.where(
+                tuple_(WorkspaceSearchHit.first_seen_at, WorkspaceSearchHit.id) > tuple_(seen_at, hit_id)
+            )
+        query = query.order_by(WorkspaceSearchHit.first_seen_at, WorkspaceSearchHit.id).limit(limit)
     rows = (await session.execute(query)).all()
     items = [
         _hit_out_dict(
@@ -658,8 +667,11 @@ async def list_hits(
         )
         for hit, ref, elig in rows
     ]
-    next_cursor = _encode_cursor(rows[-1][0].first_seen_at, rows[-1][0].id) if len(rows) == limit else None
-    return items, next_cursor
+    if len(rows) < limit:
+        return items, None
+    if sort == "ai":
+        return items, ai_sort.encode_offset(offset + limit)
+    return items, _encode_cursor(rows[-1][0].first_seen_at, rows[-1][0].id)
 
 
 async def review_hit(session: AsyncSession, hit_id, workspace_id, update: "HitReviewUpdate") -> dict:

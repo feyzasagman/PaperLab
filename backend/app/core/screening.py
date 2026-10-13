@@ -3,6 +3,7 @@ state of the local-model suggestion job. Suggest only: nothing here ever writes 
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +14,7 @@ from app.core.screening_rank import Doc, rank, stop_hint
 from app.core.workspace_search import _hit_out_dict
 from app.models.references import ExternalRef
 from app.models.workspace import Workspace
-from app.models.workspace_search import WorkspaceSearchHit
+from app.models.workspace_search import WorkspaceSearchHit, WorkspaceSearchRun
 from app.providers.llm import ANTHROPIC_HOST, host_of
 
 RANKED_LIMIT_MAX = 500
@@ -231,3 +232,59 @@ async def stop_suggestions(session: AsyncSession, workspace_id: uuid.UUID) -> di
         workspace.suggest_status = "idle"
         await session.commit()
     return await get_state(session, workspace_id)
+
+
+@dataclass(frozen=True)
+class AcceptResult:
+    accepted: int
+    skipped: list[uuid.UUID]
+
+
+async def accept_suggestions(session: AsyncSession, workspace_id: uuid.UUID, hit_ids: list[uuid.UUID]) -> AcceptResult:
+    """The owner's Accept: an include becomes relevant, an exclude not_relevant with its reason, stamped like a manual
+    decision. Unsure, unsuggested, already decided, foreign and unknown hits are skipped, never written."""
+    hits = (await session.scalars(
+        select(WorkspaceSearchHit).where(
+            WorkspaceSearchHit.id.in_(hit_ids), WorkspaceSearchHit.workspace_id == workspace_id
+        )
+    )).all()
+    now = datetime.now(timezone.utc)
+    accepted = set()
+    for hit in hits:
+        if hit.stage1_status is not None:
+            continue
+        if hit.suggestion == "include":
+            hit.stage1_status = "relevant"
+        elif hit.suggestion == "exclude" and hit.suggestion_reason:
+            hit.stage1_status, hit.stage1_exclude_reason = "not_relevant", hit.suggestion_reason
+        else:
+            continue
+        hit.stage1_decided_at = now
+        accepted.add(hit.id)
+    await session.commit()
+    return AcceptResult(len(accepted), [i for i in dict.fromkeys(hit_ids) if i not in accepted])
+
+
+async def prescreen_after_run(session: AsyncSession, run: WorkspaceSearchRun) -> str | None:
+    """Starts pre-screening for a scheduled run that just finished (spec §4). None when started (the worker then
+    enqueues the job), else why not. A remote default model is the one case the owner is told about."""
+    if run.saved_search_id is None or run.status != "exhausted":
+        return "not a finished scheduled run"
+    workspace = await session.get(Workspace, run.workspace_id)
+    if not workspace.prescreen_after_scheduled_runs:
+        return "pre-screening after scheduled runs is off"
+    if not (workspace.research_question or workspace.inclusion_criteria):
+        return "no criteria"
+    if workspace.suggest_status != "idle":
+        return "suggestions already running"
+    model = await _default_model(session)
+    if model is None:
+        return "no model"
+    if not model[1]:
+        why = (f"Pre-screening did not start after the scheduled run: abstracts would go to {model[2]}. "
+               "Start it yourself to confirm.")
+        workspace.suggest_error = why
+        await session.commit()
+        return why
+    await start_suggestions(session, workspace.id, False, run.id)
+    return None
