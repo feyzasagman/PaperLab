@@ -22,7 +22,7 @@ from app.models.workspace import Workspace
 from app.models.workspace_search import WorkspaceSearchCursor, WorkspaceSearchHit, WorkspaceSearchRun
 from app.providers import arxiv, discovery_fake, semantic_scholar
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 
 # Task 2's cursor convention (task-2-brief.md): 0 for arXiv/CORE/Crossref/S2 (offset-style), 1 for OpenAlex
 # (1-based page number). Starting OpenAlex at 0 would ask its fake for a negative offset and get nothing back.

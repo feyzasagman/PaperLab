@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from conftest import TEST_DATABASE_URL
 from mcp import Client, StdioServerParameters
+from test_mcp_server import EXPECTED_TOOLS
 
 pytestmark = pytest.mark.anyio
 
@@ -34,7 +35,7 @@ async def test_the_server_starts_on_stdio_and_answers_a_tool_call(caplog):
         )
 
     assert handshake == "2025-11-25"
-    assert tools == ["create_note", "get_paper", "related_papers", "search_library"]
+    assert tools == sorted(EXPECTED_TOOLS)
     assert unknown.is_error and unknown.structured_content["error"] == "unknown_workspace"
     assert isinstance(unknown.structured_content["available"], list)
     # The client skips a stdout line that isn't the protocol (a stray print in the server) and only logs it.

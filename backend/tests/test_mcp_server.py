@@ -2,6 +2,7 @@
 
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 from mcp import Client
@@ -36,15 +37,36 @@ async def call(tool: str, **arguments):
         return await client.call_tool(tool, arguments)
 
 
-async def test_the_four_tools_and_which_of_them_only_read():
+EXPECTED_TOOLS = {
+    "search_library": True, "get_paper": True, "related_papers": True, "create_note": None,
+    "list_workspaces": True, "create_workspace": None, "list_papers": True, "add_paper": None,
+    "add_paper_to_workspace": None, "remove_paper_from_workspace": None,
+    "start_search_run": None, "get_search_run": True, "stop_search_run": None,
+    "list_hits": True, "review_hits": None, "import_hit": None, "snowball": None,
+    "set_eligibility": None, "get_prisma": True, "list_notes": True,
+}
+
+
+async def test_every_tool_and_which_of_them_only_read():
     async with Client(server.mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
 
-    assert sorted(tools) == ["create_note", "get_paper", "related_papers", "search_library"]
-    assert {name: tool.annotations and tool.annotations.read_only_hint for name, tool in tools.items()} == {
-        "search_library": True, "get_paper": True, "related_papers": True, "create_note": None
-    }
+    hints = {name: tool.annotations and tool.annotations.read_only_hint for name, tool in tools.items()}
+    assert hints == EXPECTED_TOOLS
     assert all(tool.output_schema for tool in tools.values())
+    assert all(tool.description and tool.description.startswith("Use ") for name, tool in tools.items()
+               if name not in ("search_library", "get_paper", "related_papers", "create_note"))
+
+
+async def test_the_server_holds_no_sql_and_imports_only_core():
+    source = Path(server.__file__).read_text()
+    imports = [line for line in source.splitlines() if line.startswith(("import ", "from "))]
+    assert all(
+        line.startswith(("from app.core", "import functools", "import json", "import re", "import uuid", "from mcp"))
+        or line == "from app.db import SessionLocal"
+        for line in imports
+    ), imports
+    assert "select(" not in source and "execute(" not in source
 
 
 async def test_search_library_returns_ids_and_structure_not_prose(session, tmp_path, embedder):

@@ -27,6 +27,7 @@ class WorkspaceView:
     paper_count: int
     note_count: int
     created_at: datetime
+    description: str | None = None
 
 
 def _clean_name(name: str) -> str:
@@ -55,6 +56,7 @@ async def _views(session: AsyncSession, *where) -> list[WorkspaceView]:
         paper_count.scalar_subquery().label("paper_count"),
         note_count.scalar_subquery().label("note_count"),
         Workspace.created_at,
+        Workspace.description,
     )
     rows = await session.execute(query.where(*where).order_by(Workspace.name))
     return [WorkspaceView(*row) for row in rows]
@@ -84,11 +86,11 @@ async def by_name(session: AsyncSession, name: str) -> uuid.UUID:
     return match
 
 
-async def create(session: AsyncSession, name: str) -> WorkspaceView:
+async def create(session: AsyncSession, name: str, description: str | None = None) -> WorkspaceView:
     """Raises InvalidInput (blank or over 80 characters) or Conflict("workspace_name_taken")."""
     name = _clean_name(name)
     await _ensure_name_free(session, name)
-    workspace = Workspace(name=name)
+    workspace = Workspace(name=name, description=(description or "").strip() or None)
     session.add(workspace)
     await session.commit()
     return await get(session, workspace.id)

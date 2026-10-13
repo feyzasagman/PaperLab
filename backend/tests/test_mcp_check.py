@@ -3,12 +3,13 @@
 import pytest
 from conftest import TEST_DATABASE_URL
 from sqlalchemy.engine import make_url
+from test_mcp_server import EXPECTED_TOOLS
 
 from app.core import mcp_check
 
 pytestmark = pytest.mark.anyio
 
-FOUR_TOOLS = ["create_note", "get_paper", "related_papers", "search_library"]
+ALL_TOOLS = sorted(EXPECTED_TOOLS)
 
 
 @pytest.fixture(autouse=True)
@@ -20,8 +21,8 @@ def server_runs_as_the_api_starts_it(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
 
-async def test_the_real_server_answers_with_its_four_tools_and_reads_the_library():
-    assert await mcp_check.check_server() == mcp_check.McpCheck(ok=True, tools=FOUR_TOOLS, detail=None)
+async def test_the_real_server_answers_with_all_its_tools_and_reads_the_library():
+    assert await mcp_check.check_server() == mcp_check.McpCheck(ok=True, tools=ALL_TOOLS, detail=None)
 
 
 async def test_a_server_that_doesnt_answer_in_time_is_reported():
@@ -57,7 +58,7 @@ async def test_a_server_missing_tools_names_them(monkeypatch, tmp_path):
     assert result == mcp_check.McpCheck(
         ok=False,
         tools=["get_paper"],
-        detail="The MCP server is missing tools: create_note, related_papers, search_library.",
+        detail="The MCP server is missing tools: " + ", ".join(n for n in ALL_TOOLS if n != "get_paper") + ".",
     )
 
 
@@ -68,5 +69,5 @@ async def test_a_server_that_cant_read_the_library_says_so(monkeypatch):
     result = await mcp_check.check_server()
 
     assert result == mcp_check.McpCheck(
-        ok=False, tools=FOUR_TOOLS, detail="The MCP server started but couldn't read the library."
+        ok=False, tools=ALL_TOOLS, detail="The MCP server started but couldn't read the library."
     )

@@ -11,6 +11,8 @@
 import asyncio
 import logging
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -19,7 +21,8 @@ import httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import papers, source_registry
+from app.config import settings
+from app.core import paper_sources, papers, source_registry
 from app.core.candidates import (
     ARXIV_ID,
     Candidate,
@@ -35,7 +38,7 @@ from app.core.errors import Conflict
 from app.core.paper_sources import KEYED, NAMES, SourceSettings
 from app.core.source_registry import ASKS
 from app.models import Paper
-from app.providers import semantic_scholar, unpaywall
+from app.providers import discovery_fake, semantic_scholar, unpaywall
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +107,23 @@ def build_providers(sources: SourceSettings, transport: httpx.AsyncBaseTransport
         ),
         clients=clients,
     )
+
+
+@asynccontextmanager
+async def open_providers(session: AsyncSession) -> AsyncIterator[Providers]:
+    """The clients for one request or tool call, from Settings → Paper sources, closed after it. With
+    DISCOVERY_PROVIDER=fake every source answers offline (E2E)."""
+    sources = await paper_sources.get(session)
+    transport = None
+    if settings.discovery_provider == "fake":
+        transport = discovery_fake.transport()
+        # The fake answers Unpaywall offline, so its placeholder can stand in for the email Unpaywall needs.
+        sources = replace(sources, contact_email=sources.contact_email or discovery_fake.MAILTO)
+    providers = build_providers(sources, transport)
+    try:
+        yield providers
+    finally:
+        await providers.aclose()
 
 
 def classify_query(query: str) -> tuple[str, str]:

@@ -12,7 +12,28 @@ from mcp import Client, StdioServerParameters
 
 BACKEND = Path(__file__).resolve().parents[2]
 SERVER_MODULE = "mcp_server"  # tests point this at a module that doesn't exist
-TOOLS = ["create_note", "get_paper", "related_papers", "search_library"]
+TOOLS = [
+    "add_paper",
+    "add_paper_to_workspace",
+    "create_note",
+    "create_workspace",
+    "get_paper",
+    "get_prisma",
+    "get_search_run",
+    "import_hit",
+    "list_hits",
+    "list_notes",
+    "list_papers",
+    "list_workspaces",
+    "related_papers",
+    "remove_paper_from_workspace",
+    "review_hits",
+    "search_library",
+    "set_eligibility",
+    "snowball",
+    "start_search_run",
+    "stop_search_run",
+]
 # No paper has this id, so get_paper reads the database and answers not_found, without loading the embedding model.
 NO_PAPER = "00000000-0000-4000-8000-000000000000"
 logger = logging.getLogger(__name__)

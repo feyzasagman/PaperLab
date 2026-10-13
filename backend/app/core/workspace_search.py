@@ -606,7 +606,7 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
 
 async def list_hits(
     session: AsyncSession, workspace_id, limit: int = 50, after: str | None = None,
-    stage1_status: str | None = None, acquisition_status: str | None = None,
+    stage1_status: str | None = None, acquisition_status: str | None = None, run_id: uuid.UUID | None = None,
 ) -> tuple[list[dict], str | None]:
     """Keyset-paginated hit listing, ordered by (first_seen_at, id) so the cursor is stable even when several
     hits share a first_seen_at timestamp. `tuple_()` on both sides makes SQLAlchemy emit a real SQL row-value
@@ -628,8 +628,12 @@ async def list_hits(
         )
         .where(WorkspaceSearchHit.workspace_id == workspace_id)
     )
-    if stage1_status:
+    if stage1_status == "undecided":
+        query = query.where(WorkspaceSearchHit.stage1_status.is_(None))
+    elif stage1_status:
         query = query.where(WorkspaceSearchHit.stage1_status == stage1_status)
+    if run_id is not None:
+        query = query.where(WorkspaceSearchHit.run_id == run_id)
     if acquisition_status:
         query = query.where(WorkspaceSearchHit.acquisition_status == acquisition_status)
     if after:
@@ -699,6 +703,16 @@ async def bulk_review_hits(
             hit.priority = priority
     await session.commit()
     return len(hits)
+
+
+async def owned_hit_ids(session: AsyncSession, workspace_id, hit_ids: list) -> set:
+    """The ids among hit_ids that belong to workspace_id."""
+    rows = await session.scalars(
+        select(WorkspaceSearchHit.id).where(
+            WorkspaceSearchHit.id.in_(hit_ids), WorkspaceSearchHit.workspace_id == workspace_id
+        )
+    )
+    return set(rows)
 
 
 async def clear_hits(session: AsyncSession, workspace_id: uuid.UUID) -> int:
