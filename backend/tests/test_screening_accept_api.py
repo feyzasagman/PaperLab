@@ -70,3 +70,9 @@ async def test_sort_ai_and_min_relevance(client, session):
 async def test_bad_sort_or_min_relevance_is_422(client, session, params):
     workspace, _ = await make_pool(session, [])
     assert (await client.get(_base(workspace), params=params)).status_code == 422
+
+
+async def test_accept_caps_the_id_list(client, session):
+    workspace, _ = await make_pool(session, [])
+    ids = [str(uuid.uuid4()) for _ in range(5001)]
+    assert (await client.post(f"{_base(workspace)}/accept-suggestions", json={"hit_ids": ids})).status_code == 422

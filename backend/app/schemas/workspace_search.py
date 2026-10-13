@@ -137,7 +137,7 @@ class SuggestStart(BaseModel):
 
 
 class AcceptSuggestions(BaseModel):
-    hit_ids: list[uuid.UUID]
+    hit_ids: list[uuid.UUID] = Field(max_length=5000)
 
 
 class AcceptSuggestionsOut(BaseModel):

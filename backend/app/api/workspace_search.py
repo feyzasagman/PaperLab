@@ -114,7 +114,11 @@ async def put_screening(
             ("inclusion", "inclusion_criteria"), ("exclusion", "exclusion_criteria"),
         ) if field in payload.model_fields_set
     }
-    state = await screening.set_criteria(session, workspace_id, **given)
+    # Settings-only saves must not touch criteria: set_criteria refuses (409) while a job runs.
+    state = (
+        await screening.set_criteria(session, workspace_id, **given) if given
+        else await screening.get_state(session, workspace_id)
+    )
     fields = payload.model_fields_set
     if fields & {"prescreen_after_scheduled_runs", "auto_import_min_relevance"}:
         # The core call overwrites the bar, so a subset keeps whatever is stored for the other setting.

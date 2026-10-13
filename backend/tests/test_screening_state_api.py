@@ -144,3 +144,15 @@ async def test_put_criteria_alone_still_means_inclusion(client, session):
     workspace, _ = await make_pool(session, [])
     body = (await client.put(_url(workspace), json={"criteria": "RCTs"})).json()
     assert (body["criteria"], body["inclusion_criteria"], body["auto_import_min_relevance"]) == ("RCTs", "RCTs", None)
+
+
+async def test_settings_only_put_works_while_suggestions_run(client, session):
+    workspace, [hit] = await make_pool(session, [("a", None)])
+    workspace.suggest_status = "running"
+    hit.suggestion = "include"
+    await session.flush()
+    resp = await client.put(_url(workspace), json={"auto_import_min_relevance": 5})
+    assert resp.status_code == 200
+    assert resp.json()["auto_import_min_relevance"] == 5
+    await session.refresh(hit)
+    assert hit.suggestion == "include"
