@@ -412,3 +412,29 @@ async def test_a_remote_default_model_says_why_and_starts_nothing(session, worke
 async def test_other_cases_start_nothing(session, worker, enqueued, kwargs):
     _, workspace = await _finish_run(session, worker, **kwargs)
     assert enqueued == [] and workspace.suggest_run_id is None and workspace.suggest_error is None
+
+
+async def test_a_failed_enqueue_puts_the_workspace_back_to_idle(session, worker, monkeypatch):
+    async def boom(job, *args):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(worker_module.queue, "enqueue", boom)
+    run, workspace = await _finish_run(session, worker)
+    assert (await session.get(WorkspaceSearchRun, run.id)).status == "exhausted"
+    assert (workspace.suggest_status, workspace.suggest_run_id) == ("idle", None)
+    assert workspace.suggest_error == "Couldn't start pre-screening after the scheduled search"
+
+
+async def test_a_stopped_run_does_not_prescreen(session, worker, enqueued):
+    from app.models.saved_search import SavedSearch  # noqa: PLC0415
+
+    run = await _new_run(session, "stopped")
+    workspace = await session.get(Workspace, run.workspace_id)
+    workspace.inclusion_criteria = "RCTs"
+    saved = SavedSearch(workspace_id=workspace.id, query="bert", schedule="0 6 * * *", timezone="UTC")
+    session.add(saved)
+    await session.flush()
+    run.saved_search_id = saved.id
+    await session.commit()
+    await worker_module._mark_exhausted_unless_stopped(session, run)
+    assert enqueued == [] and workspace.suggest_status == "idle"

@@ -646,6 +646,8 @@ async def list_hits(
     if acquisition_status:
         query = query.where(WorkspaceSearchHit.acquisition_status == acquisition_status)
     if min_relevance is not None:
+        if not 1 <= min_relevance <= 5:
+            raise InvalidInput("min_relevance must be 1 to 5")
         query = query.where(WorkspaceSearchHit.suggestion_relevance >= min_relevance)
     if sort not in (None, "ai"):
         raise InvalidInput("sort must be 'ai' or empty")

@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from app.core import screening, workspace_search
+from app.core import ai_sort, screening, workspace_search
 from app.core.errors import InvalidInput
 from tests.screening_pool import make_pool
 
@@ -86,3 +86,25 @@ async def test_ai_sort_rejects_a_bad_cursor_and_unknown_sort(session):
         await workspace_search.list_hits(session, workspace.id, after="!!!", sort="ai")
     with pytest.raises(InvalidInput):
         await workspace_search.list_hits(session, workspace.id, sort="bogus")
+
+
+async def test_accept_skips_an_exclude_with_no_reason(session):
+    workspace, (hit,) = await make_pool(session, [("a", None)])
+    _suggest(hit, "exclude", reason=None)
+    await session.flush()
+    result = await screening.accept_suggestions(session, workspace.id, [hit.id])
+    assert (result.accepted, result.skipped, hit.stage1_status) == (0, [hit.id], None)
+
+
+@pytest.mark.parametrize("cursor", [ai_sort.encode_offset(-1), ai_sort.encode_offset(ai_sort.MAX_OFFSET + 1)])
+async def test_ai_sort_rejects_a_negative_or_oversized_offset(session, cursor):
+    workspace, _ = await _ai_pool(session)
+    with pytest.raises(InvalidInput):
+        await workspace_search.list_hits(session, workspace.id, after=cursor, sort="ai")
+
+
+@pytest.mark.parametrize("bad", [0, 6, -1])
+async def test_min_relevance_must_be_1_to_5(session, bad):
+    workspace, _ = await _ai_pool(session)
+    with pytest.raises(InvalidInput):
+        await workspace_search.list_hits(session, workspace.id, min_relevance=bad)

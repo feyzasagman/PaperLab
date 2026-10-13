@@ -9,6 +9,8 @@ from sqlalchemy import case
 from app.core.errors import InvalidInput
 from app.models.workspace_search import WorkspaceSearchHit as Hit
 
+MAX_OFFSET = 100_000
+
 AI_ORDER = (
     Hit.suggestion_relevance.desc().nulls_last(),
     case({"high": 0, "medium": 1}, value=Hit.suggestion_confidence, else_=2),
@@ -28,6 +30,6 @@ def decode_offset(cursor: str | None) -> int:
         offset = int(base64.urlsafe_b64decode(cursor.encode()).decode())
     except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
         raise InvalidInput("invalid pagination cursor") from exc
-    if offset < 0:
+    if not 0 <= offset <= MAX_OFFSET:
         raise InvalidInput("invalid pagination cursor")
     return offset
