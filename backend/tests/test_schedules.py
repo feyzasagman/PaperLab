@@ -45,3 +45,12 @@ def test_an_unknown_zone_is_invalid_timezone():
     with pytest.raises(InvalidInput) as raised:
         schedules.next_fire("0 2 * * *", "Mars/Olympus", datetime(2026, 1, 1, tzinfo=UTC))
     assert str(raised.value) == "invalid_timezone"
+
+
+def test_next_fire_is_strictly_after_in_the_fall_back_hour():
+    # 02:30 Berlin happens twice on 2026-10-25 (00:30Z, 01:30Z) and cronsim fires only the first: from 01:00Z that
+    # is already past, so the next fire is the following day's 02:30 CET (01:30Z).
+    after = datetime(2026, 10, 25, 1, 0, tzinfo=UTC)
+    fire = schedules.next_fire("30 2 * * *", "Europe/Berlin", after)
+    assert fire > after
+    assert fire == datetime(2026, 10, 26, 1, 30, tzinfo=UTC)

@@ -56,3 +56,13 @@ async def test_another_workspaces_saved_search_is_not_found(session):
         await saved_searches.update(session, mine.id, view.id, {"enabled": False})
     with pytest.raises(NotFound):
         await saved_searches.delete(session, mine.id, view.id)
+
+
+async def test_a_refused_update_of_a_disabled_search_changes_nothing(session):
+    ws = await workspaces.create(session, f"Disabled {RUN}")
+    view = await saved_searches.create(session, ws.id, query="q", schedule="0 2 * * *", timezone="UTC")
+    await saved_searches.update(session, ws.id, view.id, {"enabled": False})
+    with pytest.raises(InvalidInput) as raised:
+        await saved_searches.update(session, ws.id, view.id, {"enabled": False, "timezone": "Nowhere/City"})
+    assert str(raised.value) == "invalid_timezone"
+    assert (await saved_searches.get(session, view.id)).timezone == "UTC"

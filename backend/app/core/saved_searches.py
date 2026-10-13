@@ -141,10 +141,13 @@ async def update(
     merged = {f: changes.get(f, getattr(row, f)) for f in FIELDS}
     merged["schedule"] = schedules.to_cron("cron", cron=merged["schedule"])
     _validate(merged)
+    # Validate schedule + zone even when disabled, before touching the row, so a refusal leaves it clean.
+    upcoming = schedules.next_fire(merged["schedule"], merged["timezone"], now or _now())
+    recompute = {"schedule", "timezone", "enabled"} & set(changes) or row.next_run_at is None
     for field, value in merged.items():
         setattr(row, field, value.strip() if field == "query" else value)
-    if {"schedule", "timezone", "enabled"} & set(changes) or row.next_run_at is None:
-        row.next_run_at = _schedule_next(row, now or _now())
+    if recompute:
+        row.next_run_at = upcoming if row.enabled else None
     await session.commit()
     return await _view(session, row)
 

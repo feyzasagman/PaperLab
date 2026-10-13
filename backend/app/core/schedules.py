@@ -11,6 +11,7 @@ from app.core.errors import InvalidInput
 
 _TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _SHAPE = re.compile(r"^(\d{1,2}) (\d{1,2}) \* \* (\*|[0-6])$")
+_MAX_STEPS = 5
 _HINT = "A 5-field cron expression, e.g. '0 2 * * 1'."
 
 
@@ -53,10 +54,14 @@ def describe(cron: str) -> tuple[str, str | None, int | None]:
 def next_fire(cron: str, tz: str, after: datetime) -> datetime:
     """The first fire time strictly after `after`, in UTC. Raises InvalidInput (invalid_schedule / invalid_timezone)."""
     zone = _zone(tz)
+    start = after
     try:
-        fire = next(CronSim(cron, after.astimezone(zone)))
-        if fire.astimezone(timezone.utc) <= after:
-            fire = next(CronSim(cron, after.astimezone(zone) + timedelta(seconds=1)))
+        # A fall-back hour repeats wall-clock times; cronsim can return the earlier pass: step on until after `after`.
+        for _ in range(_MAX_STEPS):
+            fire = next(CronSim(cron, start.astimezone(zone))).astimezone(timezone.utc)
+            if fire > after:
+                return fire
+            start = fire + timedelta(minutes=1)
     except CronSimError:
         raise InvalidInput("invalid_schedule", hint=_HINT) from None
-    return fire.astimezone(timezone.utc)
+    raise InvalidInput("invalid_schedule", hint=_HINT)
