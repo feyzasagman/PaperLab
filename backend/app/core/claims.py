@@ -2,6 +2,7 @@
 passages, a verbatim quote that is checked against them, and an llm_outputs row for provenance."""
 
 import json
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Literal
@@ -10,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import llm_connections, llm_json, notes, prompts, quotes, retrieval
+from app.core import citations, llm_connections, llm_json, notes, prompts, quotes, retrieval
 from app.core.errors import InvalidInput, NotFound
 from app.models import Chunk, LLMOutput, Paper, PaperStatus
 from app.providers.llm import build_llm
@@ -170,3 +171,54 @@ async def verify_claim(
         note = await notes.create_ai_note(session, paper.id, body, output_id, quote)
         note_id = note.id
     return ClaimCheck(**{**asdict(check), "output_id": output_id, "note_id": note_id})
+
+
+MAX_CLAIMS = 30
+
+
+@dataclass(frozen=True)
+class ClaimItem:
+    claim: str  # the sentence with its citation(s) removed
+    citation: citations.Citation
+    check: ClaimCheck | None = None
+    error: str | None = None  # citation_not_found | ambiguous_citation
+    candidates: list[str] = field(default_factory=list)  # titles when ambiguous
+
+
+def _without(sentence: str, found: list[citations.Citation]) -> str:
+    """The sentence with every citation span cut out and the spacing tidied."""
+    for start, end in sorted({c.span for c in found}, reverse=True):
+        sentence = sentence[:start] + sentence[end:]
+    sentence = " ".join(sentence.split())
+    return re.sub(r"\s+([.,;:!?])", r"\1", sentence).strip()
+
+
+async def verify_claims(
+    session: AsyncSession,
+    text: str,
+    *,
+    workspace_id: uuid.UUID | None = None,
+    llm=None,
+    save: bool = False,
+) -> list[ClaimItem]:
+    """Checks every cited claim in `text`, in order: one item per citation (a sentence citing two papers is two
+    claims). A citation that matches no paper is `citation_not_found`, several is `ambiguous_citation` with the
+    titles; neither is guessed. More than 30 cited claims raises InvalidInput("too_many_claims") before any model
+    call. `workspace_id` limits matching to one workspace (the caller resolves a name with workspaces.by_name).
+    """
+    pending = [
+        (_without(s, found), c) for s in citations.split_sentences(text) if (found := citations.find(s)) for c in found
+    ]
+    if len(pending) > MAX_CLAIMS:
+        raise InvalidInput("too_many_claims", detail=f"{len(pending)} cited claims; the limit is {MAX_CLAIMS}.")
+    items = []
+    for claim, citation in pending:
+        found = await citations.match(session, citation, workspace_id)
+        if not found.paper_ids:
+            items.append(ClaimItem(claim, citation, error="citation_not_found"))
+        elif len(found.paper_ids) > 1:
+            items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=found.titles))
+        else:
+            check = await verify_claim(session, claim, paper_id=found.paper_ids[0], llm=llm, save=save)
+            items.append(ClaimItem(claim, citation, check=check))
+    return items
