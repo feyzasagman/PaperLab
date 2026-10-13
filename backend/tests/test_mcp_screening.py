@@ -313,3 +313,37 @@ async def test_a_backwards_year_range_is_invalid_years(session):
     response = await call("start_search_run", workspace=f"Bad years {RUN}", query="q", sources=["arxiv"],
                           year_from=2026, year_to=2023)
     assert response.is_error and response.structured_content["error"] == "invalid_years"
+
+
+async def test_a_weekly_saved_search_is_created_listed_and_paused(session):
+    await new_workspace(session, "Sched")
+    ws = f"Sched {RUN}"
+    made = result(await call(
+        "create_saved_search", workspace=ws, query="llm creativity", schedule="weekly", time="06:30", weekday=1,
+        timezone="Europe/Berlin",
+    ))
+    assert made["schedule_kind"] == "weekly" and made["next_run_at"] and made["enabled"]
+
+    assert [s["id"] for s in result(await call("list_saved_searches", workspace=ws))] == [made["id"]]
+
+    paused = result(await call("set_saved_search_enabled", saved_search_id=made["id"], enabled=False))
+    assert paused["enabled"] is False and paused["next_run_at"] is None
+
+
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        ({"schedule": "hourly"}, "invalid_schedule"),
+        ({"timezone": "Nowhere/X"}, "invalid_timezone"),
+        ({"workspace": "No such workspace"}, "unknown_workspace"),
+    ],
+)
+async def test_create_saved_search_errors_are_readable(session, args, code):
+    await new_workspace(session, "Bad sched")
+    response = await call("create_saved_search", **{"workspace": f"Bad sched {RUN}", "query": "q", **args})
+    assert response.is_error and response.structured_content["error"] == code
+
+
+async def test_pausing_an_unknown_saved_search_says_so(session):
+    response = await call("set_saved_search_enabled", saved_search_id=str(uuid.uuid4()), enabled=True)
+    assert response.is_error and response.structured_content["error"] == "saved_search_not_found"

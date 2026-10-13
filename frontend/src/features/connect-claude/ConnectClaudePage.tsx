@@ -93,7 +93,7 @@ export function ConnectClaudePage() {
           <li>Create workspaces, file papers in them, or take them out.</li>
           <li>
             Run searches across your paper sources, screen and import the results, and follow citations to find
-            more papers.
+            more papers, or set a search to run by itself overnight or weekly.
           </li>
           <li>Record full-text eligibility and get your PRISMA counts.</li>
           <li>Read your notes, in one workspace or on one paper.</li>
@@ -200,7 +200,7 @@ export function ConnectClaudePage() {
         {check.data?.ok && (
           <p role="status" className="flex items-center gap-1.5 text-sm">
             <CircleCheck aria-hidden className="size-4 shrink-0 text-primary" />
-            The server answers with all 20 of its tools.
+            The server answers with all 23 of its tools.
           </p>
         )}
         {check.data?.detail && <ErrorAlert message={check.data.detail} />}

@@ -391,6 +391,13 @@ Systematic search and screening:
 - `set_eligibility`: records include or exclude after full-text reading;
 - `get_prisma`: the PRISMA flow counts for a workspace or one run.
 
+Scheduled searches:
+- `create_saved_search`: runs a search by itself, daily or weekly at a time you choose (or on a cron schedule), in your time zone;
+- `list_saved_searches`: a workspace's scheduled searches, with their last and next run and any error;
+- `set_saved_search_enabled`: pauses or resumes one.
+
+Scheduled searches run while PaperLab is running: the desktop app with **Keep running** on (Settings → Desktop app), or `docker compose up -d`. A time that passed while it was closed runs once when it next starts. New results land in the workspace for you to screen.
+
 Notes:
 - `list_notes`: the notes on a workspace or a paper, labelled You, AI or AI · edited;
 - `create_note`: a note on a passage it quotes exactly.

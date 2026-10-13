@@ -32,6 +32,8 @@ mcp = MCPServer(
         "(stop_search_run ends one early); read results with list_hits, "
         "record the owner's screening with review_hits, pull papers in with import_hit, widen with snowball. "
         "After full-text reading, record set_eligibility; get_prisma gives the flow counts. "
+        "Saved searches: create_saved_search runs a search on a schedule, list_saved_searches shows them and "
+        "set_saved_search_enabled pauses or resumes one. "
         "Notes: list_notes reads them, create_note saves one on a passage it quotes exactly. "
         "An AI suggestion on a hit is a suggestion, never a decision; only review_hits records one."
     ),
@@ -260,3 +262,44 @@ async def list_notes(
     or all."""
     async with sessions() as session:
         return await pipeline.list_notes(session, workspace, paper_id, author)
+
+
+@mcp.tool()
+@recoverable
+async def create_saved_search(
+    workspace: str,
+    query: str,
+    schedule: str = "daily",
+    time: str | None = "02:00",
+    weekday: int | None = None,
+    cron: str | None = None,
+    sources: list[str] | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    timezone: str = "UTC",
+) -> pipeline.saved_searches.SavedSearchView:
+    """Use to make a search run by itself on a schedule (overnight, weekly...): daily or weekly at HH:MM (weekday
+    0 = Sunday), or a cron expression. Pass the owner's IANA time zone (e.g. Europe/Berlin); otherwise times are UTC.
+    New hits land in the workspace for screening; PaperLab must be running at that time."""
+    async with sessions() as session:
+        return await pipeline.create_saved_search(
+            session, workspace, query, schedule, time, weekday, cron, sources, year_from, year_to, timezone
+        )
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def list_saved_searches(workspace: str) -> list[pipeline.saved_searches.SavedSearchView]:
+    """Use to see a workspace's scheduled searches with their last and next run and any error."""
+    async with sessions() as session:
+        return await pipeline.list_saved_searches(session, workspace)
+
+
+@mcp.tool()
+@recoverable
+async def set_saved_search_enabled(
+    saved_search_id: uuid.UUID, enabled: bool
+) -> pipeline.saved_searches.SavedSearchView:
+    """Use to pause or resume a scheduled search."""
+    async with sessions() as session:
+        return await pipeline.set_saved_search_enabled(session, saved_search_id, enabled)
