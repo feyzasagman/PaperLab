@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from app.core.errors import Conflict
 from app.models.workspace_search import WorkspaceSearchHit
 from evals import screening_eval as ev
 from tests.screening_pool import make_pool
@@ -94,3 +95,48 @@ def test_config_file_loads():
     assert (cfg.workspace, cfg.min_decided) == ("PaperLab", 30)
     with pytest.raises(ValidationError):
         ev.Config.model_validate({"workspace": "x"})
+
+
+def run_main(monkeypatch, *args):
+    monkeypatch.setattr("sys.argv", ["screening_eval", *args])
+    with pytest.raises(SystemExit) as exit_info:
+        ev.main()
+    return exit_info.value.code
+
+
+def test_cli_bad_config_exits_2(monkeypatch, tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("workspace: x\ntypo_key: 1\n")
+    assert run_main(monkeypatch, "--config", str(bad)) == 2
+    assert run_main(monkeypatch, "--config", str(tmp_path / "missing.yaml")) == 2
+
+
+def test_cli_rejects_bad_limit(monkeypatch):
+    assert run_main(monkeypatch, "--limit", "0") == 2
+
+
+def test_cli_no_default_model_exits_2(monkeypatch):
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def no_model(session, model_id):
+        raise Conflict("no_model")
+
+    monkeypatch.setattr(ev, "SessionLocal", FakeSession)
+    monkeypatch.setattr(ev.llm_connections, "resolve", no_model)
+    assert run_main(monkeypatch) == 2
+
+
+async def test_no_relevant_hits_fails_with_reason(session, capsys):
+    workspace, _ = await make_pool(session, [(ABSTRACT, "not_relevant")] * 3)
+    workspace.research_question = "q"
+    await session.flush()
+    replies = [reply("exclude", 1, reason="wrong_topic")] * 3
+    metrics, _ = await ev.evaluate(session, workspace.name, Scripted(replies), None)
+    assert metrics.missed_relevant_rate is None and ev.passes(metrics, config()) is False
+    code = await ev.execute(session, config(), workspace.name, Scripted(replies), None, None)
+    assert code == 1 and "no relevant hits to measure misses against" in capsys.readouterr().out

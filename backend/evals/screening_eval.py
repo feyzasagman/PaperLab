@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import llm_connections, workspaces
@@ -37,6 +37,8 @@ class EvalError(Exception):
 
 
 class Config(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     workspace: str = Field(min_length=1)
     min_decided: int = Field(ge=1)
     missed_relevant_rate_max: float = Field(ge=0, le=1)
@@ -54,7 +56,7 @@ def load_config(path: Path) -> Config:
 class Metrics:
     decided: int
     agreement: float
-    missed_relevant_rate: float
+    missed_relevant_rate: float | None  # None: no relevant/maybe hits, nothing to miss
     exclude_precision: float | None
     unsure_share: float
     quote_drop_rate: float
@@ -85,7 +87,8 @@ def score(rows: list[dict]) -> Metrics:
     return Metrics(
         decided=n,
         agreement=_share(sum(_agrees(r["label"], r["verdict"]) for r in rows), n),
-        missed_relevant_rate=_share(sum(r["verdict"] == "exclude" for r in positives), len(positives)),
+        missed_relevant_rate=_share(sum(r["verdict"] == "exclude" for r in positives), len(positives))
+        if positives else None,
         exclude_precision=_share(sum(r["label"] == "not_relevant" for r in excludes), len(excludes))
         if excludes else None,
         unsure_share=_share(sum(r["verdict"] == "unsure" for r in rows), n),
@@ -98,6 +101,7 @@ def score(rows: list[dict]) -> Metrics:
 def passes(metrics: Metrics, config: Config) -> bool:
     return (
         metrics.decided >= config.min_decided
+        and metrics.missed_relevant_rate is not None
         and metrics.missed_relevant_rate <= config.missed_relevant_rate_max
         and metrics.quote_drop_rate <= config.quote_drop_rate_max
     )
@@ -139,9 +143,19 @@ async def execute(session, config: Config, workspace: str, llm, limit: int | Non
         out.write_text("".join(json.dumps(r) + "\n" for r in rows))
     print(metrics)
     ok = passes(metrics, config)
+    if metrics.missed_relevant_rate is None:
+        print("FAIL: no relevant hits to measure misses against")
+        return 1
     print("PASS" if ok else f"FAIL: need {config.min_decided} decided, missed-relevant <= "
           f"{config.missed_relevant_rate_max}, quote-drop <= {config.quote_drop_rate_max}")
     return 0 if ok else 1
+
+
+def _limit(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
 
 
 async def _main(args) -> int:
@@ -153,15 +167,17 @@ async def _main(args) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()  # a bad argument exits 2 by itself
     parser.add_argument("--config", type=Path, default=CONFIG)
     parser.add_argument("--workspace")
-    parser.add_argument("--limit", type=int)
+    parser.add_argument("--limit", type=_limit)
     parser.add_argument("--out", type=Path)
     try:
-        sys.exit(asyncio.run(_main(parser.parse_args())))
+        code = asyncio.run(_main(parser.parse_args()))
     except (EvalError, DomainError) as exc:
-        sys.exit(f"bad input: {exc}")
+        print(f"bad input: {exc}", file=sys.stderr)
+        code = 2
+    sys.exit(code)
 
 
 if __name__ == "__main__":
