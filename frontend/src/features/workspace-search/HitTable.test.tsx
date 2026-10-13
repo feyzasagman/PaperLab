@@ -728,3 +728,58 @@ test('the preview panel can be dragged wider with its resize handle, and remembe
   expect(handle).toHaveAttribute('aria-valuenow', '368')
   expect(localStorage.getItem('paperlab-hit-preview-width')).toBe('368')
 })
+
+const suggested: Hit = {
+  ...baseHit, id: 'h1', title: 'Sleep trial', suggestion: 'include', suggestion_relevance: 4, suggestion_confidence: 'high',
+}
+
+test('the AI score order asks the server for sort=ai, and Score ≥ sends min_relevance', async () => {
+  localStorage.clear()
+  renderWithClient(<HitTable workspaceId="ws-1" />)
+  await pool().findByText('a paper about llms')
+  fireEvent.change(screen.getByLabelText('Sort hits'), { target: { value: 'ai' } })
+  await waitFor(() => expect(api.listSearchHits).toHaveBeenCalledWith('ws-1', expect.objectContaining({ sort: 'ai' })))
+  fireEvent.change(screen.getByLabelText('Score ≥'), { target: { value: '4' } })
+  await waitFor(() =>
+    expect(api.listSearchHits).toHaveBeenCalledWith('ws-1', expect.objectContaining({ sort: 'ai', min_relevance: 4 })),
+  )
+})
+
+test('a suggested undecided row has an Accept button named after the paper that accepts just that hit', async () => {
+  vi.spyOn(api, 'listSearchHits').mockResolvedValue({ items: [suggested], next_cursor: null })
+  vi.spyOn(api, 'acceptSuggestions').mockResolvedValue({ accepted: 1, skipped: [] })
+  renderWithClient(<HitTable workspaceId="ws-1" />)
+  fireEvent.click(await pool().findByRole('button', { name: 'Accept: Sleep trial' }))
+  await waitFor(() => expect(api.acceptSuggestions).toHaveBeenCalledWith('ws-1', ['h1']))
+})
+
+test('no Accept button on a decided row or an unsure suggestion', async () => {
+  vi.spyOn(api, 'listSearchHits').mockResolvedValue({
+    items: [
+      { ...suggested, id: 'a', title: 'Decided', stage1_status: 'relevant' },
+      { ...suggested, id: 'b', title: 'Unsure one', suggestion: 'unsure' },
+    ],
+    next_cursor: null,
+  })
+  renderWithClient(<HitTable workspaceId="ws-1" />)
+  await pool().findByText('Decided')
+  expect(pool().queryByRole('button', { name: /^Accept:/ })).toBeNull()
+})
+
+test('Accept AI suggestions in the bulk bar sends the selected ids and reports accepted and skipped', async () => {
+  vi.spyOn(api, 'listSearchHits').mockResolvedValue({ items: [suggested], next_cursor: null })
+  vi.spyOn(api, 'acceptSuggestions').mockResolvedValue({ accepted: 3, skipped: ['x', 'y'] })
+  renderWithClient(<HitTable workspaceId="ws-1" />)
+  fireEvent.click(await pool().findByRole('checkbox', { name: 'Select Sleep trial' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Accept AI suggestions' }))
+  await waitFor(() => expect(api.acceptSuggestions).toHaveBeenCalledWith('ws-1', ['h1']))
+  expect(await screen.findByText('Accepted 3, skipped 2')).toBeInTheDocument()
+})
+
+test('a failed accept shows the error', async () => {
+  vi.spyOn(api, 'listSearchHits').mockResolvedValue({ items: [suggested], next_cursor: null })
+  vi.spyOn(api, 'acceptSuggestions').mockRejectedValue(new Error('Accept failed'))
+  renderWithClient(<HitTable workspaceId="ws-1" />)
+  fireEvent.click(await pool().findByRole('button', { name: 'Accept: Sleep trial' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Accept failed')
+})

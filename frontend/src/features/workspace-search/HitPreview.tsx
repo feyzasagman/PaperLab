@@ -6,7 +6,7 @@ import { pageLink } from '@/features/discovery/candidateMeta'
 import { copyText } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { EXCLUDE_REASONS, sourceLabel } from './hitReview'
-import { SuggestionChip } from './SuggestionChip'
+import { SuggestionChip, SuggestionWhy } from './SuggestionChip'
 
 type ExcludeReason = (typeof EXCLUDE_REASONS)[number]
 
@@ -79,6 +79,7 @@ export function HitPreview({ hit, onReview, onAddPdf, addPdfPending, onUpload, u
           <SuggestionChip hit={hit} /> {hit.suggestion_note}
         </p>
       )}
+      <SuggestionWhy hit={hit} />
 
       <div className="mt-2 flex flex-col gap-2 border-t border-glass-border pt-3">
         <div className="flex gap-2">

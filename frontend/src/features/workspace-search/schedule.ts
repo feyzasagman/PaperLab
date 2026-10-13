@@ -27,6 +27,8 @@ export const ERRORS: Record<string, string> = {
   invalid_timezone: 'That time zone is not recognised. Use a name like Europe/Berlin.',
   invalid_years: 'The first year must not be after the last year.',
   unknown_source: 'One of the chosen sources is not available.',
+  no_criteria: 'Add a research question or some criteria first.',
+  no_model: 'Set up a chat model in Settings first.',
   saved_search_not_found: 'This saved search no longer exists.',
 }
 

@@ -10,7 +10,8 @@ function renderWithClient(ui: React.ReactElement, client = new QueryClient({ def
 }
 
 const state = (over = {}) => ({
-  criteria: 'RCTs on sleep', ranked_used: false, suggest_status: 'idle', suggest_done: 0, suggest_total: 0,
+  criteria: 'RCTs on sleep', research_question: null, inclusion_criteria: null, exclusion_criteria: null,
+  prescreen_after_scheduled_runs: true, auto_import_min_relevance: null, ranked_used: false, suggest_status: 'idle', suggest_done: 0, suggest_total: 0,
   suggest_error: null, model_label: 'Ollama · qwen3:8b', model_is_local: true, model_host: 'localhost', ...over,
 })
 
@@ -28,14 +29,49 @@ afterEach(() => vi.unstubAllGlobals())
 const base = '/api/workspaces/w1/search'
 
 describe('ScreeningAssist', () => {
-  it('saves the criteria', async () => {
+  it('saves the research question and both criteria with one PUT', async () => {
     const fetchMock = stubFetch({ [`GET ${base}/screening`]: () => state({ criteria: null }), [`PUT ${base}/screening`]: () => state() })
     renderWithClient(<ScreeningAssist workspaceId="w1" />)
-    fireEvent.change(await screen.findByLabelText('Inclusion / exclusion criteria'), { target: { value: 'RCTs on sleep' } })
+    fireEvent.change(await screen.findByLabelText('Research question'), { target: { value: 'Does sleep help memory?' } })
+    fireEvent.change(screen.getByLabelText('Include when…'), { target: { value: 'RCTs' } })
+    fireEvent.change(screen.getByLabelText('Exclude when…'), { target: { value: 'animal studies' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save criteria' }))
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(`${base}/screening`, expect.objectContaining({ method: 'PUT' })),
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${base}/screening`,
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({
+            research_question: 'Does sleep help memory?', inclusion_criteria: 'RCTs', exclusion_criteria: 'animal studies',
+          }),
+        }),
+      ),
     )
+  })
+
+  it('saves the pre-screen switch and the auto-import choice on their own', async () => {
+    const fetchMock = stubFetch({ [`GET ${base}/screening`]: () => state(), [`PUT ${base}/screening`]: () => state() })
+    renderWithClient(<ScreeningAssist workspaceId="w1" />)
+    fireEvent.click(await screen.findByRole('switch', { name: 'Pre-screen new hits after a scheduled search (local model only)' }))
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(`${base}/screening`, expect.objectContaining({ body: '{"prescreen_after_scheduled_runs":false}' })),
+    )
+    fireEvent.change(screen.getByLabelText('Import free PDFs automatically for hits rated'), { target: { value: '4' } })
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(`${base}/screening`, expect.objectContaining({ body: '{"auto_import_min_relevance":4}' })),
+    )
+    expect(screen.getByText('Off by default. Only free PDFs are imported; your decisions stay yours.')).toBeInTheDocument()
+  })
+
+  it('shows the server message when criteria cannot change while suggestions run', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) =>
+      init?.method === 'PUT'
+        ? new Response(JSON.stringify({ detail: 'Stop the suggestions before changing the criteria' }), { status: 409 })
+        : new Response(JSON.stringify(state({ criteria: null })), { status: 200 })))
+    renderWithClient(<ScreeningAssist workspaceId="w1" />)
+    fireEvent.change(await screen.findByLabelText('Research question'), { target: { value: 'x' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save criteria' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Stop the suggestions before changing the criteria')
   })
 
   it('starts suggestions without asking for a local model', async () => {

@@ -622,6 +622,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/search/hits/accept-suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Suggestions */
+        post: operations["accept_suggestions_api_workspaces__workspace_id__search_hits_accept_suggestions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/search/hits/bulk": {
         parameters: {
             query?: never;
@@ -1574,6 +1591,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AcceptSuggestions */
+        AcceptSuggestions: {
+            /** Hit Ids */
+            hit_ids: string[];
+        };
+        /** AcceptSuggestionsOut */
+        AcceptSuggestionsOut: {
+            /** Accepted */
+            accepted: number;
+            /** Skipped */
+            skipped: string[];
+        };
         /** AddPaperRequest */
         AddPaperRequest: {
             candidate: components["schemas"]["CandidateIn"];
@@ -2490,6 +2519,16 @@ export interface components {
             suggestion_model?: string | null;
             /** Suggested At */
             suggested_at?: string | null;
+            /** Suggestion Relevance */
+            suggestion_relevance?: number | null;
+            /** Suggestion Quotes */
+            suggestion_quotes?: string[] | null;
+            /** Suggestion Confidence */
+            suggestion_confidence?: string | null;
+            /** Suggestion Flags */
+            suggestion_flags?: string[] | null;
+            /** Suggestion Prompt Version */
+            suggestion_prompt_version?: number | null;
         };
         /** HitReviewUpdate */
         HitReviewUpdate: {
@@ -3431,11 +3470,36 @@ export interface components {
         ScreeningCriteriaUpdate: {
             /** Criteria */
             criteria?: string | null;
+            /** Research Question */
+            research_question?: string | null;
+            /** Inclusion Criteria */
+            inclusion_criteria?: string | null;
+            /** Exclusion Criteria */
+            exclusion_criteria?: string | null;
+            /** Prescreen After Scheduled Runs */
+            prescreen_after_scheduled_runs?: boolean | null;
+            /** Auto Import Min Relevance */
+            auto_import_min_relevance?: (4 | 5) | null;
         };
         /** ScreeningStateOut */
         ScreeningStateOut: {
             /** Criteria */
             criteria: string | null;
+            /** Research Question */
+            research_question?: string | null;
+            /** Inclusion Criteria */
+            inclusion_criteria?: string | null;
+            /** Exclusion Criteria */
+            exclusion_criteria?: string | null;
+            /**
+             * Prescreen After Scheduled Runs
+             * @default true
+             */
+            prescreen_after_scheduled_runs: boolean;
+            /** Auto Import Min Relevance */
+            auto_import_min_relevance?: number | null;
+            /** Suggest Run Id */
+            suggest_run_id?: string | null;
             /** Ranked Used */
             ranked_used: boolean;
             /**
@@ -3742,6 +3806,8 @@ export interface components {
              * @default false
              */
             confirm_remote: boolean;
+            /** Run Id */
+            run_id?: string | null;
         };
         /**
          * SurfaceChart
@@ -5107,6 +5173,8 @@ export interface operations {
                 after?: string | null;
                 stage1_status?: ("relevant" | "not_relevant" | "maybe") | null;
                 acquisition_status?: ("not_attempted" | "queued" | "imported" | "failed" | "manual") | null;
+                sort?: "ai" | null;
+                min_relevance?: number | null;
             };
             header?: never;
             path: {
@@ -5319,6 +5387,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScreeningStateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_suggestions_api_workspaces__workspace_id__search_hits_accept_suggestions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptSuggestions"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptSuggestionsOut"];
                 };
             };
             /** @description Validation Error */

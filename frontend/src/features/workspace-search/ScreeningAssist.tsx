@@ -1,22 +1,31 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { keys, useSaveCriteria, useScreeningState, useStartSuggestions, useStopSuggestions } from '@/api/queries'
+import { keys, useSaveScreening, useScreeningState, useStartSuggestions, useStopSuggestions } from '@/api/queries'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { errorText } from './schedule'
 
 const CRITERIA_MAX = 4000
 
-/** Workspace criteria and the on-request suggestion job (M31b, D188, D189). Never starts by itself. */
+type Fields = { research_question: string; inclusion_criteria: string; exclusion_criteria: string }
+const FIELDS: { key: keyof Fields; label: string; hint: string }[] = [
+  { key: 'research_question', label: 'Research question', hint: 'What are you trying to find out?' },
+  { key: 'inclusion_criteria', label: 'Include when…', hint: 'One rule per line, e.g. randomised trials in adults' },
+  { key: 'exclusion_criteria', label: 'Exclude when…', hint: 'One rule per line, e.g. animal studies' },
+]
+
+/** Research question, criteria, settings and the on-request suggestion job. Suggestions only start when asked. */
 export function ScreeningAssist({ workspaceId }: { workspaceId: string }) {
   const state = useScreeningState(workspaceId)
-  const save = useSaveCriteria(workspaceId)
+  const save = useSaveScreening(workspaceId)
   const start = useStartSuggestions(workspaceId)
   const stop = useStopSuggestions(workspaceId)
   const client = useQueryClient()
-  const [draft, setDraft] = useState<string | null>(null)
+  const [draft, setDraft] = useState<Partial<Fields> | null>(null)
   const status = state.data?.suggest_status
   const previous = useRef(status)
   useEffect(() => {
@@ -29,7 +38,13 @@ export function ScreeningAssist({ workspaceId }: { workspaceId: string }) {
 
   if (!state.data) return null
   const data = state.data
-  const criteria = draft ?? data.criteria ?? ''
+  const saved: Fields = {
+    research_question: data.research_question ?? '',
+    inclusion_criteria: data.inclusion_criteria ?? '',
+    exclusion_criteria: data.exclusion_criteria ?? '',
+  }
+  const fields: Fields = { ...saved, ...draft }
+  const hasCriteria = Boolean(data.criteria || saved.research_question || saved.inclusion_criteria || saved.exclusion_criteria)
   const running = status !== 'idle'
   const noModel = data.model_label === null
   const percent = data.suggest_total > 0 ? Math.round((data.suggest_done / data.suggest_total) * 100) : null
@@ -42,35 +57,66 @@ export function ScreeningAssist({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="flex flex-col gap-2 border-b px-3 py-2 text-sm">
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="screening-criteria">Inclusion / exclusion criteria</Label>
-        <Textarea
-          id="screening-criteria"
-          value={criteria}
-          maxLength={CRITERIA_MAX}
-          disabled={running}
-          onChange={(event) => setDraft(event.target.value)}
-          rows={3}
-        />
-      </div>
+      {FIELDS.map(({ key, label, hint }) => (
+        <div key={key} className="flex flex-col gap-1">
+          <Label htmlFor={`screening-${key}`}>{label}</Label>
+          <Textarea
+            id={`screening-${key}`}
+            value={fields[key]}
+            maxLength={CRITERIA_MAX}
+            disabled={running}
+            placeholder={hint}
+            onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
+            rows={key === 'research_question' ? 2 : 3}
+          />
+        </div>
+      ))}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           size="sm"
           variant="outline"
           disabled={running || draft === null || save.isPending}
-          onClick={() => save.mutate(criteria, { onSuccess: () => setDraft(null) })}
+          onClick={() => save.mutate(fields, { onSuccess: () => setDraft(null) })}
         >
           Save criteria
         </Button>
         {!running && (
-          <Button type="button" size="sm" disabled={noModel || !data.criteria || start.isPending} onClick={onSuggest}>
+          <Button type="button" size="sm" disabled={noModel || !hasCriteria || start.isPending} onClick={onSuggest}>
             Suggest for unscreened hits
           </Button>
         )}
         {noModel && (
           <span className="text-xs text-muted-foreground">Set up a chat model in Settings to get suggestions.</span>
         )}
+      </div>
+      <div className="flex flex-col gap-2 border-t pt-2">
+        <div className="flex items-center gap-2">
+          <Switch
+            id="screening-prescreen"
+            checked={data.prescreen_after_scheduled_runs}
+            disabled={save.isPending}
+            onCheckedChange={(checked) => save.mutate({ prescreen_after_scheduled_runs: checked })}
+          />
+          <Label htmlFor="screening-prescreen">Pre-screen new hits after a scheduled search (local model only)</Label>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Label htmlFor="screening-auto-import">Import free PDFs automatically for hits rated</Label>
+          <select
+            id="screening-auto-import"
+            value={data.auto_import_min_relevance ?? ''}
+            disabled={save.isPending}
+            onChange={(event) =>
+              save.mutate({ auto_import_min_relevance: event.target.value ? (Number(event.target.value) as 4 | 5) : null })
+            }
+            className="h-8 rounded-lg border bg-background px-2 text-sm"
+          >
+            <option value="">Off</option>
+            <option value="4">4 and up</option>
+            <option value="5">5 only</option>
+          </select>
+        </div>
+        <p className="text-xs text-muted-foreground">Off by default. Only free PDFs are imported; your decisions stay yours.</p>
       </div>
       {running && (
         <div className="flex flex-col gap-1.5">
@@ -93,7 +139,9 @@ export function ScreeningAssist({ workspaceId }: { workspaceId: string }) {
       )}
       {(data.suggest_error || start.error || save.error) && (
         <Alert variant="destructive" className="border-glass-border">
-          <AlertDescription>{data.suggest_error ?? start.error?.message ?? save.error?.message}</AlertDescription>
+          <AlertDescription>
+            {data.suggest_error ?? [start.error, save.error].map((e) => e && (errorText(e.message) ?? e.message)).find(Boolean)}
+          </AlertDescription>
         </Alert>
       )}
     </div>
