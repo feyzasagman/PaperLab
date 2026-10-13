@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.schemas.workspace_search import SearchSource
 
@@ -32,6 +32,14 @@ class SavedSearchUpdate(BaseModel):
     cron: str | None = None
     timezone: str | None = None
     enabled: bool | None = None
+
+    # Only year_from/year_to (and the schedule parts) may be sent as null; these four would break the update.
+    @field_validator("query", "sources", "timezone", "enabled")
+    @classmethod
+    def not_null(cls, value):
+        if value is None:
+            raise ValueError("cannot be null")
+        return value
 
 
 class SavedSearchOut(BaseModel):

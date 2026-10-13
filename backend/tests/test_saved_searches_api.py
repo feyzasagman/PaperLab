@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 
-from app.core import queue
+from app.core import queue, saved_searches
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 
@@ -73,3 +73,37 @@ async def test_unknown_time_zone_is_422(client, base):
     resp = await client.post(base, json={**DAILY, "timezone": "Mars/Base"})
     assert resp.status_code == 422
     assert "invalid_timezone" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("field", ["query", "sources", "timezone", "enabled"])
+async def test_patch_null_is_422(client, base, field):
+    created = (await client.post(base, json=DAILY)).json()
+    resp = await client.patch(f"{base}/{created['id']}", json={field: None})
+    assert resp.status_code == 422
+
+
+async def test_patch_null_year_clears_the_range(client, base):
+    created = (await client.post(base, json={**DAILY, "year_from": 2020})).json()
+    resp = await client.patch(f"{base}/{created['id']}", json={"year_from": None})
+    assert resp.status_code == 200 and resp.json()["year_from"] is None
+
+
+async def test_other_workspaces_saved_search_is_404(client, base, arq, monkeypatch):
+    monkeypatch.setattr(queue, "_pool", arq)
+    created = (await client.post(base, json=DAILY)).json()
+    other = (await client.post("/api/workspaces", json={"name": "Other"})).json()["id"]
+    url = f"/api/workspaces/{other}/saved-searches/{created['id']}"
+    assert (await client.patch(url, json={"enabled": False})).status_code == 404
+    assert (await client.delete(url)).status_code == 404
+    assert (await client.post(f"{url}/run")).status_code == 404
+
+
+async def test_run_now_with_no_source_is_422(client, base, arq, monkeypatch):
+    async def none_on(_session):
+        return []
+
+    monkeypatch.setattr(queue, "_pool", arq)
+    monkeypatch.setattr(saved_searches, "_sources_on", none_on)
+    created = (await client.post(base, json=DAILY)).json()
+    resp = await client.post(f"{base}/{created['id']}/run")
+    assert resp.status_code == 422 and arq.jobs == []
