@@ -1,0 +1,128 @@
+# Gate for claim verification on papers already in the owner's library (run: python -m evals.claims_eval).
+# paper: a case-insensitive title prefix that must match exactly one paper.
+# kind: true (a paraphrased result), overstated (stronger or broader than the paper says), contradicted
+# (the opposite of what it found), unrelated (plausible for the field, but the paper does not address it).
+# accepted: the verdicts that count as right for that case.
+gates:
+  accuracy_min: 0.7
+  overstated_min: 0.6
+cases:
+  # Attention Is All You Need
+  - paper: Attention Is All You Need
+    kind: "true"
+    claim: The Transformer reached 28.4 BLEU on the WMT 2014 English-to-German translation task.
+    accepted: [supported]
+  - paper: Attention Is All You Need
+    kind: overstated
+    claim: The Transformer beat every earlier system on every translation task it was tried on, by a wide margin.
+    accepted: [partially_supported, not_supported]
+  - paper: Attention Is All You Need
+    kind: contradicted
+    claim: The Transformer relies on recurrent layers to model the order of the words.
+    accepted: [not_supported]
+  - paper: Attention Is All You Need
+    kind: unrelated
+    claim: The model was pre-trained on unlabeled text with randomly masked words before being fine-tuned.
+    accepted: [not_addressed]
+  # BERT
+  - paper: "BERT: Pre-training"
+    kind: "true"
+    claim: BERT-large scored 80.5 on the official GLUE leaderboard, ahead of OpenAI GPT.
+    accepted: [supported]
+  - paper: "BERT: Pre-training"
+    kind: overstated
+    claim: BERT is the best model on every language task, whatever its size.
+    accepted: [partially_supported, not_supported]
+  - paper: "BERT: Pre-training"
+    kind: contradicted
+    claim: The larger BERT model did no better than the smaller one on any task.
+    accepted: [not_supported]
+  - paper: "BERT: Pre-training"
+    kind: unrelated
+    claim: The model recognises spoken words by turning speech audio into text with very low error rates.
+    accepted: [not_addressed]
+  # Divergent creativity in humans and LLMs
+  - paper: Divergent creativity in humans and large language models
+    kind: "true"
+    claim: Some language models scored higher than the average person on the Divergent Association Task.
+    accepted: [supported]
+  - paper: Divergent creativity in humans and large language models
+    kind: overstated
+    claim: Language models are now as creative as the most creative humans.
+    accepted: [partially_supported, not_supported]
+  - paper: Divergent creativity in humans and large language models
+    kind: contradicted
+    claim: Changing the prompt or the temperature made no difference to how semantically diverse the models' answers were.
+    accepted: [not_supported]
+  - paper: Divergent creativity in humans and large language models
+    kind: unrelated
+    claim: Children's divergent thinking dips in the fourth grade before recovering.
+    accepted: [not_addressed]
+  # The fourth-grade slump
+  - paper: Does the Fourth-Grade Slump
+    kind: "true"
+    claim: The meta-analysis found no general dip in divergent thinking in fourth grade; a dip showed up in seventh grade.
+    accepted: [supported]
+  - paper: Does the Fourth-Grade Slump
+    kind: overstated
+    claim: Divergent thinking improves steadily with age, at every grade, in every country and on every test.
+    accepted: [partially_supported, not_supported]
+  - paper: Does the Fourth-Grade Slump
+    kind: contradicted
+    claim: The study confirmed a clear general slump in divergent thinking in fourth grade.
+    accepted: [not_supported]
+  - paper: Does the Fourth-Grade Slump
+    kind: unrelated
+    claim: Large language models produce less varied ideas than people when brainstorming.
+    accepted: [not_addressed]
+  # Writing with language models
+  - paper: Does Writing With Language Models Reduce Content Diversity
+    kind: "true"
+    claim: Co-writing with InstructGPT made different authors' essays more similar to each other.
+    accepted: [supported]
+  - paper: Does Writing With Language Models Reduce Content Diversity
+    kind: overstated
+    claim: Any language model assistance, base or tuned, sharply lowers the diversity of what people write.
+    accepted: [partially_supported, not_supported]
+  - paper: Does Writing With Language Models Reduce Content Diversity
+    kind: contradicted
+    claim: Writing with InstructGPT left the diversity of the essays unchanged compared with writing alone.
+    accepted: [not_supported]
+  - paper: Does Writing With Language Models Reduce Content Diversity
+    kind: unrelated
+    claim: Brief creativity training raises scores on divergent thinking tests.
+    accepted: [not_addressed]
+  # Creativity enhancement methods
+  - paper: Creativity enhancement methods for adults
+    kind: "true"
+    claim: Across studies, methods to enhance creativity had a moderate positive effect, around g = 0.5.
+    accepted: [supported]
+  - paper: Creativity enhancement methods for adults
+    kind: overstated
+    claim: Every method for enhancing creativity, including drugs, works very well.
+    accepted: [partially_supported, not_supported]
+  - paper: Creativity enhancement methods for adults
+    kind: contradicted
+    claim: Cognitive-enhancing drugs were the most effective way to boost creativity.
+    accepted: [not_supported]
+  - paper: Creativity enhancement methods for adults
+    kind: unrelated
+    claim: Transformer models have largely replaced recurrent networks for machine translation.
+    accepted: [not_addressed]
+  # Human creativity in the age of LLMs
+  - paper: Human Creativity in the Age of LLMs
+    kind: "true"
+    claim: Help from a language model boosted people's creativity during the assisted tasks.
+    accepted: [supported]
+  - paper: Human Creativity in the Age of LLMs
+    kind: overstated
+    claim: Using a language model permanently damages a person's creativity.
+    accepted: [partially_supported, not_supported]
+  - paper: Human Creativity in the Age of LLMs
+    kind: contradicted
+    claim: People who used a language model did better than the control group once the assistance was removed.
+    accepted: [not_supported]
+  - paper: Human Creativity in the Age of LLMs
+    kind: unrelated
+    claim: Creativity scores are higher for adults who meditate before the task.
+    accepted: [not_addressed]

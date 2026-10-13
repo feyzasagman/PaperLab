@@ -46,6 +46,7 @@ EXPECTED_TOOLS = {
     "set_eligibility": None, "get_prisma": True, "list_notes": True,
     "create_saved_search": None, "list_saved_searches": True, "set_saved_search_enabled": None,
     "run_prescreen": None, "get_screening_suggestions": True, "accept_suggestions": None,
+    "verify_claim": None, "verify_claims": None,
 }
 
 

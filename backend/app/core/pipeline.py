@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core import (
+    claims,
     discovery,
     notes,
     paper_sources,
@@ -32,6 +33,7 @@ from app.core import (
 from app.core.errors import Conflict, InvalidInput, NotFound
 from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import PaperStatus
+from app.providers.base import LLMError, LLMUnavailable
 from app.schemas.papers import PaperOut
 from app.schemas.workspace_search import HitOut, ScreeningStateOut, SearchRunOut
 
@@ -227,14 +229,19 @@ async def get_screening_suggestions(
     return HitPage(hits=[HitOut.model_validate(item) for item in items], next_cursor=next_cursor)
 
 
+async def _refuse_remote(session: AsyncSession, allow_remote: bool) -> None:
+    """There is no confirm dialog over MCP: a remote default model runs only when the caller says the owner agreed."""
+    model = await screening._default_model(session)
+    if model is not None and not model[1] and not allow_remote:
+        raise Conflict("remote_model_needs_confirm", model=model[0])
+
+
 async def run_prescreen(session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None) -> ScreeningStateOut:
     """Starts AI pre-screening. There is no confirm dialog over MCP, so a remote default model is refused."""
     ws = await workspace_id(session, workspace)
     if run_id is not None:
         await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
-    model = await screening._default_model(session)
-    if model is not None and not model[1]:
-        raise Conflict("remote_model_needs_confirm", model=model[0])
+    await _refuse_remote(session, False)
     state = await screening.start_suggestions(session, ws, False, run_id)
     await queue.enqueue("suggest_screening", str(ws))
     return ScreeningStateOut.model_validate(state)
@@ -376,3 +383,24 @@ async def set_saved_search_enabled(
 ) -> saved_searches.SavedSearchView:
     view = await saved_searches.get(session, saved_search_id)
     return await saved_searches.update(session, view.workspace_id, saved_search_id, {"enabled": enabled})
+
+
+async def verify_claim(
+    session: AsyncSession, claim: str, paper_id: uuid.UUID | None = None, doi: str | None = None,
+    quoted_text: str | None = None, save: bool = False, allow_remote: bool = False,
+) -> claims.ClaimCheck:
+    await _refuse_remote(session, allow_remote)
+    try:
+        return await claims.verify_claim(
+            session, claim, paper_id=paper_id, doi=doi, quoted_text=quoted_text, save=save
+        )
+    except (LLMError, LLMUnavailable) as exc:
+        raise Conflict("model_unavailable", detail=str(exc)) from exc
+
+
+async def verify_claims(
+    session: AsyncSession, text: str, workspace: str | None = None, save: bool = False, allow_remote: bool = False
+) -> list[claims.ClaimItem]:
+    ws = await workspace_id(session, workspace) if workspace is not None else None
+    await _refuse_remote(session, allow_remote)
+    return await claims.verify_claims(session, text, workspace_id=ws, save=save)
