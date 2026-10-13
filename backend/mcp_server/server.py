@@ -25,9 +25,11 @@ mcp = MCPServer(
     "paperlab",
     instructions=(
         "PaperLab is the owner's research library. Learn workspace names with list_workspaces. "
-        "Library: search_library, get_paper, related_papers, list_papers; add papers by DOI, arXiv ID or PDF link "
-        "with add_paper (free copies only) and file them with add_paper_to_workspace. "
-        "Systematic search: start_search_run, then get_search_run until it finishes; read results with list_hits, "
+        "Library: search_library, get_paper, related_papers, list_papers; create_workspace makes a new one; add papers "
+        "by DOI, arXiv ID or PDF link with add_paper (free copies only), file them with add_paper_to_workspace and "
+        "take them out with remove_paper_from_workspace. "
+        "Systematic search: start_search_run, then get_search_run until it finishes "
+        "(stop_search_run ends one early); read results with list_hits, "
         "record the owner's screening with review_hits, pull papers in with import_hit, widen with snowball. "
         "After full-text reading, record set_eligibility; get_prisma gives the flow counts. "
         "Notes: list_notes reads them, create_note saves one on a passage it quotes exactly. "
@@ -208,7 +210,7 @@ async def review_hits(
 @recoverable
 async def import_hit(workspace: str, hit_id: uuid.UUID) -> pipeline.workspace_search.ImportResult:
     """Use to pull a screened hit into the library: downloads its free PDF and starts ingesting. failed=1 means no
-    free copy was found."""
+    free copy was found; imported=0, failed=0 means it was already imported."""
     async with sessions() as session:
         return await pipeline.import_hit(session, workspace, hit_id)
 

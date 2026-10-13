@@ -65,9 +65,21 @@ class AddPaperResult:
     title: str | None = None
 
 
+DOI_ARXIV_HOSTS = ("doi.org", "dx.doi.org", "arxiv.org", "www.arxiv.org")
+
+
+def _host(url: str) -> str:
+    try:
+        return urlsplit(url).hostname or ""
+    except ValueError:  # malformed: check_url refuses it as unsafe_url
+        return ""
+
+
 def _identifier(identifier: str) -> tuple[str, str]:
     """("doi" | "arxiv" | "link", value). A title or an OpenAlex ID is refused (D217)."""
     text = identifier.strip().removeprefix("doi:").removeprefix("DOI:").strip()
+    if "://" in text and _host(text) not in DOI_ARXIV_HOSTS:
+        return "link", text  # a publisher PDF link can carry a DOI in its path
     kind, value = discovery.classify_query(text)
     if kind in ("doi", "arxiv"):
         return kind, value
@@ -98,6 +110,9 @@ async def _add_found(session, providers, kind, value, workspace_uuid) -> AddPape
         paper = await papers.get_paper(session, match.paper_id)
         if workspace_uuid is not None:
             await workspaces.add_paper(session, workspace_uuid, paper.id)
+        if paper.status == PaperStatus.FAILED:  # a retry, as the app's reingest does
+            await papers.set_status(session, paper.id, PaperStatus.UPLOADED)
+            await queue.enqueue("ingest_paper", str(paper.id))
         status = "ingested" if paper.status == PaperStatus.READY else "queued"
         return AddPaperResult(status=status, paper_id=paper.id, title=paper.title)
     try:
@@ -125,7 +140,7 @@ async def _add_link(session, providers, link, workspace_uuid) -> AddPaperResult:
 async def add_paper(session: AsyncSession, identifier: str, workspace: str | None = None) -> AddPaperResult:
     """Adds a paper by DOI, arXiv ID or direct PDF link, free copies only (D68, D217), and queues its ingest."""
     kind, value = _identifier(identifier)
-    workspace_uuid = await workspace_id(session, workspace) if workspace else None  # before any download
+    workspace_uuid = await workspace_id(session, workspace) if workspace is not None else None  # before any download
     async with discovery.open_providers(session) as providers:
         if kind == "link":
             return await _add_link(session, providers, value, workspace_uuid)
@@ -205,7 +220,8 @@ async def review_hits(
         raise InvalidInput("reason_required", reasons=list(REASONS))
     ws = await workspace_id(session, workspace)
     own = await workspace_search.owned_hit_ids(session, ws, hit_ids)
-    updated = await workspace_search.bulk_review_hits(session, ws, list(own), decision, reason, None)
+    kept_reason = reason if decision == "not_relevant" else None
+    updated = await workspace_search.bulk_review_hits(session, ws, list(own), decision, kept_reason, None)
     return ReviewResult(updated=updated, skipped=[h for h in hit_ids if h not in own])
 
 
@@ -238,6 +254,8 @@ async def snowball(
 ) -> workspace_search.SnowballResult:
     if direction not in DIRECTIONS:
         raise InvalidInput(f"direction is one of {', '.join(DIRECTIONS)}")
+    if not seed_paper_ids:
+        raise InvalidInput("Give at least one seed paper.")
     backward, forward = DIRECTIONS[direction]
     ws = await workspace_id(session, workspace)
     async with discovery.open_providers(session) as providers:

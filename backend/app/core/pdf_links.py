@@ -17,14 +17,29 @@ async def resolve_host(host: str) -> list[str]:
     return [info[4][0] for info in infos]
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_V4_COMPATIBLE = ipaddress.ip_network("::/96")
+
+
 def _public(address: str) -> bool:
     ip = ipaddress.ip_address(address)
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return _public(str(ip.ipv4_mapped))
+        if ip in _NAT64:
+            return _public(str(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)))
+        if ip in _V4_COMPATIBLE or ip.is_site_local:
+            return False
     return ip.is_global and not ip.is_multicast
 
 
 async def check_url(url: str) -> None:
     """Raises InvalidInput("unsafe_url") for a non-http(s) URL or a host with any non-public address."""
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        parts.port  # noqa: B018 - raises ValueError for a port past 65535
+    except ValueError:
+        raise InvalidInput("unsafe_url", url=url) from None
     host = parts.hostname
     if parts.scheme not in ("http", "https") or not host:
         raise InvalidInput("unsafe_url", url=url)

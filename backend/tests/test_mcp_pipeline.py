@@ -11,9 +11,10 @@ from pdf_papers import chunked_paper
 
 from app.core import discovery, papers, pdf_links, workspaces
 from app.core.candidates import Candidate
+from app.models import PaperStatus
 from app.providers import discovery_fake
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 RUN = uuid.uuid4().hex[:8]  # the owner's workspaces share the dev database (D37)
 
 
@@ -145,6 +146,11 @@ async def test_a_link_to_an_html_page_is_no_free_pdf(jobs):
         "http://10.0.0.1/a.pdf",
         "http://[::1]/a.pdf",
         "http://169.254.169.254/latest",
+        "http://[64:ff9b::a00:1]/a.pdf",
+        "http://[::127.0.0.1]/a.pdf",
+        "http://[fec0::1]/a.pdf",
+        "http://[::1/a.pdf",
+        "http://example.org:99999/a.pdf",
     ],
 )
 async def test_unsafe_links_are_refused_before_any_request(link, jobs):
@@ -193,5 +199,46 @@ async def test_add_paper_into_a_workspace_files_it(session, jobs):
 
 async def test_an_unknown_workspace_is_refused_before_any_download(jobs):
     response = await call("add_paper", identifier=FREE_DOI, workspace=f"Nope {RUN}")
+    assert response.is_error and response.structured_content["error"] == "unknown_workspace"
+    assert jobs.jobs == []
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://link.springer.com/content/pdf/10.1007/s11192-020-03690-4.pdf",
+        "https://www.biorxiv.org/content/10.1101/2020.03.22.002386v3.full.pdf",
+    ],
+)
+async def test_a_publisher_link_with_a_doi_in_its_path_is_a_link_not_a_doi(link, jobs):
+    added = result(await call("add_paper", identifier=link))
+    assert added["status"] == "no_free_pdf" and added["landing_url"] == link and jobs.jobs == []
+
+
+async def test_a_doi_that_matches_no_search_result_is_no_matching_paper(monkeypatch):
+    async def search(_session, _providers, _query):
+        return discovery.SearchResult([Candidate(title="Other", doi="10.1234/other")], [])
+
+    monkeypatch.setattr(discovery, "search", search)
+    response = await call("add_paper", identifier=FREE_DOI)
+    assert response.is_error and response.structured_content["error"] == "no_matching_paper"
+
+
+async def test_a_failed_paper_already_in_the_library_is_queued_again(session, jobs, monkeypatch, tmp_path):
+    paper, _, _ = await chunked_paper(session, tmp_path, title="Failed one")
+    await papers.set_status(session, paper.id, PaperStatus.FAILED, "boom")
+
+    async def search(_session, _providers, _query):
+        return discovery.SearchResult([Candidate(title="Failed one", doi=FREE_DOI, paper_id=paper.id)], [])
+
+    monkeypatch.setattr(discovery, "search", search)
+    added = result(await call("add_paper", identifier=FREE_DOI))
+
+    assert added["status"] == "queued" and jobs.jobs == [("ingest_paper", str(paper.id))]
+    assert (await papers.get_paper(session, paper.id)).status == PaperStatus.UPLOADED
+
+
+async def test_an_empty_workspace_name_is_refused_not_ignored(jobs):
+    response = await call("add_paper", identifier=FREE_DOI, workspace="")
     assert response.is_error and response.structured_content["error"] == "unknown_workspace"
     assert jobs.jobs == []

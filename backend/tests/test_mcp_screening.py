@@ -16,7 +16,7 @@ from app.models import Note
 from app.models.note import Provenance
 from app.providers import discovery_fake
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 RUN = uuid.uuid4().hex[:8]
 
 
@@ -190,6 +190,37 @@ async def test_snowball_from_a_library_paper_adds_hits(session, tmp_path):
     snow = result(await call("snowball", workspace=f"Snow {RUN}", seed_paper_ids=[str(paper.id)], direction="both"))
 
     assert set(snow) == {"new_hits", "skipped_seeds", "errors"}
+    assert snow["new_hits"] >= 1
+    hits = result(await call("list_hits", workspace=f"Snow {RUN}"))["hits"]
+    assert hits and {h["source_method"] for h in hits} >= {"snowball_backward"}
+
+
+async def test_snowball_backward_tags_hits_backward_only(session, tmp_path):
+    ws = await new_workspace(session, "Back")
+    paper, _, _ = await chunked_paper(session, tmp_path, title="Seed paper")
+    paper.doi = f"{discovery_fake.DOI_PREFIX}free"
+    await session.commit()
+    await workspaces.add_paper(session, ws.id, paper.id)
+
+    snow = result(await call("snowball", workspace=f"Back {RUN}", seed_paper_ids=[str(paper.id)], direction="backward"))
+
+    assert snow["new_hits"] >= 1
+    hits = result(await call("list_hits", workspace=f"Back {RUN}"))["hits"]
+    assert {h["source_method"] for h in hits} == {"snowball_backward"}
+
+
+async def test_snowball_with_no_seeds_is_refused_and_makes_no_run(session):
+    await new_workspace(session, "Empty")
+    response = await call("snowball", workspace=f"Empty {RUN}", seed_paper_ids=[], direction="both")
+    assert response.is_error and response.structured_content["error"] == "invalid_input"
+
+
+async def test_review_reason_is_kept_only_for_not_relevant(session):
+    await run_with_hits(session, "Keep")
+    hit = result(await call("list_hits", workspace=f"Keep {RUN}"))["hits"][0]["id"]
+    await call("review_hits", workspace=f"Keep {RUN}", hit_ids=[hit], decision="maybe", reason="other")
+    after = result(await call("list_hits", workspace=f"Keep {RUN}"))["hits"]
+    assert next(h for h in after if h["id"] == hit)["stage1_exclude_reason"] is None
 
 
 async def test_snowball_direction_is_checked(session):
