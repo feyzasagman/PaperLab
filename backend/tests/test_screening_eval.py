@@ -181,3 +181,12 @@ async def test_all_model_errors_fail(session, capsys):
     empty.research_question = "q"
     await session.flush()
     assert await ev.execute(session, config(), empty.name, Scripted([]), None, None) == 1
+
+
+async def test_fail_line_names_only_failed_gates(session, capsys):
+    workspace, _ = await seed(session)
+    strict = config().model_copy(update={"missed_relevant_rate_max": 0.1})
+    assert await ev.execute(session, strict, workspace.name, Scripted(REPLIES), None, None) == 1
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("FAIL"))
+    assert "missed-relevant 0.33 > 0.1" in line
+    assert "decided" not in line and "quote-drop" not in line

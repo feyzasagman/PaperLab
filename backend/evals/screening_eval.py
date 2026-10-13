@@ -101,6 +101,17 @@ def score(rows: list[dict], skipped_no_abstract: int = 0) -> Metrics:
     )
 
 
+def _failed_gates(metrics: Metrics, config: Config) -> list[str]:
+    failed = []
+    if metrics.decided < config.min_decided:
+        failed.append(f"decided {metrics.decided} < {config.min_decided}")
+    if metrics.missed_relevant_rate is not None and metrics.missed_relevant_rate > config.missed_relevant_rate_max:
+        failed.append(f"missed-relevant {metrics.missed_relevant_rate:.2f} > {config.missed_relevant_rate_max}")
+    if metrics.quote_drop_rate > config.quote_drop_rate_max:
+        failed.append(f"quote-drop {metrics.quote_drop_rate:.2f} > {config.quote_drop_rate_max}")
+    return failed
+
+
 def passes(metrics: Metrics, config: Config) -> bool:
     return (
         metrics.decided >= config.min_decided
@@ -156,8 +167,7 @@ async def execute(session, config: Config, workspace: str, llm, limit: int | Non
     if metrics.missed_relevant_rate is None:
         print("FAIL: no relevant hits to measure misses against")
         return 1
-    print("PASS" if ok else f"FAIL: need {config.min_decided} decided, missed-relevant <= "
-          f"{config.missed_relevant_rate_max}, quote-drop <= {config.quote_drop_rate_max}")
+    print("PASS" if ok else "FAIL: " + "; ".join(_failed_gates(metrics, config)))
     return 0 if ok else 1
 
 
