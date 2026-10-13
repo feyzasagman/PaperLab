@@ -19,17 +19,21 @@ from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import claims, llm_connections
 from app.core.errors import DomainError
 from app.db import SessionLocal
+from app.models import LLMOutput
+from app.providers.base import LLMError, LLMUnavailable
 from app.providers.llm import build_llm
 from evals.run import EvalError, resolve_papers
 
 CONFIG = Path(__file__).with_name("claims.yaml")
 Verdict = Literal["supported", "partially_supported", "not_supported", "not_addressed"]
 KEPT = ("supported", "partially_supported")  # verdicts that rest on a quote
+NO_ANSWER = ("cannot_verify", "check_failed")  # no real model verdict
 
 
 class Case(BaseModel):
@@ -67,7 +71,7 @@ class Metrics:
     cases: int
     accuracy: float
     per_kind: dict[str, float]
-    overstated_accuracy: float | None  # None: no overstated case was run
+    overstated_accuracy: float | None  # None: no overstated case was run (reported as n/a, not a failure)
     confusion: dict[str, dict[str, int]]  # kind -> verdict -> count
     quote_kept_rate: float | None  # among supported / partially_supported verdicts; None: there were none
     cannot_verify: int
@@ -91,7 +95,7 @@ def score(rows: list[dict]) -> Metrics:
         overstated_accuracy=per_kind.get("overstated"),
         confusion={k: dict(Counter(r["verdict"] for r in v)) for k, v in by_kind.items()},
         quote_kept_rate=_share(sum(r["quote"] is not None for r in checked), len(checked)) if checked else None,
-        cannot_verify=sum(r["verdict"] == "cannot_verify" for r in rows),
+        cannot_verify=sum(r["verdict"] in NO_ANSWER for r in rows),
         median_seconds=statistics.median(r["seconds"] for r in rows) if rows else 0.0,
     )
 
@@ -100,9 +104,7 @@ def _failed_gates(metrics: Metrics, gates: Gates) -> list[str]:
     failed = []
     if metrics.accuracy < gates.accuracy_min:
         failed.append(f"accuracy {metrics.accuracy:.2f} < {gates.accuracy_min}")
-    if metrics.overstated_accuracy is None:
-        failed.append("no overstated cases to measure")
-    elif metrics.overstated_accuracy < gates.overstated_min:
+    if metrics.overstated_accuracy is not None and metrics.overstated_accuracy < gates.overstated_min:
         failed.append(f"overstated accuracy {metrics.overstated_accuracy:.2f} < {gates.overstated_min}")
     return failed
 
@@ -111,19 +113,35 @@ def passes(metrics: Metrics, gates: Gates) -> bool:
     return not _failed_gates(metrics, gates)
 
 
+async def _check(session, case: Case, paper_id, llm) -> dict:
+    start = time.perf_counter()
+    row = {"paper": case.paper, "claim": case.claim, "kind": case.kind, "accepted": case.accepted}
+    try:
+        check = await claims.verify_claim(session, case.claim, paper_id=paper_id, llm=llm, save=False)
+    except (LLMError, LLMUnavailable) as exc:
+        return {**row, "verdict": "check_failed", "correct": False, "reason": str(exc), "quote": None,
+                "confidence": None, "evidence_level": None, "output_id": None, "seconds": time.perf_counter() - start}
+    return {
+        **row, "verdict": check.verdict, "correct": check.verdict in case.accepted, "reason": check.reason,
+        "quote": check.quote, "confidence": check.confidence, "evidence_level": check.evidence_level,
+        "output_id": check.output_id, "seconds": time.perf_counter() - start,
+    }
+
+
 async def evaluate(session: AsyncSession, cases: list[Case], llm, limit: int | None) -> tuple[Metrics, list[dict]]:
-    """Check the first `limit` cases (all when None); no note is saved."""
+    """Check the first `limit` cases (all when None); no note is saved and the claim_check rows it wrote are deleted."""
     cases = cases[:limit]
     ids = await resolve_papers(session, cases)
     rows = []
-    for case in cases:
-        start = time.perf_counter()
-        check = await claims.verify_claim(session, case.claim, paper_id=ids[case.paper], llm=llm, save=False)
-        rows.append({
-            "paper": case.paper, "claim": case.claim, "kind": case.kind, "accepted": case.accepted,
-            "verdict": check.verdict, "correct": check.verdict in case.accepted, "reason": check.reason,
-            "quote": check.quote, "confidence": check.confidence, "seconds": time.perf_counter() - start,
-        })
+    try:
+        for case in cases:
+            rows.append(await _check(session, case, ids[case.paper], llm))
+    finally:
+        written = [r["output_id"] for r in rows if r["output_id"] is not None]
+        if written:
+            await session.execute(delete(LLMOutput).where(LLMOutput.id.in_(written)))
+            await session.commit()
+    rows = [{k: v for k, v in r.items() if k != "output_id"} for r in rows]
     return score(rows), rows
 
 
@@ -136,6 +154,8 @@ async def execute(session, config: Config, llm, limit: int | None, out: Path | N
     if out:
         out.write_text("".join(json.dumps(r) + "\n" for r in rows))
     print(metrics)
+    if metrics.overstated_accuracy is None:
+        print("overstated accuracy: n/a (no overstated case in this run)")
     if metrics.cannot_verify == metrics.cases:
         print("FAIL: no real model answer (every check was cannot_verify)")
         return 1

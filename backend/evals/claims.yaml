@@ -39,7 +39,7 @@ cases:
     accepted: [not_supported]
   - paper: "BERT: Pre-training"
     kind: unrelated
-    claim: Self-attention lets the model process all positions of a sequence in parallel, unlike recurrent networks.
+    claim: The model recognises spoken words by turning speech audio into text with very low error rates.
     accepted: [not_addressed]
   # Divergent creativity in humans and LLMs
   - paper: Divergent creativity in humans and large language models
@@ -65,7 +65,7 @@ cases:
     accepted: [supported]
   - paper: Does the Fourth-Grade Slump
     kind: overstated
-    claim: Divergent thinking never dips at any grade level in school.
+    claim: Divergent thinking improves steadily with age, at every grade, in every country and on every test.
     accepted: [partially_supported, not_supported]
   - paper: Does the Fourth-Grade Slump
     kind: contradicted

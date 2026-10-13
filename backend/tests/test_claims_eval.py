@@ -8,7 +8,8 @@ from sqlalchemy import func, select
 
 from app.core import retrieval
 from app.core.errors import Conflict
-from app.models import Note
+from app.models import LLMOutput, Note
+from app.providers.base import LLMError
 from evals import claims_eval as ev
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
@@ -155,3 +156,40 @@ async def test_overstated_gate_fails_on_its_own(session, tmp_path, capsys):
     assert await ev.execute(session, ev.Config(gates=gates, cases=cases), Scripted(*replies), None, None) == 1
     out = capsys.readouterr().out
     assert "overstated accuracy 0.00 < 0.6" in out and "accuracy 0.75" not in out
+
+
+async def test_no_overstated_case_is_not_applicable_rather_than_a_failure(session, tmp_path, capsys):
+    paper, cases = await seed(session, tmp_path)
+    assert await ev.execute(session, config(cases), Scripted(REPLIES[0]), 1, None) == 0
+    assert "overstated accuracy: n/a" in capsys.readouterr().out
+
+
+async def test_the_eval_leaves_no_claim_check_rows_behind(session, tmp_path):
+    paper, cases = await seed(session, tmp_path)
+    before = await session.scalar(select(func.count()).select_from(LLMOutput))
+    await ev.evaluate(session, cases, Scripted(*REPLIES), None)
+    assert await session.scalar(select(func.count()).select_from(LLMOutput)) == before
+
+
+async def test_a_failing_case_is_recorded_and_the_rest_still_run(session, tmp_path):
+    paper, cases = await seed(session, tmp_path)
+
+    class Flaky(Scripted):
+        calls = 0
+
+        async def stream(self, system, prompt):
+            Flaky.calls += 1
+            if Flaky.calls == 2:
+                raise LLMError("boom")
+            async for part in super().stream(system, prompt):
+                yield part
+
+    metrics, rows = await ev.evaluate(session, cases, Flaky(REPLIES[0], REPLIES[2], REPLIES[3]), None)
+    assert [r["verdict"] for r in rows][1] == "check_failed" and len(rows) == 4
+    assert metrics.cannot_verify == 1 and rows[1]["correct"] is False
+
+
+async def test_rows_record_evidence_level_and_confidence(session, tmp_path):
+    paper, cases = await seed(session, tmp_path)
+    _, rows = await ev.evaluate(session, cases, Scripted(*REPLIES), None)
+    assert rows[0]["evidence_level"] == "full_text" and rows[0]["confidence"] == "high"
