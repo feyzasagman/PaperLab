@@ -74,6 +74,13 @@ test('snowball from an imported paper, screen it stage-2, see it in the PRISMA e
   const seedHit = await uploadResponse.json()
   await expect(preview.getByLabel(`Upload PDF for ${title}`)).toHaveCount(0)
 
+  // On a shared dev DB every source's fake can already have put the snowball target in the pool; then a clean hop
+  // legitimately adds nothing, and only "no skipped seed, no error" can be checked.
+  type Hits = { items: { title: string; source_method: string }[] }
+  const SNOWBALL_TARGET = 'PaperLab Find Papers Fixture'
+  const hitsBefore: Hits = await (await request.get(`/api/workspaces/${workspaceId}/search/hits?limit=50`)).json()
+  const targetAlreadyPooled = hitsBefore.items.some((hit) => hit.title === SNOWBALL_TARGET)
+
   // 2/3. Screening tab: click Snowball on the seed paper's row, wait for the response.
   await page.getByRole('tab', { name: 'Screening' }).click()
   const [snowballResponse] = await Promise.all([
@@ -81,8 +88,6 @@ test('snowball from an imported paper, screen it stage-2, see it in the PRISMA e
     page.getByRole('button', { name: 'Snowball' }).click(),
   ])
   const snowballResult = await snowballResponse.json()
-  // Not new_hits > 0: with every source on, the search pool already holds the snowball fixtures' papers
-  // (the PubMed/PMC/DOAJ/... fakes return them too), so a clean hop can legitimately add none.
   expect(snowballResult.skipped_seeds).toEqual([])
   expect(snowballResult.errors).toEqual({})
 
@@ -90,10 +95,12 @@ test('snowball from an imported paper, screen it stage-2, see it in the PRISMA e
   //    hit pool on snowball (useSnowball's docstring in queries.ts) — Search/Screening never auto-refresh. Confirm
   //    the new hit(s) landed via the API directly, rather than sleeping or asserting on a UI list that was never
   //    told to refetch.
-  const hitsAfter: { items: { title: string }[] } = await (
-    await request.get(`/api/workspaces/${workspaceId}/search/hits?limit=50`)
-  ).json()
-  expect(hitsAfter.items.some((hit) => hit.title === 'PaperLab Find Papers Fixture')).toBe(true)
+  const hitsAfter: Hits = await (await request.get(`/api/workspaces/${workspaceId}/search/hits?limit=50`)).json()
+  expect(hitsAfter.items.some((hit) => hit.title === SNOWBALL_TARGET)).toBe(true)
+  if (!targetAlreadyPooled) {
+    expect(snowballResult.new_hits).toBeGreaterThan(0)
+    expect(hitsAfter.items.some((hit) => hit.source_method.startsWith('snowball'))).toBe(true)
+  }
 
   // 5. Mark the seed paper Include.
   await Promise.all([
