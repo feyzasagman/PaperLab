@@ -22,7 +22,7 @@ const SEARCH_SOURCES: Record<SearchRunSource, true> = {
   iacr_eprint: true, biorxiv: true, medrxiv: true,
 }
 
-function isSearchSource(id: string): id is SearchRunSource {
+export function isSearchSource(id: string): id is SearchRunSource {
   return id in SEARCH_SOURCES
 }
 
@@ -30,17 +30,28 @@ export function SearchControls({
   onStart,
   onStop,
   isRunning,
+  onQueryChange,
 }: {
   onStart: (args: SearchRunCreate) => void
   onStop?: () => void
   isRunning: boolean
+  /** Lets a sibling (Saved searches) prefill from what is typed here. */
+  onQueryChange?: (query: string) => void
 }) {
   const [query, setQuery] = useState('')
+  const [yearFrom, setYearFrom] = useState('')
+  const [yearTo, setYearTo] = useState('')
   const paperSources = usePaperSources()
   // undefined until usePaperSources resolves, so Start stays disabled rather than sending an empty/wrong list.
   const enabledSources = paperSources.data?.sources
     .filter((source) => source.enabled && isSearchSource(source.id))
     .map((source) => source.id as SearchRunSource)
+
+  // Only the filled years go in, so an empty box never becomes year_from: 0.
+  const filters: SearchRunCreate['filters'] = {
+    ...(yearFrom ? { year_from: Number(yearFrom) } : {}),
+    ...(yearTo ? { year_to: Number(yearTo) } : {}),
+  }
 
   return (
     <div className="flex items-center gap-2 border-b p-3">
@@ -51,17 +62,34 @@ export function SearchControls({
         id="search-query"
         aria-label="Search query"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => {
+          setQuery(e.target.value)
+          onQueryChange?.(e.target.value)
+        }}
         placeholder="e.g. large language model AND code review"
         disabled={isRunning}
       />
+      {([['From year', yearFrom, setYearFrom], ['To year', yearTo, setYearTo]] as const).map(([label, value, set]) => (
+        <Input
+          key={label}
+          type="number"
+          min={1900}
+          max={2100}
+          aria-label={label}
+          placeholder={label}
+          className="w-28 tabular-nums"
+          value={value}
+          onChange={(e) => set(e.target.value)}
+          disabled={isRunning}
+        />
+      ))}
       {isRunning ? (
         <Button variant="destructive" onClick={onStop}>
           Stop
         </Button>
       ) : (
         <Button
-          onClick={() => onStart({ query, filters: {}, sources: enabledSources!, query_overrides: {} })}
+          onClick={() => onStart({ query, filters, sources: enabledSources!, query_overrides: {} })}
           disabled={!query || !enabledSources || enabledSources.length === 0}
         >
           Start

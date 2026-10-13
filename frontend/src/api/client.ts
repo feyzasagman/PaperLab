@@ -74,6 +74,9 @@ export type GraphLink = components['schemas']['GraphLink']
 export type LibraryGraph = components['schemas']['GraphOut']
 export type PaperLinkOut = components['schemas']['LinkOut']
 export type SearchRun = components['schemas']['SearchRunOut']
+export type SavedSearch = components['schemas']['SavedSearchOut']
+export type SavedSearchCreate = components['schemas']['SavedSearchCreate']
+export type SavedSearchUpdate = components['schemas']['SavedSearchUpdate']
 export type SearchRunCreate = components['schemas']['SearchRunCreate']
 // The five sources search_batch actually fans out to (backend's SearchSource Literal) — unlike PaperSourceId,
 // never includes 'unpaywall', which has no search/discovery role (spec §6).
@@ -297,6 +300,16 @@ export const api = {
     request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs`, sendJson('POST', body)),
   stopSearchRun: (workspaceId: string, runId: string) =>
     request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs/${runId}/stop`, { method: 'POST' }),
+  listSavedSearches: (workspaceId: string) =>
+    request<SavedSearch[]>(`/api/workspaces/${workspaceId}/saved-searches`),
+  createSavedSearch: (workspaceId: string, body: SavedSearchCreate) =>
+    request<SavedSearch>(`/api/workspaces/${workspaceId}/saved-searches`, sendJson('POST', body)),
+  updateSavedSearch: (workspaceId: string, id: string, body: SavedSearchUpdate) =>
+    request<SavedSearch>(`/api/workspaces/${workspaceId}/saved-searches/${id}`, sendJson('PATCH', body)),
+  deleteSavedSearch: (workspaceId: string, id: string) =>
+    request<void>(`/api/workspaces/${workspaceId}/saved-searches/${id}`, { method: 'DELETE' }),
+  runSavedSearchNow: (workspaceId: string, id: string) =>
+    request<SearchRun>(`/api/workspaces/${workspaceId}/saved-searches/${id}/run`, { method: 'POST' }),
   getSearchRun: (workspaceId: string, runId: string) =>
     request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs/${runId}`),
   listSearchHits: (

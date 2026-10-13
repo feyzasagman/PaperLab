@@ -91,3 +91,18 @@ test('disables Start when every search source is off in settings, instead of sen
 
   expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled()
 })
+
+test('year inputs add only the filled years to filters', () => {
+  mockPaperSources()
+  const onStart = vi.fn()
+  renderWithClient(<SearchControls onStart={onStart} isRunning={false} />)
+  fireEvent.change(screen.getByLabelText('Search query'), { target: { value: 'q' } })
+
+  fireEvent.change(screen.getByLabelText('From year'), { target: { value: '2023' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+  expect(onStart.mock.calls[0][0].filters).toEqual({ year_from: 2023 })
+
+  fireEvent.change(screen.getByLabelText('From year'), { target: { value: '' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+  expect(onStart.mock.calls[1][0].filters).toEqual({})
+})
