@@ -353,7 +353,9 @@ async def verify_claim(
     """Use to check whether a paper in the library supports a claim before you write it: give exactly one of
     paper_id or doi, and quoted_text if the claim quotes the paper. The verdict is an AI judgement backed by a quote
     from the paper; evidence_level tells how much text was available (full_text, abstract_only or metadata_only),
-    and cannot_verify means there was no text to check, never a guess. save=true keeps the check as an AI note on
+    and cannot_verify means there was no text to check, never a guess. confidence=low means the quote couldn't be
+    found in the paper (or none was given): tell the owner the verdict is unconfirmed and show no quote as evidence.
+    save=true keeps the check as an AI note on
     the paper. A remote default model is refused unless the owner agreed and you pass allow_remote=true."""
     async with sessions() as session:
         return await pipeline.verify_claim(session, claim, paper_id, doi, quoted_text, save, allow_remote)
@@ -366,7 +368,8 @@ async def verify_claims(
 ) -> list[pipeline.claims.ClaimItem]:
     """Use to check a pasted paragraph: every sentence with a citation (a DOI or author-year) is checked against
     the matching library paper, optionally only within one workspace. A citation it can't match is reported, never
-    guessed; up to 30 claims per call. Verdicts are AI judgements backed by quotes; save=true keeps each as an AI
-    note. A remote default model is refused unless the owner agreed and you pass allow_remote=true."""
+    guessed; up to 30 claims per call. Verdicts are AI judgements backed by quotes; confidence=low means the quote
+    couldn't be found in the paper (or none was given): tell the owner the verdict is unconfirmed and show no quote
+    as evidence. save=true keeps each as an AI note. A remote default model is refused unless the owner agreed and you pass allow_remote=true."""
     async with sessions() as session:
         return await pipeline.verify_claims(session, text, workspace, save, allow_remote)
