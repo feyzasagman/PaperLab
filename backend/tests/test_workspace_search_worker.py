@@ -16,7 +16,7 @@ from app.models.workspace_search import WorkspaceSearchCursor, WorkspaceSearchHi
 from app.providers import discovery_fake
 from app.workers import workspace_search as worker_module
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 
 
 @pytest.fixture
@@ -408,11 +408,28 @@ async def test_a_remote_default_model_says_why_and_starts_nothing(session, worke
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"setting": False}, {"criteria": None}, {"suggest_status": "running"}, {"scheduled": False}],
+    [{"setting": False}, {"scheduled": False}],
 )
 async def test_other_cases_start_nothing(session, worker, enqueued, kwargs):
     _, workspace = await _finish_run(session, worker, **kwargs)
     assert enqueued == [] and workspace.suggest_run_id is None and workspace.suggest_error is None
+
+
+async def test_a_busy_workspace_says_the_new_hits_were_not_pre_screened(session, worker, enqueued):
+    _, workspace = await _finish_run(session, worker, suggest_status="running")
+    assert enqueued == [] and workspace.suggest_run_id is None
+    assert workspace.suggest_error == (
+        "New hits from a scheduled search weren't pre-screened because another job was running. "
+        "Press Suggest to score them."
+    )
+
+
+async def test_no_criteria_says_to_add_some(session, worker, enqueued):
+    _, workspace = await _finish_run(session, worker, criteria=None)
+    assert enqueued == [] and workspace.suggest_run_id is None
+    assert workspace.suggest_error == (
+        "New hits from a scheduled search weren't pre-screened: add a research question or inclusion criteria first."
+    )
 
 
 async def test_a_failed_enqueue_puts_the_workspace_back_to_idle(session, worker, monkeypatch):

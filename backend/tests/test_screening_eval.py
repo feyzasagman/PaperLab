@@ -9,7 +9,7 @@ from app.models.workspace_search import WorkspaceSearchHit
 from evals import screening_eval as ev
 from tests.screening_pool import make_pool
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 
 ABSTRACT = "we ran a randomised controlled trial of sleep deprivation in adults"
 QUOTE = "randomised controlled trial of sleep deprivation"
@@ -140,3 +140,15 @@ async def test_no_relevant_hits_fails_with_reason(session, capsys):
     assert metrics.missed_relevant_rate is None and ev.passes(metrics, config()) is False
     code = await ev.execute(session, config(), workspace.name, Scripted(replies), None, None)
     assert code == 1 and "no relevant hits to measure misses against" in capsys.readouterr().out
+
+
+async def test_a_decision_with_no_decided_at_still_counts_and_sorts_last(session):
+    workspace, hits = await seed(session)
+    old = hits[0]  # the oldest decision, made before decisions were timed
+    assert old.stage1_status is not None
+    old.stage1_decided_at = None
+    await session.flush()
+    metrics, rows = await ev.evaluate(session, workspace.name, Scripted(REPLIES), None)
+    assert metrics.decided == 5 and rows[-1]["title"] == "paper 0"
+    _, limited = await ev.evaluate(session, workspace.name, Scripted(REPLIES[:4]), 4)
+    assert "paper 0" not in [row["title"] for row in limited]

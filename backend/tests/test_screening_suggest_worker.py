@@ -23,7 +23,7 @@ from app.workers import screening_suggest as worker_module
 from tests.conftest import TEST_DATABASE_URL
 from tests.screening_pool import BASE, make_pool
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 
 POSITIVE = "randomised controlled trial of sleep deprivation in adults"
 NEGATIVE = "a survey of graph neural networks for molecules"
@@ -315,6 +315,7 @@ async def test_a_hit_with_no_abstract_is_unsure_without_a_model_call(session, wo
     assert llm.calls == []
     await session.refresh(hits[0])
     assert (hits[0].suggestion, hits[0].suggestion_flags) == ("unsure", ["no_abstract"])
+    assert (hits[0].suggestion_model, hits[0].suggestion_prompt_version) == (None, 2)
 
 
 async def test_a_run_scoped_job_only_touches_that_runs_hits_and_clears_its_scope(session, worker):
@@ -366,6 +367,12 @@ async def free_and_closed(session, monkeypatch, pdf_dir):
     hits[0].suggestion = "include"
     for hit in (free, closed):
         hit.suggestion, hit.suggestion_relevance = "include", 5  # already suggested: the queue is empty
+    # The fake's backward references hold other papers too: suggested without a score, so the queue stays empty.
+    await session.execute(
+        update(WorkspaceSearchHit)
+        .where(WorkspaceSearchHit.workspace_id == workspace.id, WorkspaceSearchHit.suggestion.is_(None))
+        .values(suggestion="include")
+    )
     workspace.inclusion_criteria, workspace.suggest_status = "x", "running"
     await session.flush()
     yield workspace, free, closed, arq
@@ -402,6 +409,17 @@ async def test_auto_import_skips_a_decided_hit_and_a_rating_below_the_bar(sessio
     worker(ScriptedLLM([]))
     await worker_module.suggest_screening({}, str(workspace.id))
     assert arq.jobs == []
+
+
+async def test_auto_import_skips_a_hit_the_model_said_to_exclude(session, worker, free_and_closed):
+    workspace, free, closed, arq = free_and_closed
+    workspace.auto_import_min_relevance = 4
+    free.suggestion, free.suggestion_reason = "exclude", "wrong_topic"  # rated 5, but an exclude
+    await session.flush()
+    worker(ScriptedLLM([]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    await session.refresh(free)
+    assert free.acquisition_status == "not_attempted" and arq.jobs == []
 
 
 async def _stop_during_the_only_hit(session, worker, free_and_closed):

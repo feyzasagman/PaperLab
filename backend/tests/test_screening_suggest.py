@@ -129,3 +129,16 @@ async def test_a_hyphen_broken_across_a_line_still_matches():
     abstract = "A cost-\neffective approach to screening was evaluated."
     s = await suggest(Scripted(_reply(["A cost-effective approach"])), "q", "i", "e", "T", abstract)
     assert s.quotes == ["A cost-effective approach"] and s.flags == []
+
+
+async def test_an_exclude_with_no_reason_is_retried_and_then_kept_with_its_reason():
+    bare = '{"relevance": 1, "decision": "exclude", "reason": null, "quotes": [], "why": "x"}'
+    fixed = '{"relevance": 1, "decision": "exclude", "reason": "wrong_topic", "quotes": [], "why": "x"}'
+    s = await suggest(Scripted(bare, fixed), "q", "i", "e", "T", ABSTRACT)
+    assert (s.verdict, s.reason, s.flags) == ("exclude", "wrong_topic", [])
+
+
+async def test_an_exclude_with_no_reason_twice_is_a_model_error():
+    bare = '{"relevance": 1, "decision": "exclude", "reason": null, "quotes": [], "why": "x"}'
+    s = await suggest(Scripted(bare, bare), "q", "i", "e", "T", ABSTRACT)
+    assert (s.verdict, s.flags) == ("unsure", ["model_error"])

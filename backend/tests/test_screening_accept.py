@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from app.core import ai_sort, screening, workspace_search
+from app.core import screening, workspace_search
 from app.core.errors import InvalidInput
 from tests.screening_pool import make_pool
 
@@ -68,7 +68,7 @@ async def test_min_relevance_keeps_only_that_and_above(session):
     assert {i["id"] for i in items} == {b.id, c.id, d.id, e.id}
 
 
-async def test_ai_sort_pages_with_an_offset_cursor_without_repeats(session):
+async def test_ai_sort_pages_with_a_keyset_cursor_without_repeats(session):
     workspace, hits = await _ai_pool(session)
     seen, after = [], None
     while True:
@@ -96,11 +96,25 @@ async def test_accept_skips_an_exclude_with_no_reason(session):
     assert (result.accepted, result.skipped, hit.stage1_status) == (0, [hit.id], None)
 
 
-@pytest.mark.parametrize("cursor", [ai_sort.encode_offset(-1), ai_sort.encode_offset(ai_sort.MAX_OFFSET + 1)])
-async def test_ai_sort_rejects_a_negative_or_oversized_offset(session, cursor):
+@pytest.mark.parametrize("cursor", ["MQ==", "W10=", "WzEsIDAsICJub3QgYSBkYXRlIiwgIngiXQ=="])
+async def test_ai_sort_rejects_a_malformed_cursor(session, cursor):
     workspace, _ = await _ai_pool(session)
     with pytest.raises(InvalidInput):
         await workspace_search.list_hits(session, workspace.id, after=cursor, sort="ai")
+
+
+async def test_ai_pages_do_not_skip_a_hit_after_an_accept_between_pages(session):
+    workspace, (a, b, c, d, e, f) = await _ai_pool(session)  # AI order: c d b e a f
+    page1, after = await workspace_search.list_hits(
+        session, workspace.id, limit=2, sort="ai", stage1_status="undecided")
+    assert [i["id"] for i in page1] == [c.id, d.id]
+    await screening.accept_suggestions(session, workspace.id, [c.id, d.id])
+    page2, after = await workspace_search.list_hits(
+        session, workspace.id, limit=2, after=after, sort="ai", stage1_status="undecided")
+    assert [i["id"] for i in page2] == [b.id, e.id]
+    page3, _ = await workspace_search.list_hits(
+        session, workspace.id, limit=2, after=after, sort="ai", stage1_status="undecided")
+    assert [i["id"] for i in page3] == [a.id, f.id]
 
 
 @pytest.mark.parametrize("bad", [0, 6, -1])

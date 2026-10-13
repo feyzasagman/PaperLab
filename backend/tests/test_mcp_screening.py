@@ -426,3 +426,9 @@ async def test_accept_suggestions_records_decisions_and_skips_the_rest(session):
     out = result(await call("accept_suggestions", workspace=workspace.name, hit_ids=[str(inc.id), str(none.id)]))
     assert out == {"accepted": 1, "skipped": [str(none.id)]}
     assert (inc.stage1_status, exc.stage1_status) == ("relevant", None)
+
+
+async def test_accept_suggestions_refuses_more_than_5000_ids(session):
+    workspace, _ = await _pool(session)
+    out = await call("accept_suggestions", workspace=workspace.name, hit_ids=[str(uuid.uuid4()) for _ in range(5001)])
+    assert out.is_error and out.structured_content["error"] == "too_many_hits"
