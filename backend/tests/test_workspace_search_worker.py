@@ -383,6 +383,7 @@ async def _finish_run(session, worker, *, scheduled=True, criteria="RCTs", setti
         run.saved_search_id = saved.id
     await session.commit()
     await worker_module.run_workspace_search(worker, str(run.id))
+    await session.refresh(run)  # the worker's rollback expires everything on this shared session
     await session.refresh(workspace)
     return run, workspace
 
