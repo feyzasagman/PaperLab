@@ -17,6 +17,7 @@ from app.api import mcp as mcp_api
 from app.api import paper_sources as paper_sources_api
 from app.api import reading_bridge as reading_bridge_api
 from app.api import references as references_api
+from app.api import saved_searches as saved_searches_api
 from app.api import setup as setup_api
 from app.api import workspace_search as workspace_search_api
 from app.config import settings
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(workspaces.router)
     app.include_router(workspace_search_api.router)
+    app.include_router(saved_searches_api.router)
     app.include_router(datasets.router)
     app.include_router(charts.router)
     app.include_router(llm.router)
