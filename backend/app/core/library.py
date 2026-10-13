@@ -29,6 +29,11 @@ class Passage:
     section: str | None
     text: str
     distance: float
+    source_type: (
+        str | None
+    )  # its paper's: journal_article, proceedings, book, chapter, preprint, magazine, thesis, other
+    peer_reviewed: str  # true | false | unknown (a heuristic; the owner can set it)
+    evidence_access: str  # full_text | abstract | metadata
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,10 @@ class PaperCard:
     status: str
     page_count: int | None
     is_retracted: bool
+    source_type: str | None
+    peer_reviewed: str
+    evidence_access: str
+    published_doi: str | None  # a preprint's published version, when known
     reading_pass: int
     triage: str | None
     workspaces: list[str]  # names, alphabetical
@@ -84,20 +93,23 @@ async def search(
         scope = [paper.id for paper in await workspaces.papers(session, workspace_id)]
     embedder = await searchable(session, scope, embedder)  # not set up, then rebuilding, then stale vectors (D156)
     found = await retrieve(session, query, workspace_id=workspace_id, k=k, embedder=embedder, per_paper=MAX_PER_PAPER)
-    titles = await session.execute(
-        select(Paper.id, Paper.title, Paper.year).where(Paper.id.in_({chunk.paper_id for chunk in found}))
+    rows = await session.scalars(
+        select(Paper).where(Paper.id.in_({chunk.paper_id for chunk in found})).execution_options(populate_existing=True)
     )
-    papers = {paper_id: (title, year) for paper_id, title, year in titles}
+    papers = {paper.id: paper for paper in rows}
     return [
         Passage(
             chunk_id=chunk.id,
             paper_id=chunk.paper_id,
-            paper_title=papers[chunk.paper_id][0],
-            year=papers[chunk.paper_id][1],
+            paper_title=papers[chunk.paper_id].title,
+            year=papers[chunk.paper_id].year,
             page=chunk.page,
             section=chunk.section,
             text=chunk.text,
             distance=round(chunk.distance, 4),
+            source_type=papers[chunk.paper_id].source_type,
+            peer_reviewed=papers[chunk.paper_id].peer_reviewed,
+            evidence_access=papers[chunk.paper_id].evidence_access,
         )
         for chunk in found
     ]
@@ -107,6 +119,7 @@ async def paper_card(session: AsyncSession, paper_id: uuid.UUID) -> PaperCard:
     """A paper's metadata, its section outline, its workspaces and every note on it with its provenance. No chunk text:
     search gives passages. Raises NotFound."""
     paper = await get_paper(session, paper_id)
+    await session.refresh(paper)  # evidence_access reads chunks, which a bulk write may have changed behind this object
     names = select(Workspace.name).join(workspace_papers).where(workspace_papers.c.paper_id == paper_id)
     starts = await session.execute(
         select(Chunk.section_title, Chunk.page).where(Chunk.paper_id == paper_id).order_by(Chunk.ordinal)
@@ -132,6 +145,10 @@ async def paper_card(session: AsyncSession, paper_id: uuid.UUID) -> PaperCard:
         status=paper.status,
         page_count=paper.page_count,
         is_retracted=paper.is_retracted,
+        source_type=paper.source_type,
+        peer_reviewed=paper.peer_reviewed,
+        evidence_access=paper.evidence_access,
+        published_doi=paper.published_doi,
         reading_pass=paper.reading_pass,
         triage=paper.triage,
         workspaces=sorted(await session.scalars(names)),

@@ -4,6 +4,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.source_types import PeerReviewed, SourceType
+
 # PDF points, top-left origin: (x0, y0, x1, y1). A tuple so OpenAPI (and the TS types) say 4 numbers.
 Rect = tuple[float, float, float, float]
 
@@ -22,6 +24,10 @@ class PaperOut(BaseModel):
     year: int | None
     venue: str | None
     type: str | None
+    source_type: SourceType | None
+    peer_reviewed: PeerReviewed
+    published_doi: str | None
+    evidence_access: Literal["full_text", "abstract", "metadata"]
     is_retracted: bool
     oa_status: str | None
     oa_url: str | None
@@ -54,12 +60,14 @@ class PaperUpdate(BaseModel):
     # OpenAlex sometimes returns a wrong abstract (BERT's was its citation string); the user can fix or clear it.
     abstract: str | None = Field(default=None, max_length=10_000)
     is_retracted: bool | None = None
+    source_type: SourceType | None = None  # null clears it
+    peer_reviewed: PeerReviewed | None = None
 
     @model_validator(mode="after")
     def is_a_correction(self) -> Self:
         if not self.model_fields_set:
             raise ValueError("send at least one field to correct")
-        required = {"authors", "is_retracted", "title"} & self.model_fields_set
+        required = {"authors", "is_retracted", "title", "peer_reviewed"} & self.model_fields_set
         nulled = sorted(field for field in required if getattr(self, field) is None)
         if nulled:
             raise ValueError(f"{', '.join(nulled)} can't be null")

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from mcp import Client
 from pdf_papers import TWO_LINE_QUOTE, chunked_paper
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from test_search_rebuild import OLLAMA_NAME, paper_with, switched
 
 from app.core import papers, workspaces
@@ -93,6 +93,9 @@ async def test_search_library_returns_ids_and_structure_not_prose(session, tmp_p
         "section": "1 Introduction",
         "text": chunks[0].text,
         "distance": 0.0,
+        "source_type": None,
+        "peer_reviewed": "unknown",
+        "evidence_access": "full_text",
     }
 
 
@@ -228,3 +231,26 @@ async def test_related_papers_respects_hops(session):
     ]
     assert [(r["title"], r["hops"]) for r in two.structured_content["result"]] == [("Second", 1), ("Third", 2)]
     assert too_far.is_error and too_far.structured_content == {"error": "hops_out_of_range", "allowed": [1, 3]}
+
+
+async def test_get_paper_and_search_carry_source_type_peer_review_and_evidence_access(session, tmp_path, embedder):
+    paper, _, vectors = await chunked_paper(session, tmp_path, title="Typed paper")
+    await session.execute(
+        update(Paper)
+        .where(Paper.id == paper.id)
+        .values(source_type="preprint", peer_reviewed="false", published_doi="10.1234/pub")
+    )
+    await session.commit()
+    workspace = await workspaces.create(session, f"MCP typed {RUN}")
+    await workspaces.add_paper(session, workspace.id, paper.id)
+    embedder.vectors["search_query: typed?"] = vectors[0]
+
+    card = (await call("get_paper", paper_id=str(paper.id))).structured_content
+    hit = (await call("search_library", query="typed?", workspace=f"MCP typed {RUN}")).structured_content["result"][0]
+
+    assert (card["source_type"], card["peer_reviewed"], card["evidence_access"], card["published_doi"]) == (
+        "preprint", "false", "full_text", "10.1234/pub")
+    assert (hit["source_type"], hit["peer_reviewed"], hit["evidence_access"]) == ("preprint", "false", "full_text")
+    async with Client(server.mcp) as client:
+        docs = {tool.name: tool.description for tool in (await client.list_tools()).tools}
+    assert "source_type" in docs["get_paper"] and "evidence_access" in docs["search_library"]
