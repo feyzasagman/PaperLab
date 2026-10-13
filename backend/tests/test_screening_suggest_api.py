@@ -13,7 +13,7 @@ def _url(workspace, tail=""):
 
 async def _with_criteria(session, rows=(("a", None),)):
     workspace, hits = await make_pool(session, list(rows))
-    workspace.screening_criteria = "RCTs"
+    workspace.inclusion_criteria = "RCTs"
     await session.flush()
     return workspace, hits
 

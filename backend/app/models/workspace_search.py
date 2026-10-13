@@ -63,6 +63,11 @@ class WorkspaceSearchHit(Base):
     suggestion_note: Mapped[str | None] = mapped_column(Text, default=None)
     suggestion_model: Mapped[str | None] = mapped_column(Text, default=None)
     suggested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), default=None)
+    suggestion_relevance: Mapped[int | None] = mapped_column(SmallInteger, default=None)  # M39 F3, 1-5
+    suggestion_quotes: Mapped[list | None] = mapped_column(JSONB, default=None)
+    suggestion_confidence: Mapped[str | None] = mapped_column(Text, default=None)
+    suggestion_flags: Mapped[list | None] = mapped_column(JSONB, default=None)
+    suggestion_prompt_version: Mapped[int | None] = mapped_column(SmallInteger, default=None)
 
 
 class SearchRunEligibility(Base):

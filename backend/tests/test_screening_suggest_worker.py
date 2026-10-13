@@ -1,26 +1,37 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import delete, text
+from conftest import FakeArq
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.core.screening_suggest import SYSTEM_PROMPT
+from app.core import discovery, pdf_links, queue, workspace_search
+from app.core.paper_sources import SourceSettings
+from app.core.screening_suggest import SYSTEM_PROMPT_V2
+from app.core.source_registry import SOURCE_IDS
 from app.models.references import ExternalRef
 from app.models.workspace import Workspace
 from app.models.workspace_search import WorkspaceSearchHit, WorkspaceSearchRun
+from app.providers import discovery_fake
 from app.providers.base import LLMError, LLMUnavailable
 from app.providers.llm import FakeLLM
 from app.workers import screening_suggest as worker_module
 from tests.conftest import TEST_DATABASE_URL
-from tests.screening_pool import make_pool
+from tests.screening_pool import BASE, make_pool
 
 pytestmark = pytest.mark.anyio
 
 POSITIVE = "randomised controlled trial of sleep deprivation in adults"
 NEGATIVE = "a survey of graph neural networks for molecules"
+
+
+def J(decision, reason=None, relevance=3, quotes=()):
+    return json.dumps({"relevance": relevance, "decision": decision, "reason": reason, "quotes": list(quotes),
+                       "why": "because"})
 
 
 class ScriptedLLM(FakeLLM):
@@ -81,7 +92,7 @@ def worker(session, monkeypatch):
 
 async def _running(session, rows, criteria="RCTs on sleep in adults"):
     workspace, hits = await make_pool(session, rows)
-    workspace.screening_criteria, workspace.suggest_status = criteria, "running"
+    workspace.inclusion_criteria, workspace.suggest_status = criteria, "running"
     await session.flush()
     return workspace, hits
 
@@ -91,10 +102,10 @@ async def test_worker_suggests_in_ranked_order_and_never_sets_status(session, wo
         (POSITIVE, "relevant"), (NEGATIVE, "not_relevant"),
         ("graph neural network benchmark for molecules", None), ("sleep deprivation trial in older adults", None),
     ])
-    llm = worker(ScriptedLLM(["INCLUDE\nFits.", "EXCLUDE wrong_topic\nGraphs."]))
+    llm = worker(ScriptedLLM([J("include"), J("exclude", "wrong_topic")]))
     await worker_module.suggest_screening({}, str(workspace.id))
     assert "sleep deprivation trial in older adults" in llm.calls[0][1]  # ranked first
-    assert all(system == SYSTEM_PROMPT for system, _ in llm.calls)
+    assert all(system == SYSTEM_PROMPT_V2 for system, _ in llm.calls)
     for hit in hits:
         await session.refresh(hit)
     assert (hits[3].suggestion, hits[2].suggestion, hits[2].suggestion_reason) == ("include", "exclude", "wrong_topic")
@@ -112,7 +123,7 @@ async def test_worker_skips_hit_decided_mid_job_and_never_sets_status(session, w
             hits[1].stage1_status = "maybe"
             await session.flush()
 
-    llm = worker(ScriptedLLM(["INCLUDE\nx"], on_call=decide_second))
+    llm = worker(ScriptedLLM([J("include")], on_call=decide_second))
     await worker_module.suggest_screening({}, str(workspace.id))
     assert len(llm.calls) == 1
     await session.refresh(hits[1])
@@ -124,7 +135,7 @@ async def test_worker_skips_hit_with_no_text(session, worker):
     hits[0].external_ref_id = None
     hits[0].normalized_title = ""
     await session.flush()
-    llm = worker(ScriptedLLM(["INCLUDE\nx"]))
+    llm = worker(ScriptedLLM([J("include")]))
     await worker_module.suggest_screening({}, str(workspace.id))
     assert len(llm.calls) == 1
     await session.refresh(hits[0])
@@ -139,7 +150,7 @@ async def test_stop_mid_job_ends_after_the_current_hit(session, worker):
             workspace.suggest_status = "stopping"
             await session.flush()
 
-    llm = worker(ScriptedLLM(["INCLUDE\nx", "INCLUDE\nx", "INCLUDE\nx"], on_call=stop_after_first))
+    llm = worker(ScriptedLLM([J("include"), J("include"), J("include")], on_call=stop_after_first))
     await worker_module.suggest_screening({}, str(workspace.id))
     assert len(llm.calls) == 1
     await session.refresh(workspace)
@@ -148,11 +159,12 @@ async def test_stop_mid_job_ends_after_the_current_hit(session, worker):
 
 async def test_a_model_error_on_one_hit_is_unsure_and_the_job_goes_on(session, worker):
     workspace, hits = await _running(session, [("a", None), ("b", None)])
-    worker(ScriptedLLM([LLMError("boom"), "INCLUDE\nx"]))
+    worker(ScriptedLLM([LLMError("boom"), J("include")]))
     await worker_module.suggest_screening({}, str(workspace.id))
     await session.refresh(hits[0])
     await session.refresh(hits[1])
-    assert (hits[0].suggestion, hits[0].suggestion_note) == ("unsure", "model error")
+    assert (hits[0].suggestion, hits[0].suggestion_note, hits[0].suggestion_flags) == (
+        "unsure", "model error", ["model_error"])
     assert hits[1].suggestion == "include"
 
 
@@ -171,7 +183,7 @@ async def test_resume_only_asks_about_hits_without_a_suggestion(session, worker)
     workspace, hits = await _running(session, [("a", None), ("b", None)])
     hits[0].suggestion = "include"
     await session.flush()
-    llm = worker(ScriptedLLM(["UNSURE\nx"]))
+    llm = worker(ScriptedLLM([J("unsure")]))
     await worker_module.suggest_screening({}, str(workspace.id))
     assert len(llm.calls) == 1
 
@@ -182,7 +194,7 @@ async def test_suggest_screening_opens_the_lock_connection_exactly_once(session,
     that mechanism directly and deterministically: a future change that re-opens the connection mid-job — even
     one that happens to still pass the probabilistic test below on a given run — fails this one every time."""
     workspace, hits = await _running(session, [("a", None), ("b", None), ("c", None)])
-    worker(ScriptedLLM(["INCLUDE\nx"] * 3))
+    worker(ScriptedLLM([J("include")] * 3))
 
     real_connect = worker_module.engine.connect
     calls = {"n": 0}
@@ -222,14 +234,14 @@ async def test_the_advisory_lock_survives_its_own_session_rotating_connections(m
 
     async with TestSessionLocal() as setup:
         workspace, hits = await make_pool(setup, [(f"paper {i}", None) for i in range(8)])
-        workspace.screening_criteria, workspace.suggest_status = "RCTs on sleep in adults", "running"
+        workspace.inclusion_criteria, workspace.suggest_status = "RCTs on sleep in adults", "running"
         await setup.commit()
         wid, run_id = workspace.id, hits[0].run_id
         ref_ids = [hit.external_ref_id for hit in hits]
 
     monkeypatch.setattr(worker_module, "SessionLocal", TestSessionLocal)
     monkeypatch.setattr(worker_module, "engine", test_engine, raising=False)
-    monkeypatch.setattr(worker_module, "build_llm", lambda *a, **k: ScriptedLLM(["INCLUDE\nx"] * len(hits)))
+    monkeypatch.setattr(worker_module, "build_llm", lambda *a, **k: ScriptedLLM([J("include")] * len(hits)))
 
     async def noise():
         for _ in range(40):
@@ -282,3 +294,121 @@ async def test_a_job_for_an_idle_workspace_does_nothing(session, worker):
     llm = worker(ScriptedLLM([]))
     await worker_module.suggest_screening({}, str(workspace.id))
     assert llm.calls == []
+
+
+async def test_worker_stores_the_v2_suggestion_and_never_sets_status(session, worker):
+    workspace, hits = await _running(session, [("randomised controlled trial of sleep deprivation in adults", None)])
+    worker(ScriptedLLM([J("include", relevance=5, quotes=["trial of sleep deprivation", "not in the abstract"])]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    await session.refresh(hits[0])
+    hit = hits[0]
+    assert (hit.suggestion, hit.suggestion_relevance, hit.suggestion_prompt_version) == ("include", 5, 2)
+    assert (hit.suggestion_quotes, hit.suggestion_confidence, hit.suggestion_flags) == (
+        ["trial of sleep deprivation"], "low", ["quote_dropped"])
+    assert hit.stage1_status is None
+
+
+async def test_a_hit_with_no_abstract_is_unsure_without_a_model_call(session, worker):
+    workspace, hits = await _running(session, [("", None)])
+    llm = worker(ScriptedLLM([]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    assert llm.calls == []
+    await session.refresh(hits[0])
+    assert (hits[0].suggestion, hits[0].suggestion_flags) == ("unsure", ["no_abstract"])
+
+
+async def test_a_run_scoped_job_only_touches_that_runs_hits_and_clears_its_scope(session, worker):
+    workspace, hits = await _running(session, [("a", None), ("b", None)])
+    other = WorkspaceSearchRun(
+        workspace_id=workspace.id, query_text="q2", filters_json={}, query_overrides_json={},
+        sources_json=["arxiv"], status="exhausted", started_at=BASE, stats_json={},
+    )
+    session.add(other)
+    await session.flush()
+    hits[1].run_id = other.id
+    workspace.suggest_run_id = hits[0].run_id
+    await session.flush()
+    llm = worker(ScriptedLLM([J("include")]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    assert len(llm.calls) == 1
+    await session.refresh(hits[1])
+    await session.refresh(workspace)
+    assert hits[1].suggestion is None and workspace.suggest_run_id is None
+
+
+@pytest.fixture
+async def free_and_closed(session, monkeypatch, pdf_dir):
+    """A workspace whose pool holds the offline `free` and `closed` papers (a snowball hop lands them), with
+    discovery.open_providers answering from the same fake and a FakeArq behind queue.enqueue."""
+    workspace, hits = await make_pool(session, [("seed", None)])
+    every = SourceSettings(contact_email=discovery_fake.MAILTO, enabled=dict.fromkeys(SOURCE_IDS, True))
+    providers = discovery.build_providers(every, discovery_fake.transport())
+
+    @asynccontextmanager
+    async def open_providers(_session):
+        yield providers
+
+    monkeypatch.setattr(discovery, "open_providers", open_providers)
+    async def resolve(host):
+        return ["93.184.216.34"]  # one public address, as tests/mcp_fixtures.py does
+
+    monkeypatch.setattr(pdf_links, "resolve_host", resolve)
+    arq = FakeArq()
+    monkeypatch.setattr(queue, "_pool", arq)
+    await workspace_search.snowball(session, providers, workspace.id, [], [hits[0].id], backward=True, forward=False)
+    rows = (await session.execute(
+        select(WorkspaceSearchHit, ExternalRef.doi)
+        .join(ExternalRef, WorkspaceSearchHit.external_ref_id == ExternalRef.id)
+        .where(WorkspaceSearchHit.workspace_id == workspace.id)
+    )).all()
+    by_doi = {doi: hit for hit, doi in rows}
+    free, closed = by_doi[f"{discovery_fake.DOI_PREFIX}free"], by_doi[f"{discovery_fake.DOI_PREFIX}closed"]
+    hits[0].suggestion = "include"
+    for hit in (free, closed):
+        hit.suggestion, hit.suggestion_relevance = "include", 5  # already suggested: the queue is empty
+    workspace.inclusion_criteria, workspace.suggest_status = "x", "running"
+    await session.flush()
+    yield workspace, free, closed, arq
+    await providers.aclose()
+
+
+async def test_auto_import_is_off_by_default(session, worker, free_and_closed):
+    workspace, free, closed, arq = free_and_closed
+    worker(ScriptedLLM([]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    await session.refresh(free)
+    assert free.acquisition_status == "not_attempted" and arq.jobs == []
+
+
+async def test_auto_import_takes_the_free_pdf_hits_rated_at_the_bar(session, worker, free_and_closed):
+    workspace, free, closed, arq = free_and_closed
+    workspace.auto_import_min_relevance = 4
+    await session.flush()
+    worker(ScriptedLLM([]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    await session.refresh(free)
+    await session.refresh(closed)
+    assert (free.acquisition_status, closed.acquisition_status) == ("imported", "failed")
+    assert arq.jobs == [("ingest_paper", str(free.paper_id))]
+    assert free.stage1_status is None
+
+
+async def test_auto_import_skips_a_decided_hit_and_a_rating_below_the_bar(session, worker, free_and_closed):
+    workspace, free, closed, arq = free_and_closed
+    workspace.auto_import_min_relevance = 5
+    free.suggestion_relevance = 4
+    closed.stage1_status = "relevant"
+    await session.flush()
+    worker(ScriptedLLM([]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    assert arq.jobs == []
+
+
+async def test_a_stopped_job_does_not_auto_import(session, worker, free_and_closed):
+    workspace, free, closed, arq = free_and_closed
+    workspace.auto_import_min_relevance = 4
+    workspace.suggest_status = "stopping"
+    await session.flush()
+    worker(ScriptedLLM([]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    assert arq.jobs == []

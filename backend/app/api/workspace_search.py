@@ -104,7 +104,13 @@ async def get_screening(workspace_id: uuid.UUID, session: SessionDep) -> Screeni
 async def put_screening(
     workspace_id: uuid.UUID, payload: ScreeningCriteriaUpdate, session: SessionDep
 ) -> ScreeningStateOut:
-    return await screening.set_criteria(session, workspace_id, payload.criteria)
+    given = {
+        key: getattr(payload, field) for key, field in (
+            ("criteria", "criteria"), ("research_question", "research_question"),
+            ("inclusion", "inclusion_criteria"), ("exclusion", "exclusion_criteria"),
+        ) if field in payload.model_fields_set
+    }
+    return await screening.set_criteria(session, workspace_id, **given)
 
 
 @router.post("/suggestions")

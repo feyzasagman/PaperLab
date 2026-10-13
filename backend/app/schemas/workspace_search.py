@@ -100,7 +100,13 @@ class RankedHitsOut(BaseModel):
 
 
 class ScreeningStateOut(BaseModel):
-    criteria: str | None
+    criteria: str | None  # = inclusion_criteria, for the old UI
+    research_question: str | None = None
+    inclusion_criteria: str | None = None
+    exclusion_criteria: str | None = None
+    prescreen_after_scheduled_runs: bool = True
+    auto_import_min_relevance: int | None = None
+    suggest_run_id: uuid.UUID | None = None
     ranked_used: bool
     suggest_status: Literal["idle", "running", "stopping"]
     suggest_done: int
@@ -112,7 +118,10 @@ class ScreeningStateOut(BaseModel):
 
 
 class ScreeningCriteriaUpdate(BaseModel):
-    criteria: str | None = Field(default=None, max_length=4000)  # core.screening.CRITERIA_MAX_CHARS
+    criteria: str | None = Field(default=None, max_length=4000)  # core.screening.CRITERIA_MAX_CHARS; = inclusion
+    research_question: str | None = Field(default=None, max_length=4000)
+    inclusion_criteria: str | None = Field(default=None, max_length=4000)
+    exclusion_criteria: str | None = Field(default=None, max_length=4000)
 
 
 class SuggestStart(BaseModel):

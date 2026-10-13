@@ -1,8 +1,11 @@
 import pytest
 from sqlalchemy import delete
 
+from app.core import screening
+from app.core.errors import Conflict
 from app.models import LLMModel
-from tests.screening_pool import make_pool
+from app.models.workspace_search import WorkspaceSearchRun
+from tests.screening_pool import BASE, make_pool
 
 pytestmark = pytest.mark.anyio
 
@@ -38,7 +41,7 @@ async def test_saving_criteria_clears_stored_suggestions(client, session):
 
 async def test_saving_the_same_criteria_keeps_suggestions(client, session):
     workspace, [hit] = await make_pool(session, [("sleep", None)])
-    workspace.screening_criteria = "RCTs"
+    workspace.inclusion_criteria = "RCTs"
     hit.suggestion = "include"
     await session.flush()
     await client.put(_url(workspace), json={"criteria": "RCTs"})
@@ -65,3 +68,48 @@ async def test_criteria_cannot_change_while_suggesting(client, session):
     assert resp.status_code == 409
     await session.refresh(hit)
     assert hit.suggestion == "include"
+
+
+async def test_the_three_criteria_save_and_any_change_clears_every_suggestion_column(client, session):
+    workspace, [hit] = await make_pool(session, [("sleep", None)])
+    hit.suggestion, hit.suggestion_relevance, hit.suggestion_quotes = "include", 4, ["q"]
+    hit.suggestion_confidence, hit.suggestion_flags, hit.suggestion_prompt_version = "high", [], 2
+    await session.flush()
+    body = (await client.put(_url(workspace), json={"research_question": "Does sleep help?"})).json()
+    assert body["research_question"] == "Does sleep help?" and body["criteria"] is None
+    await session.refresh(hit)
+    assert (hit.suggestion, hit.suggestion_relevance, hit.suggestion_quotes, hit.suggestion_confidence,
+            hit.suggestion_flags, hit.suggestion_prompt_version) == (None,) * 6
+
+
+async def test_the_old_criteria_field_maps_to_inclusion(client, session):
+    workspace, _ = await make_pool(session, [])
+    body = (await client.put(_url(workspace), json={"criteria": "RCTs"})).json()
+    assert (body["criteria"], body["inclusion_criteria"], body["exclusion_criteria"]) == ("RCTs", "RCTs", None)
+
+
+async def test_start_needs_a_question_or_inclusion_and_scopes_the_queue(session):
+    workspace, hits = await make_pool(session, [("a", None), ("b", None)])
+    with pytest.raises(Conflict):
+        await screening.start_suggestions(session, workspace.id, True)
+    workspace.research_question = "Does sleep help?"
+    other = WorkspaceSearchRun(
+        workspace_id=workspace.id, query_text="q2", filters_json={}, query_overrides_json={},
+        sources_json=["arxiv"], status="exhausted", started_at=BASE, stats_json={},
+    )
+    session.add(other)
+    await session.flush()
+    hits[1].run_id = other.id
+    await session.flush()
+    state = await screening.start_suggestions(session, workspace.id, True, run_id=other.id)
+    assert (state["suggest_total"], state["suggest_run_id"]) == (1, other.id)
+
+
+async def test_prescreen_settings_save_and_validate(session):
+    workspace, _ = await make_pool(session, [])
+    state = await screening.set_prescreen_settings(
+        session, workspace.id, after_scheduled_runs=False, auto_import_min_relevance=4)
+    assert (state["prescreen_after_scheduled_runs"], state["auto_import_min_relevance"]) == (False, 4)
+    with pytest.raises(Conflict):
+        await screening.set_prescreen_settings(session, workspace.id, after_scheduled_runs=None,
+                                               auto_import_min_relevance=3)

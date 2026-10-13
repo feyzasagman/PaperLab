@@ -99,7 +99,13 @@ async def get_state(session: AsyncSession, workspace_id: uuid.UUID) -> dict:
         raise NotFound(f"workspace {workspace_id} not found")
     model = await _default_model(session)
     return {
-        "criteria": workspace.screening_criteria,
+        "criteria": workspace.inclusion_criteria,
+        "research_question": workspace.research_question,
+        "inclusion_criteria": workspace.inclusion_criteria,
+        "exclusion_criteria": workspace.exclusion_criteria,
+        "prescreen_after_scheduled_runs": workspace.prescreen_after_scheduled_runs,
+        "auto_import_min_relevance": workspace.auto_import_min_relevance,
+        "suggest_run_id": workspace.suggest_run_id,
         "ranked_used": workspace.screening_ranked_used,
         "suggest_status": workspace.suggest_status,
         "suggest_done": workspace.suggest_done,
@@ -111,42 +117,82 @@ async def get_state(session: AsyncSession, workspace_id: uuid.UUID) -> dict:
     }
 
 
-async def set_criteria(session: AsyncSession, workspace_id: uuid.UUID, criteria: str | None) -> dict:
-    """Saves the workspace's criteria; a change clears every stored suggestion, judged against the old ones (§4.1)."""
+_UNSET = object()  # "leave this field as it is"; None or blank clears it
+_SUGGESTION_COLUMNS = dict.fromkeys(
+    ("suggestion", "suggestion_reason", "suggestion_note", "suggestion_model", "suggested_at", "suggestion_relevance",
+     "suggestion_quotes", "suggestion_confidence", "suggestion_flags", "suggestion_prompt_version")
+)
+
+
+async def set_criteria(
+    session: AsyncSession, workspace_id: uuid.UUID, criteria=_UNSET, *,
+    research_question=_UNSET, inclusion=_UNSET, exclusion=_UNSET,
+) -> dict:
+    """Saves the question and criteria; a change to any clears every stored suggestion, judged against the old
+    ones (§4.1). The old `criteria` is the inclusion criteria."""
     workspace = await session.get(Workspace, workspace_id)
     if workspace is None:
         raise NotFound(f"workspace {workspace_id} not found")
     if workspace.suggest_status != "idle":
         raise Conflict("Stop the suggestions before changing the criteria")
-    criteria = (criteria or "").strip() or None
-    if criteria != workspace.screening_criteria:
-        workspace.screening_criteria = criteria
+    if inclusion is _UNSET:
+        inclusion = criteria
+    changed = False
+    for column, value in (("research_question", research_question), ("inclusion_criteria", inclusion),
+                          ("exclusion_criteria", exclusion)):
+        if value is _UNSET:
+            continue
+        value = (value or "").strip() or None
+        if value != getattr(workspace, column):
+            setattr(workspace, column, value)
+            changed = True
+    if changed:
+        workspace.screening_criteria = workspace.inclusion_criteria  # PRISMA's export still reads the old column
         await session.execute(
-            update(WorkspaceSearchHit)
-            .where(WorkspaceSearchHit.workspace_id == workspace_id)
-            .values(suggestion=None, suggestion_reason=None, suggestion_note=None, suggestion_model=None,
-                    suggested_at=None)
+            update(WorkspaceSearchHit).where(WorkspaceSearchHit.workspace_id == workspace_id)
+            .values(**_SUGGESTION_COLUMNS)
         )
     await session.commit()
     return await get_state(session, workspace_id)
 
 
-def suggestion_queue(pool: Pool) -> list[uuid.UUID]:
-    """Unscreened hits still without a suggestion and with some text to judge, in ranked order (§4.2)."""
+async def set_prescreen_settings(
+    session: AsyncSession, workspace_id: uuid.UUID, *, after_scheduled_runs: bool | None,
+    auto_import_min_relevance: int | None,
+) -> dict:
+    """Auto-run after scheduled runs (None = leave) and the auto-import bar (None = off; else 4 or 5)."""
+    workspace = await session.get(Workspace, workspace_id)
+    if workspace is None:
+        raise NotFound(f"workspace {workspace_id} not found")
+    if auto_import_min_relevance not in (None, 4, 5):
+        raise Conflict("Auto-import needs a relevance of 4 or 5")
+    if after_scheduled_runs is not None:
+        workspace.prescreen_after_scheduled_runs = after_scheduled_runs
+    workspace.auto_import_min_relevance = auto_import_min_relevance
+    await session.commit()
+    return await get_state(session, workspace_id)
+
+
+def suggestion_queue(pool: Pool, run_id: uuid.UUID | None = None) -> list[uuid.UUID]:
+    """Unscreened hits still without a suggestion and with some text to judge, in ranked order (§4.2); with a
+    run_id, only that run's hits."""
     order, _ = ranked_order(pool)
     by_id = {hit.id: (hit, ref) for hit, ref in pool.rows}
     return [
         hit_id for hit_id in order
         if by_id[hit_id][0].suggestion is None and hit_text(*by_id[hit_id]).strip()
+        and (run_id is None or by_id[hit_id][0].run_id == run_id)
     ]
 
 
-async def start_suggestions(session: AsyncSession, workspace_id: uuid.UUID, confirm_remote: bool) -> dict:
+async def start_suggestions(
+    session: AsyncSession, workspace_id: uuid.UUID, confirm_remote: bool, run_id: uuid.UUID | None = None
+) -> dict:
     """Marks the job running; the route enqueues it. Suggest only (D189): the job never writes stage1_status."""
     pool = await load_pool(session, workspace_id)
     workspace = pool.workspace
-    if not workspace.screening_criteria:
-        raise Conflict("Write the inclusion and exclusion criteria first")
+    if not (workspace.research_question or workspace.inclusion_criteria):
+        raise Conflict("no_criteria")
     if workspace.suggest_status != "idle":
         raise Conflict("Suggestions are already running")
     model = await _default_model(session)
@@ -157,7 +203,8 @@ async def start_suggestions(session: AsyncSession, workspace_id: uuid.UUID, conf
         raise Conflict(f"Abstracts will be sent to {host} and may cost money")
     workspace.suggest_status = "running"
     workspace.suggest_done = 0
-    workspace.suggest_total = len(suggestion_queue(pool))
+    workspace.suggest_total = len(suggestion_queue(pool, run_id))
+    workspace.suggest_run_id = run_id
     workspace.suggest_error = None
     await session.commit()
     return await get_state(session, workspace_id)
