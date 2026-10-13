@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, File, Query, Request, UploadFile
 
@@ -10,6 +10,8 @@ from app.core.prisma_export import prisma_export
 from app.core.queue import INGEST_QUEUE
 from app.core.screening import RANKED_LIMIT_MAX
 from app.schemas.workspace_search import (
+    AcceptSuggestions,
+    AcceptSuggestionsOut,
     AcquisitionStatus,
     BulkHitReviewUpdate,
     BulkUpdateOut,
@@ -80,10 +82,12 @@ async def get_run(workspace_id: uuid.UUID, run_id: uuid.UUID, session: SessionDe
 async def list_hits(
     workspace_id: uuid.UUID, session: SessionDep, limit: Annotated[int, Query(gt=0)] = 50,
     after: str | None = None, stage1_status: Stage1Status | None = None,
-    acquisition_status: AcquisitionStatus | None = None,
+    acquisition_status: AcquisitionStatus | None = None, sort: Literal["ai"] | None = None,
+    min_relevance: Annotated[int | None, Query(ge=1, le=5)] = None,
 ) -> HitListOut:
     items, next_cursor = await workspace_search.list_hits(
-        session, workspace_id, limit, after, stage1_status, acquisition_status
+        session, workspace_id, limit, after, stage1_status, acquisition_status,
+        sort=sort, min_relevance=min_relevance,
     )
     return HitListOut(items=items, next_cursor=next_cursor)
 
@@ -104,14 +108,38 @@ async def get_screening(workspace_id: uuid.UUID, session: SessionDep) -> Screeni
 async def put_screening(
     workspace_id: uuid.UUID, payload: ScreeningCriteriaUpdate, session: SessionDep
 ) -> ScreeningStateOut:
-    return await screening.set_criteria(session, workspace_id, payload.criteria)
+    given = {
+        key: getattr(payload, field) for key, field in (
+            ("criteria", "criteria"), ("research_question", "research_question"),
+            ("inclusion", "inclusion_criteria"), ("exclusion", "exclusion_criteria"),
+        ) if field in payload.model_fields_set
+    }
+    # Settings-only saves must not touch criteria: set_criteria refuses (409) while a job runs.
+    state = (
+        await screening.set_criteria(session, workspace_id, **given) if given
+        else await screening.get_state(session, workspace_id)
+    )
+    fields = payload.model_fields_set
+    if fields & {"prescreen_after_scheduled_runs", "auto_import_min_relevance"}:
+        # The core call overwrites the bar, so a subset keeps whatever is stored for the other setting.
+        state = await screening.set_prescreen_settings(
+            session, workspace_id,
+            after_scheduled_runs=payload.prescreen_after_scheduled_runs,
+            auto_import_min_relevance=(
+                payload.auto_import_min_relevance if "auto_import_min_relevance" in fields
+                else state["auto_import_min_relevance"]
+            ),
+        )
+    return state
 
 
 @router.post("/suggestions")
 async def start_suggestions(
     workspace_id: uuid.UUID, payload: SuggestStart, request: Request, session: SessionDep
 ) -> ScreeningStateOut:
-    state = await screening.start_suggestions(session, workspace_id, payload.confirm_remote)
+    if payload.run_id is not None:
+        await workspace_search.get_run(session, payload.run_id, workspace_id=workspace_id)  # 404 if foreign
+    state = await screening.start_suggestions(session, workspace_id, payload.confirm_remote, payload.run_id)
     await request.app.state.arq.enqueue_job("suggest_screening", str(workspace_id))
     return state
 
@@ -119,6 +147,14 @@ async def start_suggestions(
 @router.post("/suggestions/stop")
 async def stop_suggestions(workspace_id: uuid.UUID, session: SessionDep) -> ScreeningStateOut:
     return await screening.stop_suggestions(session, workspace_id)
+
+
+@router.post("/hits/accept-suggestions")
+async def accept_suggestions(
+    workspace_id: uuid.UUID, payload: AcceptSuggestions, session: SessionDep
+) -> AcceptSuggestionsOut:
+    result = await screening.accept_suggestions(session, workspace_id, payload.hit_ids)
+    return AcceptSuggestionsOut(accepted=result.accepted, skipped=result.skipped)
 
 
 @router.delete("/hits")

@@ -6,12 +6,12 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
-from app.core import llm_connections
+from app.core import discovery, llm_connections, queue, workspace_search
 from app.core.errors import Conflict
 from app.core.screening import hit_text, load_pool, suggestion_queue
-from app.core.screening_suggest import SYSTEM_PROMPT, Suggestion, build_prompt, parse_reply
+from app.core.screening_suggest import SCREENING_PROMPT_VERSION, SuggestionV2, suggest
 from app.db import SessionLocal, engine
 from app.models.references import ExternalRef
 from app.models.workspace import Workspace
@@ -34,15 +34,37 @@ def _lock_key(workspace_id: uuid.UUID) -> int:
     return (workspace_id.int ^ 1) & 0x7FFFFFFFFFFFFFFF
 
 
-async def _suggest_one(llm, criteria: str, hit: WorkspaceSearchHit, ref: ExternalRef | None) -> Suggestion:
+async def _suggest_one(llm, workspace: Workspace, hit: WorkspaceSearchHit, ref: ExternalRef | None) -> SuggestionV2:
     title = ref.title if ref else hit.normalized_title
-    prompt = build_prompt(criteria, title, ref.abstract if ref else None)
     try:
-        return parse_reply("".join([token async for token in llm.stream(SYSTEM_PROMPT, prompt)]))
+        return await suggest(
+            llm, workspace.research_question, workspace.inclusion_criteria, workspace.exclusion_criteria,
+            title, ref.abstract if ref else None,
+        )
     except LLMUnavailable:
         raise
     except LLMError:
-        return Suggestion("unsure", None, "model error")
+        return SuggestionV2("unsure", None, "model error", flags=["model_error"])
+
+
+async def _auto_import(session, workspace: Workspace, run_id: uuid.UUID | None) -> None:
+    """Imports the free-PDF hits rated at or above the owner's bar, and queues their ingest (D232). Never decides."""
+    query = select(WorkspaceSearchHit.id).where(
+        WorkspaceSearchHit.workspace_id == workspace.id,
+        WorkspaceSearchHit.suggestion == "include",
+        WorkspaceSearchHit.suggestion_relevance >= workspace.auto_import_min_relevance,
+        WorkspaceSearchHit.stage1_status.is_(None),
+        WorkspaceSearchHit.acquisition_status == "not_attempted",
+    )
+    if run_id is not None:
+        query = query.where(WorkspaceSearchHit.run_id == run_id)
+    ids = list((await session.execute(query)).scalars())
+    if not ids:
+        return
+    async with discovery.open_providers(session) as providers:
+        result = await workspace_search.import_hits(session, providers, workspace.id, ids)
+    for paper_id in result.paper_ids:
+        await queue.enqueue("ingest_paper", str(paper_id))
 
 
 async def suggest_screening(ctx: dict, workspace_id: str) -> None:
@@ -75,8 +97,9 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                 label = f"{connection.label} · {model.name}"
                 pool = await load_pool(session, wid)
                 rows = {hit.id: (hit, ref) for hit, ref in pool.rows}
+                run_id = workspace.suggest_run_id
                 deadline = time.monotonic() + SUGGEST_JOB_TIMEOUT - SAFETY_MARGIN
-                for hit_id in suggestion_queue(pool):
+                for hit_id in suggestion_queue(pool, run_id):
                     await session.refresh(workspace)
                     if workspace.suggest_status != "running" or time.monotonic() >= deadline:
                         break
@@ -84,12 +107,24 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                     await session.refresh(hit)
                     if hit.stage1_status is not None or hit.suggestion is not None or not hit_text(hit, ref).strip():
                         continue  # decided (or suggested) since the job started
-                    suggestion = await _suggest_one(llm, workspace.screening_criteria, hit, ref)
+                    suggestion = await _suggest_one(llm, workspace, hit, ref)
                     hit.suggestion, hit.suggestion_reason = suggestion.verdict, suggestion.reason
-                    hit.suggestion_note, hit.suggestion_model = suggestion.note, label
+                    hit.suggestion_note = suggestion.note
+                    # No abstract means no model was called, so there is no model to name.
+                    hit.suggestion_model = None if "no_abstract" in suggestion.flags else label
+                    hit.suggestion_relevance, hit.suggestion_quotes = suggestion.relevance, suggestion.quotes
+                    hit.suggestion_confidence, hit.suggestion_flags = suggestion.confidence, suggestion.flags
+                    hit.suggestion_prompt_version = SCREENING_PROMPT_VERSION
                     hit.suggested_at = datetime.now(timezone.utc)
                     workspace.suggest_done += 1
                     await session.commit()
+                # Only a normal finish imports: not a Stop (pressed during the last hit too) or the deadline.
+                await session.refresh(workspace)
+                if (
+                    workspace.suggest_status == "running" and time.monotonic() < deadline
+                    and workspace.auto_import_min_relevance is not None
+                ):
+                    await _auto_import(session, workspace, run_id)
             except (LLMUnavailable, Conflict) as exc:
                 workspace.suggest_error = (
                     "Set up a chat model in Settings first" if isinstance(exc, Conflict) else str(exc)
@@ -101,6 +136,7 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
             finally:
                 # The unlock must run even if this commit fails or is cancelled.
                 workspace.suggest_status = "idle"
+                workspace.suggest_run_id = None
                 try:
                     await session.commit()
                 finally:

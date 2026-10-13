@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.screening_suggest import SYSTEM_PROMPT, Suggestion, build_prompt, parse_reply
+from app.core.screening_suggest import SYSTEM_PROMPT, Suggestion, build_prompt, build_prompt_v2, parse_reply, suggest
 from app.providers.llm import FakeLLM
 
 pytestmark = pytest.mark.anyio
@@ -39,3 +39,106 @@ def test_system_prompt_lists_every_reason_and_the_reply_format():
 async def test_fake_llm_answers_the_screening_prompt_in_format():
     text = "".join([t async for t in FakeLLM().stream(SYSTEM_PROMPT, build_prompt("c", "t", "a"))])
     assert parse_reply(text) == Suggestion("exclude", "wrong_study_type", "A review, not a primary study.")
+
+
+class Scripted:
+    def __init__(self, *replies):
+        self.replies, self.prompts = list(replies), []
+
+    async def stream(self, system, prompt):
+        self.prompts.append(prompt)
+        yield self.replies.pop(0)
+
+
+ABSTRACT = "We study how large language models homogenize creative writing. Outputs were 23% less diverse."
+
+
+async def test_a_valid_suggestion_keeps_its_verified_quotes():
+    reply = ('{"relevance": 5, "decision": "include", "reason": null, '
+             '"quotes": ["large language models homogenize creative writing", "Outputs were 23% less diverse"], '
+             '"why": "On topic."}')
+    s = await suggest(Scripted(reply), "Do LLMs homogenize creativity?", "LLM creativity", "", "T", ABSTRACT)
+    assert (s.verdict, s.relevance, s.confidence, s.flags) == ("include", 5, "high", [])
+    assert s.quotes == ["large language models homogenize creative writing", "Outputs were 23% less diverse"]
+
+
+async def test_a_quote_matches_through_case_and_curly_quotes_but_a_paraphrase_is_dropped():
+    reply = ('{"relevance": 4, "decision": "include", "reason": null, '
+             '"quotes": ["LARGE language models homogenize creative writing", "LLMs make writing samey"], "why": "x"}')
+    s = await suggest(Scripted(reply), "q", "i", "e", "T", ABSTRACT)
+    assert s.quotes == ["LARGE language models homogenize creative writing"]
+    assert s.confidence == "low" and s.flags == ["quote_dropped"]
+
+
+async def test_an_exclude_with_no_valid_quote_is_low_confidence():
+    reply = '{"relevance": 1, "decision": "exclude", "reason": "wrong_topic", "quotes": [], "why": "x"}'
+    s = await suggest(Scripted(reply), "q", "i", "e", "T", ABSTRACT)
+    assert (s.verdict, s.reason, s.confidence) == ("exclude", "wrong_topic", "low")
+
+
+async def test_no_abstract_is_unsure_without_calling_the_model():
+    llm = Scripted()
+    s = await suggest(llm, "q", "i", "e", "T", None)
+    assert (s.verdict, s.flags, s.relevance) == ("unsure", ["no_abstract"], None) and llm.prompts == []
+
+
+async def test_a_model_that_never_answers_json_is_unsure_with_model_error():
+    s = await suggest(Scripted("nope", "still nope"), "q", "i", "e", "T", ABSTRACT)
+    assert (s.verdict, s.flags) == ("unsure", ["model_error"])
+
+
+async def test_a_reason_on_an_include_is_dropped_and_an_unknown_reason_is_refused():
+    ok = await suggest(Scripted('{"relevance": 4, "decision": "include", "reason": "other", "quotes": [], "why": "x"}'),
+                       "q", "i", "e", "T", ABSTRACT)
+    assert ok.reason is None
+    boring = '{"relevance": 2, "decision": "exclude", "reason": "boring", "quotes": [], "why": "x"}'
+    bad = await suggest(Scripted(boring, boring), "q", "i", "e", "T", ABSTRACT)
+    assert bad.flags == ["model_error"]
+
+
+def test_build_prompt_v2_tolerates_braces_in_the_abstract_and_criteria():
+    prompt = build_prompt_v2("q {x}", "RCTs {adults}", None, "T {t}", "Set {1, 2} was used")
+    assert "Set {1, 2} was used" in prompt and "RCTs {adults}" in prompt and "(none given)" in prompt
+
+
+def _reply(quotes):
+    import json
+    return json.dumps({"relevance": 4, "decision": "include", "reason": None, "quotes": quotes, "why": "x"})
+
+
+async def test_a_one_word_quote_is_dropped_but_a_three_word_phrase_is_kept():
+    s = await suggest(Scripted(_reply(["the"])), "q", "i", "e", "T", ABSTRACT)
+    assert s.quotes == [] and s.confidence == "low" and s.flags == ["quote_dropped"]
+    s = await suggest(Scripted(_reply(["creative writing. Outputs"])), "q", "i", "e", "T", ABSTRACT)
+    assert s.quotes == ["creative writing. Outputs"] and s.confidence == "high"
+
+
+async def test_a_quote_over_300_characters_is_dropped():
+    long_abstract = " ".join(["word"] * 100)
+    s = await suggest(Scripted(_reply([long_abstract])), "q", "i", "e", "T", long_abstract)
+    assert s.quotes == [] and s.flags == ["quote_dropped"] and s.confidence == "low"
+
+
+async def test_bad_quotes_are_dropped_before_the_cap_so_good_later_ones_survive():
+    bad = ["the", "a", "of", "large language models homogenize creative writing", "Outputs were 23% less diverse"]
+    s = await suggest(Scripted(_reply(bad)), "q", "i", "e", "T", ABSTRACT)
+    assert s.quotes == bad[3:] and s.flags == ["quote_dropped"] and s.confidence == "low"
+
+
+async def test_a_hyphen_broken_across_a_line_still_matches():
+    abstract = "A cost-\neffective approach to screening was evaluated."
+    s = await suggest(Scripted(_reply(["A cost-effective approach"])), "q", "i", "e", "T", abstract)
+    assert s.quotes == ["A cost-effective approach"] and s.flags == []
+
+
+async def test_an_exclude_with_no_reason_is_retried_and_then_kept_with_its_reason():
+    bare = '{"relevance": 1, "decision": "exclude", "reason": null, "quotes": [], "why": "x"}'
+    fixed = '{"relevance": 1, "decision": "exclude", "reason": "wrong_topic", "quotes": [], "why": "x"}'
+    s = await suggest(Scripted(bare, fixed), "q", "i", "e", "T", ABSTRACT)
+    assert (s.verdict, s.reason, s.flags) == ("exclude", "wrong_topic", [])
+
+
+async def test_an_exclude_with_no_reason_twice_is_a_model_error():
+    bare = '{"relevance": 1, "decision": "exclude", "reason": null, "quotes": [], "why": "x"}'
+    s = await suggest(Scripted(bare, bare), "q", "i", "e", "T", ABSTRACT)
+    assert (s.verdict, s.flags) == ("unsure", ["model_error"])

@@ -1,9 +1,10 @@
-import { CircleHelp, CircleX, ThumbsUp } from 'lucide-react'
+import { CircleHelp, CircleX, Sparkles, ThumbsUp } from 'lucide-react'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Hit, HitReviewUpdate, SearchRun } from '@/api/client'
 import {
   totalRawFound,
+  useAcceptSuggestions,
   useBulkPatchSearchHits,
   useClearSearchHits,
   useImportAllHits,
@@ -26,6 +27,7 @@ import { HitContextMenu, HitMenu } from './HitMenu'
 import { EXCLUDE_REASONS, matchesFilter, sourceLabel } from './hitReview'
 import { loadHitSort, saveHitSort, type HitSort } from './hitSort'
 import { HitPreview } from './HitPreview'
+import { errorText } from './schedule'
 import { RankSortBar } from './RankSortBar'
 import { snowballMessage } from './ScreeningTab'
 import { StatusDot } from './StatusDot'
@@ -69,7 +71,13 @@ function hasPdfOrAbstract(hit: Hit): boolean {
  * by any of this), and the live "N found so far" count — the raw, pre-dedup total every source has turned up
  * (`totalRawFound`), distinct from "in pool," which is the de-duplicated count of what's actually been loaded. */
 export function HitTable({ workspaceId, run }: { workspaceId: string; run?: SearchRun }) {
-  const { data, hasNextPage, isFetchingNextPage, fetchNextPage } = useSearchHits(workspaceId)
+  const [sort, setSort] = useState<HitSort>(() => loadHitSort(browserStorage(), workspaceId))
+  const [minRelevance, setMinRelevance] = useState<number | null>(null)
+  const { data, hasNextPage, isFetchingNextPage, fetchNextPage } = useSearchHits(workspaceId, undefined, undefined, {
+    sort: sort === 'ai' ? 'ai' : undefined,
+    minRelevance: sort === 'ranked' ? undefined : (minRelevance ?? undefined),
+  })
+  const acceptSuggestions = useAcceptSuggestions(workspaceId)
   const importHits = useImportSearchHits(workspaceId)
   const importAllHits = useImportAllHits(workspaceId)
   const clearHits = useClearSearchHits(workspaceId)
@@ -86,7 +94,6 @@ export function HitTable({ workspaceId, run }: { workspaceId: string; run?: Sear
   const [bulkReason, setBulkReason] = useState<ExcludeReason | ''>('')
   const [previewWidth, setPreviewWidth] = useState(() => loadPanelWidth(HIT_PREVIEW, browserStorage()))
   useEffect(() => savePanelWidth(HIT_PREVIEW, browserStorage(), previewWidth), [previewWidth])
-  const [sort, setSort] = useState<HitSort>(() => loadHitSort(browserStorage(), workspaceId))
   useEffect(() => saveHitSort(browserStorage(), workspaceId, sort), [workspaceId, sort])
   const ranked = useRankedHits(workspaceId, sort === 'ranked')
 
@@ -105,7 +112,9 @@ export function HitTable({ workspaceId, run }: { workspaceId: string; run?: Sear
   const visibleRows =
     sort === 'ranked'
       ? filteredRows
-      : sort === 'year'
+      : sort === 'ai'
+        ? filteredRows // the server already ordered these by score
+        : sort === 'year'
         ? filteredRows.slice().sort((a, b) => (b.year ?? -Infinity) - (a.year ?? -Infinity))
         : filteredRows.slice().sort((a, b) => Number(hasPdfOrAbstract(b)) - Number(hasPdfOrAbstract(a)))
   // Falls back to the first loaded row, so the panel is never empty on first paint (mirrors PaperList) — and to
@@ -148,6 +157,11 @@ export function HitTable({ workspaceId, run }: { workspaceId: string; run?: Sear
 
   function bulkMark(stage1_status: 'relevant' | 'maybe') {
     bulkPatch.mutate({ hit_ids: [...checkedIds], stage1_status })
+    setCheckedIds(new Set())
+  }
+
+  function bulkAccept() {
+    acceptSuggestions.mutate([...checkedIds])
     setCheckedIds(new Set())
   }
 
@@ -199,6 +213,10 @@ export function HitTable({ workspaceId, run }: { workspaceId: string; run?: Sear
   // Collapses every mutation's own isError/isSuccess into the single line actually shown (see the render site
   // below for why) — errors first, bulk/global actions before single-row ones, success notices last.
   const statusMessage: { tone: 'error' | 'status'; text: string } | null =
+    (acceptSuggestions.isError && {
+      tone: 'error' as const,
+      text: errorText(acceptSuggestions.error.message) ?? acceptSuggestions.error.message,
+    }) ||
     (bulkPatch.isError && { tone: 'error' as const, text: bulkPatch.error.message }) ||
     (importHits.isError && { tone: 'error' as const, text: importHits.error.message }) ||
     (importAllHits.isError && { tone: 'error' as const, text: importAllHits.error.message }) ||
@@ -215,6 +233,10 @@ export function HitTable({ workspaceId, run }: { workspaceId: string; run?: Sear
         text: 'No PDF found automatically for that paper — try the options below, or upload one.',
       }) ||
     (snowball.isSuccess && { tone: 'status' as const, text: snowballMessage(snowball.data) }) ||
+    (acceptSuggestions.isSuccess && {
+      tone: 'status' as const,
+      text: `Accepted ${acceptSuggestions.data.accepted}, skipped ${acceptSuggestions.data.skipped.length}`,
+    }) ||
     null
 
   return (
@@ -271,6 +293,16 @@ export function HitTable({ workspaceId, run }: { workspaceId: string; run?: Sear
             <CircleHelp aria-hidden />
             Mark maybe
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={acceptSuggestions.isPending}
+            onClick={bulkAccept}
+          >
+            <Sparkles aria-hidden />
+            Accept AI suggestions
+          </Button>
           <label htmlFor="bulk-exclude-reason" className="sr-only">
             Exclusion reason for selected hits
           </label>
@@ -303,7 +335,13 @@ export function HitTable({ workspaceId, run }: { workspaceId: string; run?: Sear
           </Button>
         </div>
       )}
-      <RankSortBar sort={sort} onSortChange={setSort} ranked={ranked.data} />
+      <RankSortBar
+        sort={sort}
+        onSortChange={setSort}
+        ranked={ranked.data}
+        minRelevance={minRelevance}
+        onMinRelevanceChange={setMinRelevance}
+      />
       {/* One status line, not one paragraph per mutation: with up to 9 independent isError/isSuccess flags on
           this screen, stacking them all would both clutter the view and shift the hit list up/down as each one
           comes and goes. Errors win over a success notice, in roughly the order a reader would expect to act on
@@ -364,6 +402,21 @@ export function HitTable({ workspaceId, run }: { workspaceId: string; run?: Sear
                       </span>
                     )}
                     <SuggestionChip hit={hit} />
+                    {(hit.suggestion === 'include' || hit.suggestion === 'exclude') && !hit.stage1_status && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        aria-label={`Accept: ${hit.title ?? hit.normalized_title}`}
+                        disabled={acceptSuggestions.isPending}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          acceptSuggestions.mutate([hit.id])
+                        }}
+                      >
+                        Accept
+                      </Button>
+                    )}
                     <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <StatusDot status={hit.stage1_status} />
                       {hit.stage1_status ?? 'unreviewed'}

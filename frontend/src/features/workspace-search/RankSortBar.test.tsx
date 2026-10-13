@@ -41,4 +41,16 @@ describe('RankSortBar', () => {
     render(<RankSortBar sort="found" onSortChange={() => {}} ranked={ranked({ show_stop_hint: true })} />)
     expect(screen.queryByRole('status')).toBeNull()
   })
+
+  it('offers the AI score order and a Score filter', () => {
+    const onSortChange = vi.fn()
+    const onMinRelevanceChange = vi.fn()
+    render(<RankSortBar sort="found" onSortChange={onSortChange} minRelevance={null} onMinRelevanceChange={onMinRelevanceChange} />)
+    fireEvent.change(screen.getByLabelText('Sort hits'), { target: { value: 'ai' } })
+    expect(onSortChange).toHaveBeenCalledWith('ai')
+    fireEvent.change(screen.getByLabelText('Score ≥'), { target: { value: '4' } })
+    expect(onMinRelevanceChange).toHaveBeenCalledWith(4)
+    fireEvent.change(screen.getByLabelText('Score ≥'), { target: { value: '' } })
+    expect(onMinRelevanceChange).toHaveBeenCalledWith(null)
+  })
 })

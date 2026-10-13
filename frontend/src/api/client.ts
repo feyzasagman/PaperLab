@@ -98,6 +98,8 @@ export type PrismaExportOut = components['schemas']['PrismaExportOut']
 export type ReadingContextList = components['schemas']['ReadingContextListOut']
 export type ReadingQueue = components['schemas']['ReadingQueueOut']
 export type ScreeningState = components['schemas']['ScreeningStateOut']
+export type ScreeningUpdate = components['schemas']['ScreeningCriteriaUpdate']
+export type AcceptSuggestionsOut = components['schemas']['AcceptSuggestionsOut']
 
 /** Where a chat lives: the reader's paper, or a workspace. */
 export type ChatScope = { kind: 'paper' | 'workspace'; id: string }
@@ -314,7 +316,9 @@ export const api = {
     request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs/${runId}`),
   listSearchHits: (
     workspaceId: string,
-    params: { after?: string; limit?: number; stage1_status?: string; acquisition_status?: string },
+    params: {
+      after?: string; limit?: number; stage1_status?: string; acquisition_status?: string; sort?: 'ai'; min_relevance?: number
+    },
   ) => {
     const entries = Object.entries(params).filter(([, value]) => value !== undefined) as [string, string | number][]
     const query = new URLSearchParams(entries.map(([key, value]) => [key, String(value)]))
@@ -353,8 +357,13 @@ export const api = {
   readingQueue: (workspaceId: string, runId: string) =>
     request<ReadingQueue>(`/api/workspaces/${workspaceId}/search/reading-queue?run=${runId}`),
   screeningState: (workspaceId: string) => request<ScreeningState>(`/api/workspaces/${workspaceId}/search/screening`),
-  saveScreeningCriteria: (workspaceId: string, criteria: string | null) =>
-    request<ScreeningState>(`/api/workspaces/${workspaceId}/search/screening`, sendJson('PUT', { criteria })),
+  /** Any subset of the criteria and settings. */
+  saveScreening: (workspaceId: string, body: ScreeningUpdate) =>
+    request<ScreeningState>(`/api/workspaces/${workspaceId}/search/screening`, sendJson('PUT', body)),
+  acceptSuggestions: (workspaceId: string, hitIds: string[]) =>
+    request<AcceptSuggestionsOut>(
+      `/api/workspaces/${workspaceId}/search/hits/accept-suggestions`, sendJson('POST', { hit_ids: hitIds }),
+    ),
   startSuggestions: (workspaceId: string, confirmRemote: boolean) =>
     request<ScreeningState>(
       `/api/workspaces/${workspaceId}/search/suggestions`, sendJson('POST', { confirm_remote: confirmRemote }),

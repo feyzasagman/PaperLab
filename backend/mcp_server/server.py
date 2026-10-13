@@ -15,7 +15,7 @@ import uuid
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from app.core import graph, library, notes, pipeline, workspaces
+from app.core import graph, library, notes, pipeline, screening, workspaces
 from app.core.errors import Conflict, DomainError, InvalidInput, NotFound
 from app.db import SessionLocal
 
@@ -35,7 +35,9 @@ mcp = MCPServer(
         "Saved searches: create_saved_search runs a search on a schedule, list_saved_searches shows them and "
         "set_saved_search_enabled pauses or resumes one. "
         "Notes: list_notes reads them, create_note saves one on a passage it quotes exactly. "
-        "An AI suggestion on a hit is a suggestion, never a decision; only review_hits records one."
+        "AI pre-screening: run_prescreen starts it, get_screening_suggestions reads the results and accept_suggestions "
+        "accepts some. An AI suggestion on a hit is a suggestion, never a decision; only review_hits and "
+        "accept_suggestions record one, so ask the owner first."
     ),
 )
 sessions = SessionLocal  # tests point this at their rolled-back session
@@ -199,6 +201,38 @@ async def list_hits(
     never a decision."""
     async with sessions() as session:
         return await pipeline.list_hits(session, workspace, run_id, status, cursor, limit)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def get_screening_suggestions(
+    workspace: str, run_id: uuid.UUID | None = None, min_relevance: int | None = None, cursor: str | None = None,
+) -> pipeline.HitPage:
+    """Use to read the AI's suggestions on undecided hits, best score first. min_relevance (1 to 5) hides weaker
+    ones; pass next_cursor back to page. These are suggestions only; nothing here is a decision."""
+    async with sessions() as session:
+        return await pipeline.get_screening_suggestions(session, workspace, run_id, min_relevance, cursor)
+
+
+@mcp.tool()
+@recoverable
+async def run_prescreen(workspace: str, run_id: uuid.UUID | None = None) -> pipeline.ScreeningStateOut:
+    """Use to have the default model suggest include, exclude or unsure for each undecided hit (all hits, or one run).
+    It runs in the background; a remote model is refused with remote_model_needs_confirm, since its provider would
+    receive the abstracts. Suggestions are never decisions."""
+    async with sessions() as session:
+        return await pipeline.run_prescreen(session, workspace, run_id)
+
+
+@mcp.tool()
+@recoverable
+async def accept_suggestions(workspace: str, hit_ids: list[uuid.UUID]) -> screening.AcceptResult:
+    """Use to record the owner's decision on hits by accepting their suggestions (include becomes relevant,
+    exclude becomes not_relevant with its reason). Hits with no suggestion, unsure ones, already decided ones
+    and ones not in the workspace are skipped.
+    Ask the owner before calling."""
+    async with sessions() as session:
+        return await pipeline.accept_suggestions(session, workspace, hit_ids)
 
 
 @mcp.tool()

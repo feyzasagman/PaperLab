@@ -45,6 +45,7 @@ EXPECTED_TOOLS = {
     "list_hits": True, "review_hits": None, "import_hit": None, "snowball": None,
     "set_eligibility": None, "get_prisma": True, "list_notes": True,
     "create_saved_search": None, "list_saved_searches": True, "set_saved_search_enabled": None,
+    "run_prescreen": None, "get_screening_suggestions": True, "accept_suggestions": None,
 }
 
 

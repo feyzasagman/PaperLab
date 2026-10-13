@@ -349,3 +349,86 @@ async def test_create_saved_search_errors_are_readable(session, args, code):
 async def test_pausing_an_unknown_saved_search_says_so(session):
     response = await call("set_saved_search_enabled", saved_search_id=str(uuid.uuid4()), enabled=True)
     assert response.is_error and response.structured_content["error"] == "saved_search_not_found"
+
+
+# --- AI pre-screening tools ---
+
+from screening_pool import make_pool  # noqa: E402
+
+from app.core import screening  # noqa: E402
+
+
+def _model(monkeypatch, local: bool):
+    async def default(_session):
+        return ("Test · model", local, "localhost" if local else "api.example.com")
+
+    monkeypatch.setattr(screening, "_default_model", default)
+
+
+async def _pool(session, criteria="adults"):
+    workspace, hits = await make_pool(session, [("a", None)] * 3)
+    workspace.inclusion_criteria = criteria
+    await session.flush()
+    return workspace, hits
+
+
+async def test_run_prescreen_starts_and_enqueues_with_a_local_model(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    workspace, _ = await _pool(session)
+    state = result(await call("run_prescreen", workspace=workspace.name))
+    assert (state["suggest_status"], state["suggest_total"]) == ("running", 3)
+    assert jobs.jobs == [("suggest_screening", str(workspace.id))]
+
+
+async def test_run_prescreen_with_a_remote_model_asks_and_starts_nothing(session, jobs, monkeypatch):
+    _model(monkeypatch, False)
+    workspace, _ = await _pool(session)
+    response = await call("run_prescreen", workspace=workspace.name)
+    assert response.is_error and response.structured_content["error"] == "remote_model_needs_confirm"
+    assert response.structured_content["model"] == "Test · model"
+    assert jobs.jobs == [] and workspace.suggest_status == "idle"
+
+
+async def test_run_prescreen_errors(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    workspace, _ = await _pool(session, criteria=None)
+    no_criteria = await call("run_prescreen", workspace=workspace.name)
+    assert no_criteria.structured_content["error"] == "no_criteria"
+    assert (await call("run_prescreen", workspace="Nope " + RUN)).structured_content["error"] == "unknown_workspace"
+    _, (other_hit, *_) = await _pool(session)
+    workspace.inclusion_criteria = "adults"
+    foreign = await call("run_prescreen", workspace=workspace.name, run_id=str(other_hit.run_id))
+    assert foreign.is_error and foreign.structured_content["error"] == "not_found"
+    assert jobs.jobs == []
+
+
+async def test_get_screening_suggestions_lists_undecided_suggested_hits_best_first(session):
+    workspace, (low, high, none) = await _pool(session)
+    for hit, score in ((low, 2), (high, 5)):
+        hit.suggestion, hit.suggestion_relevance = "include", score
+    await session.flush()
+
+    page = result(await call("get_screening_suggestions", workspace=workspace.name))
+    assert [h["id"] for h in page["hits"]] == [str(high.id), str(low.id)]
+    only_high = result(await call("get_screening_suggestions", workspace=workspace.name, min_relevance=4))
+    assert [h["id"] for h in only_high["hits"]] == [str(high.id)]
+    high.stage1_status = "relevant"
+    await session.flush()
+    again = result(await call("get_screening_suggestions", workspace=workspace.name))
+    assert [h["id"] for h in again["hits"]] == [str(low.id)]
+
+
+async def test_accept_suggestions_records_decisions_and_skips_the_rest(session):
+    workspace, (inc, exc, none) = await _pool(session)
+    inc.suggestion = "include"
+    exc.suggestion, exc.suggestion_reason = "exclude", "wrong_topic"
+    await session.flush()
+    out = result(await call("accept_suggestions", workspace=workspace.name, hit_ids=[str(inc.id), str(none.id)]))
+    assert out == {"accepted": 1, "skipped": [str(none.id)]}
+    assert (inc.stage1_status, exc.stage1_status) == ("relevant", None)
+
+
+async def test_accept_suggestions_refuses_more_than_5000_ids(session):
+    workspace, _ = await _pool(session)
+    out = await call("accept_suggestions", workspace=workspace.name, hit_ids=[str(uuid.uuid4()) for _ in range(5001)])
+    assert out.is_error and out.structured_content["error"] == "too_many_hits"

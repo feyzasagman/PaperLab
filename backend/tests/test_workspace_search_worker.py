@@ -16,7 +16,7 @@ from app.models.workspace_search import WorkspaceSearchCursor, WorkspaceSearchHi
 from app.providers import discovery_fake
 from app.workers import workspace_search as worker_module
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 
 
 @pytest.fixture
@@ -351,3 +351,108 @@ async def test_worker_backs_off_when_another_worker_holds_the_lock(session, work
     assert calls == 0
     reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
     assert reloaded.status == "running"  # untouched — this worker never got past the lock check
+
+
+# --- pre-screening after a scheduled run (M39 F3) ---------------------------------------------------------
+
+
+@pytest.fixture
+def enqueued(monkeypatch):
+    jobs = []
+
+    async def fake_enqueue(job, *args):
+        jobs.append((job, *args))
+
+    monkeypatch.setattr(worker_module.queue, "enqueue", fake_enqueue)
+    return jobs
+
+
+async def _finish_run(session, worker, *, scheduled=True, criteria="RCTs", setting=True, suggest_status="idle"):
+    from app.models.saved_search import SavedSearch  # noqa: PLC0415
+
+    run = await _new_run(session, "running")
+    session.add(WorkspaceSearchCursor(run_id=run.id, source="arxiv", cursor_json={"value": 0}))
+    workspace = await session.get(Workspace, run.workspace_id)
+    workspace.inclusion_criteria = criteria
+    workspace.prescreen_after_scheduled_runs = setting
+    workspace.suggest_status = suggest_status
+    if scheduled:
+        saved = SavedSearch(workspace_id=workspace.id, query="bert", schedule="0 6 * * *", timezone="UTC")
+        session.add(saved)
+        await session.flush()
+        run.saved_search_id = saved.id
+    await session.commit()
+    await worker_module.run_workspace_search(worker, str(run.id))
+    await session.refresh(run)  # the worker's rollback expires everything on this shared session
+    await session.refresh(workspace)
+    return run, workspace
+
+
+async def test_a_finished_scheduled_run_starts_prescreening_with_a_local_model(session, worker, enqueued):
+    run, workspace = await _finish_run(session, worker)
+    assert (await session.get(WorkspaceSearchRun, run.id)).status == "exhausted"
+    assert (workspace.suggest_status, workspace.suggest_run_id) == ("running", run.id)
+    assert enqueued == [("suggest_screening", str(workspace.id))]
+
+
+async def test_a_remote_default_model_says_why_and_starts_nothing(session, worker, enqueued):
+    from app.models import LLMConnection  # noqa: PLC0415
+
+    await session.execute(
+        update(LLMConnection).values(kind="openai_compatible", base_url="https://api.example.com/v1")
+    )
+    _, workspace = await _finish_run(session, worker)
+    assert enqueued == [] and workspace.suggest_status == "idle"
+    assert "api.example.com" in workspace.suggest_error
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"setting": False}, {"scheduled": False}],
+)
+async def test_other_cases_start_nothing(session, worker, enqueued, kwargs):
+    _, workspace = await _finish_run(session, worker, **kwargs)
+    assert enqueued == [] and workspace.suggest_run_id is None and workspace.suggest_error is None
+
+
+async def test_a_busy_workspace_says_the_new_hits_were_not_pre_screened(session, worker, enqueued):
+    _, workspace = await _finish_run(session, worker, suggest_status="running")
+    assert enqueued == [] and workspace.suggest_run_id is None
+    assert workspace.suggest_error == (
+        "New hits from a scheduled search weren't pre-screened because another job was running. "
+        "Press Suggest to score them."
+    )
+
+
+async def test_no_criteria_says_to_add_some(session, worker, enqueued):
+    _, workspace = await _finish_run(session, worker, criteria=None)
+    assert enqueued == [] and workspace.suggest_run_id is None
+    assert workspace.suggest_error == (
+        "New hits from a scheduled search weren't pre-screened: add a research question or inclusion criteria first."
+    )
+
+
+async def test_a_failed_enqueue_puts_the_workspace_back_to_idle(session, worker, monkeypatch):
+    async def boom(job, *args):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(worker_module.queue, "enqueue", boom)
+    run, workspace = await _finish_run(session, worker)
+    assert (await session.get(WorkspaceSearchRun, run.id)).status == "exhausted"
+    assert (workspace.suggest_status, workspace.suggest_run_id) == ("idle", None)
+    assert workspace.suggest_error == "Couldn't start pre-screening after the scheduled search"
+
+
+async def test_a_stopped_run_does_not_prescreen(session, worker, enqueued):
+    from app.models.saved_search import SavedSearch  # noqa: PLC0415
+
+    run = await _new_run(session, "stopped")
+    workspace = await session.get(Workspace, run.workspace_id)
+    workspace.inclusion_criteria = "RCTs"
+    saved = SavedSearch(workspace_id=workspace.id, query="bert", schedule="0 6 * * *", timezone="UTC")
+    session.add(saved)
+    await session.flush()
+    run.saved_search_id = saved.id
+    await session.commit()
+    await worker_module._mark_exhausted_unless_stopped(session, run)
+    assert enqueued == [] and workspace.suggest_status == "idle"

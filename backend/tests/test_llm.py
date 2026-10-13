@@ -520,3 +520,19 @@ async def test_fake_llm_answers_a_question_asking_for_notes_with_two_suggested_n
         "The method anchors every note on a passage [C1].",
         "Keep one idea per note.",
     ]
+
+
+async def test_fake_llm_answers_the_v2_screening_prompt_with_json_whose_quote_is_in_the_abstract():
+    from app.core import screening_suggest as s
+
+    abstract = "A controlled study of pagination in fixture search results."
+    fake = llm.FakeLLM()
+    results = {
+        title: await s.suggest(fake, "q", "in", "out", title, abstract)
+        for title in ("Fixture 1", "Fixture 2", "Fixture 3", "Fixture 4")
+    }
+    assert {r.verdict for r in results.values()} == {"include", "exclude", "unsure"}
+    assert all(r.relevance and 1 <= r.relevance <= 5 for r in results.values())
+    assert all(r.quotes == ["A controlled study"] for r in results.values() if r.verdict != "unsure")
+    assert all(r.confidence == "high" for r in results.values() if r.verdict != "unsure")
+    assert all(r.reason == "wrong_topic" for r in results.values() if r.verdict == "exclude")

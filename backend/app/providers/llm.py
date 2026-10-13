@@ -239,6 +239,23 @@ FAKE_NOTE_SUGGESTIONS_TOKENS = [
 ]
 # The screening suggestion on the fake stack (M31b): an exclude with a reason, as the E2E spec expects.
 FAKE_SCREENING_TOKENS = ["EXCLUDE ", "wrong_study_type\n", "A review, ", "not a primary study."]
+
+
+def fake_screening_reply(prompt: str) -> str:
+    """The v2 screening JSON on the fake stack: relevance from a stable hash of the title (so a rerun agrees), and one
+    quote of three words copied from the abstract, so the quote check keeps it."""
+    title = prompt.partition("Title: ")[2].partition("\n")[0]
+    abstract = prompt.partition("Abstract:\n")[2]
+    bucket = sum(title.encode()) % 4
+    relevance, decision, reason = [
+        (5, "include", None), (4, "include", None), (2, "exclude", "wrong_topic"), (3, "unsure", None),
+    ][bucket]  # fmt: skip
+    quotes = [" ".join(abstract.split()[:3])] if decision != "unsure" and len(abstract.split()) >= 3 else []
+    return json.dumps(
+        {"relevance": relevance, "decision": decision, "reason": reason, "quotes": quotes, "why": "Fake stack verdict."}
+    )
+
+
 # Asked for notes, in either chat: two suggested notes, the first citing a passage and the second nothing, then a line
 # after them, as the note-suggestion end-to-end spec expects.
 FAKE_NOTES_TOKENS = [
@@ -291,6 +308,7 @@ class FakeLLM:
         # Same reason: note_suggestions → core.chat → retrieval → embedding → http_embedders → this module.
         from app.core.note_suggestions import SYSTEM_PROMPT as NOTE_SUGGESTIONS_SYSTEM_PROMPT
         from app.core.screening_suggest import SYSTEM_PROMPT as SCREENING_SYSTEM_PROMPT
+        from app.core.screening_suggest import SYSTEM_PROMPT_V2 as SCREENING_SYSTEM_PROMPT_V2
 
         self.calls.append((system, prompt))
         if asks_for_notes(prompt):
@@ -301,6 +319,8 @@ class FakeLLM:
             tokens = FAKE_NOTE_SUGGESTIONS_TOKENS
         elif system == SCREENING_SYSTEM_PROMPT:
             tokens = FAKE_SCREENING_TOKENS
+        elif system == SCREENING_SYSTEM_PROMPT_V2:
+            tokens = [fake_screening_reply(prompt)]
         else:
             tokens = FAKE_TOKENS
         for index, token in enumerate(tokens):

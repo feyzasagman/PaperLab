@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from sqlalchemy import delete, update
 
@@ -13,7 +15,7 @@ def _url(workspace, tail=""):
 
 async def _with_criteria(session, rows=(("a", None),)):
     workspace, hits = await make_pool(session, list(rows))
-    workspace.screening_criteria = "RCTs"
+    workspace.inclusion_criteria = "RCTs"
     await session.flush()
     return workspace, hits
 
@@ -84,3 +86,26 @@ async def test_hits_carry_their_suggestion(client, session):
     await session.flush()
     item = (await client.get(f"/api/workspaces/{workspace.id}/search/hits")).json()["items"][0]
     assert (item["suggestion"], item["suggestion_reason"], item["suggestion_note"]) == ("exclude", "language", "Not English.")
+
+
+async def test_start_scoped_to_a_run_counts_only_that_run(client, session, arq):
+    from app.models.workspace_search import WorkspaceSearchRun
+    workspace, hits = await _with_criteria(session, [("a", None), ("b", None)])
+    other = WorkspaceSearchRun(
+        workspace_id=workspace.id, query_text="q2", filters_json={}, query_overrides_json={},
+        sources_json=["arxiv"], status="exhausted", started_at=hits[0].first_seen_at, stats_json={},
+    )
+    session.add(other)
+    await session.flush()
+    hits[1].run_id = other.id
+    await session.flush()
+    resp = await client.post(_url(workspace), json={"run_id": str(other.id)})
+    assert resp.status_code == 200
+    assert (resp.json()["suggest_total"], resp.json()["suggest_run_id"]) == (1, str(other.id))
+
+
+async def test_start_with_a_run_from_another_workspace_is_404(client, session, arq):
+    workspace, _ = await _with_criteria(session)
+    resp = await client.post(_url(workspace), json={"run_id": str(uuid.uuid4())})
+    assert resp.status_code == 404
+    assert arq.jobs == []

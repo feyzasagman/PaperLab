@@ -36,6 +36,7 @@ import {
   type References,
   type ReferencesDirection,
   type ScreeningState,
+  type ScreeningUpdate,
   type SearchResult,
   type SavedSearchCreate,
   type SavedSearchUpdate,
@@ -451,12 +452,23 @@ export const useSearchRun = (workspaceId: string, runId: string | null) =>
   })
 
 /** A run's hits, keyset-paginated; `stage1Status`/`acquisitionStatus` each filter to one status ('all' when omitted). */
-export const useSearchHits = (workspaceId: string, stage1Status?: string, acquisitionStatus?: string) =>
+export const useSearchHits = (
+  workspaceId: string,
+  stage1Status?: string,
+  acquisitionStatus?: string,
+  /** `sort: 'ai'` orders by the AI score (cursor is then an offset); `minRelevance` keeps scores at or above it. */
+  options: { sort?: 'ai'; minRelevance?: number } = {},
+) =>
   useInfiniteQuery({
-    queryKey: keys.searchHits(workspaceId, stage1Status ?? 'all', acquisitionStatus ?? 'all'),
+    // The default key stays exactly the plain pool's (other code resets it by exact key); only AI/filtered views add a suffix.
+    queryKey: [
+      ...keys.searchHits(workspaceId, stage1Status ?? 'all', acquisitionStatus ?? 'all'),
+      ...(options.sort || options.minRelevance ? [options.sort ?? 'found', options.minRelevance ?? 0] : []),
+    ],
     queryFn: ({ pageParam }) =>
       api.listSearchHits(workspaceId, {
         after: pageParam, limit: 50, stage1_status: stage1Status, acquisition_status: acquisitionStatus,
+        sort: options.sort, min_relevance: options.minRelevance,
       }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
@@ -487,8 +499,8 @@ function useScreeningMutation<T>(workspaceId: string, fn: (arg: T) => Promise<Sc
   })
 }
 
-export const useSaveCriteria = (workspaceId: string) =>
-  useScreeningMutation(workspaceId, (criteria: string | null) => api.saveScreeningCriteria(workspaceId, criteria))
+export const useSaveScreening = (workspaceId: string) =>
+  useScreeningMutation(workspaceId, (body: ScreeningUpdate) => api.saveScreening(workspaceId, body))
 export const useStartSuggestions = (workspaceId: string) =>
   useScreeningMutation(workspaceId, (confirmRemote: boolean) => api.startSuggestions(workspaceId, confirmRemote))
 export const useStopSuggestions = (workspaceId: string) =>
@@ -629,6 +641,22 @@ export function useBulkPatchSearchHits(workspaceId: string) {
       })
       client.invalidateQueries({ queryKey: keys.rankedHits(workspaceId) })
     },
+  })
+}
+
+/** Accepts the AI's include/exclude suggestion on each given undecided hit (an owner action: the only way a
+ * suggestion becomes a decision). Decisions change, so the pool, the ranking and the PRISMA counts reload. */
+export function useAcceptSuggestions(workspaceId: string) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (hitIds: string[]) => api.acceptSuggestions(workspaceId, hitIds),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: keys.searchHitsRoot(workspaceId) }),
+        client.invalidateQueries({ queryKey: keys.rankedHits(workspaceId) }),
+        client.invalidateQueries({ queryKey: keys.prismaRoot(workspaceId) }),
+        client.invalidateQueries({ queryKey: keys.readingQueueRoot(workspaceId) }),
+      ]),
   })
 }
 

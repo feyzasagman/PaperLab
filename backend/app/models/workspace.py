@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Table, Text, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, SmallInteger, Table, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,6 +22,15 @@ class Workspace(Base):
     suggest_done: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     suggest_total: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     suggest_error: Mapped[str | None] = mapped_column(Text, default=None)
+    # M39 F3: what the model screens against, its settings, and the run the job is scoped to (null = whole pool).
+    research_question: Mapped[str | None] = mapped_column(Text, default=None)
+    inclusion_criteria: Mapped[str | None] = mapped_column(Text, default=None)
+    exclusion_criteria: Mapped[str | None] = mapped_column(Text, default=None)
+    prescreen_after_scheduled_runs: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    auto_import_min_relevance: Mapped[int | None] = mapped_column(SmallInteger, default=None)
+    suggest_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID, ForeignKey("workspace_search_runs.id", ondelete="SET NULL"), default=None
+    )
 
 
 # A Core Table like note_anchors: a pure link, only inserted (ON CONFLICT DO NOTHING), deleted and read in bulk.

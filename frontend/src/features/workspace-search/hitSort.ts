@@ -1,4 +1,4 @@
-export type HitSort = 'found' | 'ranked' | 'year'
+export type HitSort = 'found' | 'ranked' | 'year' | 'ai'
 // Widened to `| undefined` on top of the brief's own alias: `browserStorage()` (features/notes/highlightColors)
 // returns `ColorStorage | undefined`, not `| null`, and the two are structurally identical otherwise.
 type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem'> | null | undefined
@@ -9,7 +9,7 @@ const key = (workspaceId: string) => `paperlab-hit-sort:${workspaceId}`
 export function loadHitSort(storage: Storage, workspaceId: string): HitSort {
   try {
     const value = storage?.getItem(key(workspaceId))
-    return value === 'ranked' || value === 'year' ? value : 'found'
+    return value === 'ranked' || value === 'year' || value === 'ai' ? value : 'found'
   } catch {
     return 'found'
   }
