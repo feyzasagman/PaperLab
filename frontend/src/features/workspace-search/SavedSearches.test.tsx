@@ -57,7 +57,7 @@ test('a paused row says Paused', () => {
 test('Delete asks in the app dialog and confirming deletes', () => {
   const confirm = vi.spyOn(window, 'confirm')
   const { del } = setup([row])
-  fireEvent.click(screen.getByRole('button', { name: /Delete/ }))
+  fireEvent.click(screen.getByRole('button', { name: 'Delete: llm code review' }))
   expect(del.mutate).not.toHaveBeenCalled()
   const dialog = screen.getByRole('dialog')
   fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
@@ -103,7 +103,7 @@ test('custom body: cron set, time and weekday null', async () => {
 
 test('edit sends {id, body} with non-null query, sources and timezone, and no enabled', () => {
   const { update } = setup([row])
-  fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Edit: llm code review' }))
   save()
   const [arg] = update.mutateAsync.mock.calls[0]
   expect(arg.id).toBe('s1')
@@ -123,7 +123,7 @@ test('a server code shows as a readable message in the dialog', () => {
 test('Run now reports the new run id and is disabled while pending', () => {
   const onRunStarted = vi.fn()
   const { runNow } = setup([row], onRunStarted)
-  fireEvent.click(screen.getByRole('button', { name: 'Run now' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Run now: llm code review' }))
   const [id, opts] = runNow.mutate.mock.calls[0]
   expect(id).toBe('s1')
   opts.onSuccess({ id: 'run9' })
@@ -135,7 +135,7 @@ test('Run now is disabled while pending', () => {
   vi.spyOn(queries, 'useRunSavedSearchNow').mockReturnValue({ ...mutation(), isPending: true } as any)
   cleanup()
   render(<SavedSearches workspaceId="w1" currentQuery="" onRunStarted={vi.fn()} />)
-  for (const b of screen.getAllByRole('button', { name: 'Run now' })) expect((b as HTMLButtonElement).disabled).toBe(true)
+  for (const b of screen.getAllByRole('button', { name: 'Run now: llm code review' })) expect((b as HTMLButtonElement).disabled).toBe(true)
 })
 
 test('a failed Run now shows its error', () => {

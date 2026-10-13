@@ -31,6 +31,7 @@ export function SearchTab({
       <SearchControls
         isRunning={run.data?.status === 'running'}
         onQueryChange={setQuery}
+        error={startRun.error?.message}
         onStart={(args) => startRun.mutate(args, { onSuccess: (created) => onRunIdChange(created.id) })}
         onStop={() => runId && stopRun.mutate(runId)}
       />

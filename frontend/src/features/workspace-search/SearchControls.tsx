@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { usePaperSources } from '@/api/queries'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { errorText } from './schedule'
 import type { SearchRunCreate, SearchRunSource } from '@/api/client'
 
 // Search/discovery sources only (spec §6) — mirrors the backend's SearchSource Literal. Unpaywall is DOI-only PDF
@@ -31,12 +33,15 @@ export function SearchControls({
   onStop,
   isRunning,
   onQueryChange,
+  error,
 }: {
   onStart: (args: SearchRunCreate) => void
   onStop?: () => void
   isRunning: boolean
   /** Lets a sibling (Saved searches) prefill from what is typed here. */
   onQueryChange?: (query: string) => void
+  /** The server's code from a refused Start; shown as a plain sentence. */
+  error?: string
 }) {
   const [query, setQuery] = useState('')
   const [yearFrom, setYearFrom] = useState('')
@@ -53,8 +58,12 @@ export function SearchControls({
     ...(yearTo ? { year_to: Number(yearTo) } : {}),
   }
 
+  const yearsReversed = Boolean(yearFrom && yearTo && Number(yearFrom) > Number(yearTo))
+  const message = errorText(error)
+
   return (
-    <div className="flex items-center gap-2 border-b p-3">
+    <div className="border-b">
+    <div className="flex items-center gap-2 p-3">
       <label htmlFor="search-query" className="sr-only">
         Search query
       </label>
@@ -90,11 +99,17 @@ export function SearchControls({
       ) : (
         <Button
           onClick={() => onStart({ query, filters, sources: enabledSources!, query_overrides: {} })}
-          disabled={!query || !enabledSources || enabledSources.length === 0}
+          disabled={!query || !enabledSources || enabledSources.length === 0 || yearsReversed}
         >
           Start
         </Button>
       )}
+    </div>
+    {message && (
+      <Alert variant="destructive" className="mx-3 mb-3 w-auto">
+        <AlertDescription>{message}</AlertDescription>
+      </Alert>
+    )}
     </div>
   )
 }

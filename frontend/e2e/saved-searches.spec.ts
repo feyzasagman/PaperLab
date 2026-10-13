@@ -23,7 +23,7 @@ test('save a search on a schedule, pause it, run it now, then delete it', async 
 
   const [run] = await Promise.all([
     page.waitForResponse((r) => r.url().endsWith('/run') && r.request().method() === 'POST'),
-    saved.getByRole('button', { name: 'Run now' }).click(),
+    saved.getByRole('button', { name: `Run now: ${query}` }).click(),
   ])
   expect(run.status()).toBeLessThan(300)
   const { id: runId } = await run.json()
@@ -33,7 +33,7 @@ test('save a search on a schedule, pause it, run it now, then delete it', async 
   const stopped = await request.post(`/api/workspaces/${workspaceId}/search/runs/${runId}/stop`)
   expect(stopped.ok()).toBeTruthy()
 
-  await saved.getByRole('button', { name: 'Delete' }).click()
+  await saved.getByRole('button', { name: `Delete: ${query}` }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click()
   await expect(saved.getByText(query)).toHaveCount(0)
 })

@@ -60,11 +60,11 @@ export function SavedSearches({
             <span className="min-w-0 flex-1 truncate font-medium">{s.query}</span>
             <Switch size="sm" checked={s.enabled} aria-label={`Enabled: ${s.query}`}
               onCheckedChange={(enabled) => update.mutate({ id: s.id, body: { enabled } })} />
-            <Button variant="ghost" size="sm" disabled={runNow.isPending} onClick={() => runNow.mutate(s.id, { onSuccess: (r) => onRunStarted(r.id) })}>
+            <Button variant="ghost" size="sm" aria-label={`Run now: ${s.query}`} disabled={runNow.isPending} onClick={() => runNow.mutate(s.id, { onSuccess: (r) => onRunStarted(r.id) })}>
               Run now
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(s)}>Edit</Button>
-            <Button variant="ghost" size="sm" onClick={() => { setDeleting(s); setLastDeleting(s) }}>Delete</Button>
+            <Button variant="ghost" size="sm" aria-label={`Edit: ${s.query}`} onClick={() => setEditing(s)}>Edit</Button>
+            <Button variant="ghost" size="sm" aria-label={`Delete: ${s.query}`} onClick={() => { setDeleting(s); setLastDeleting(s) }}>Delete</Button>
           </div>
           <p className="text-xs text-muted-foreground">
             {[
