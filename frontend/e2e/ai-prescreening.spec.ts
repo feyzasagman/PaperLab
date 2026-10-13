@@ -18,9 +18,6 @@ async function searchAndWait(page: Page, request: APIRequestContext, workspaceId
   await expect(page.getByText(/[1-9]\d* in pool/)).toBeVisible()
 }
 
-// The assist panel (three criteria fields and the settings) is tall: at 720px high the hit list gets no height.
-test.use({ viewport: { width: 1280, height: 1500 } })
-
 function row(page: Page, title: string) {
   return page.locator('[data-slot="context-menu-trigger"]', { hasText: new RegExp(title, 'i') })
 }

@@ -28,6 +28,8 @@ export function ScreeningAssist({ workspaceId }: { workspaceId: string }) {
   const [draft, setDraft] = useState<Partial<Fields> | null>(null)
   const status = state.data?.suggest_status
   const previous = useRef(status)
+  const [userOpen, setUserOpen] = useState<boolean | null>(null)
+  const initialOpen = useRef<boolean | null>(null)
   useEffect(() => {
     if (previous.current && previous.current !== 'idle' && status === 'idle') {
       client.invalidateQueries({ queryKey: keys.searchHitsRoot(workspaceId) })
@@ -44,7 +46,10 @@ export function ScreeningAssist({ workspaceId }: { workspaceId: string }) {
     exclusion_criteria: data.exclusion_criteria ?? '',
   }
   const fields: Fields = { ...saved, ...draft }
-  const hasCriteria = Boolean(data.criteria || saved.research_question || saved.inclusion_criteria || saved.exclusion_criteria)
+  // The server refuses a run with only exclusion criteria.
+  const hasCriteria = Boolean(saved.research_question || saved.inclusion_criteria)
+  // Open on first sight only when nothing is saved; saving must not fold the panel away under the owner.
+  initialOpen.current ??= !hasCriteria
   const running = status !== 'idle'
   const noModel = data.model_label === null
   const percent = data.suggest_total > 0 ? Math.round((data.suggest_done / data.suggest_total) * 100) : null
@@ -56,31 +61,72 @@ export function ScreeningAssist({ workspaceId }: { workspaceId: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-2 border-b px-3 py-2 text-sm">
-      {FIELDS.map(({ key, label, hint }) => (
-        <div key={key} className="flex flex-col gap-1">
-          <Label htmlFor={`screening-${key}`}>{label}</Label>
-          <Textarea
-            id={`screening-${key}`}
-            value={fields[key]}
-            maxLength={CRITERIA_MAX}
-            disabled={running}
-            placeholder={hint}
-            onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
-            rows={key === 'research_question' ? 2 : 3}
-          />
+    // shrink-0 + its own scroll: the hit list below always keeps its share of a short window.
+    <div className="flex max-h-[40vh] shrink-0 flex-col gap-2 overflow-y-auto border-b px-3 py-2 text-sm">
+      <details open={userOpen ?? initialOpen.current} onToggle={(event) => setUserOpen(event.currentTarget.open)}>
+        <summary className="cursor-pointer truncate font-medium">
+          Screening criteria
+          {saved.research_question && (
+            <span className="font-normal text-muted-foreground"> · {saved.research_question}</span>
+          )}
+        </summary>
+        <div className="mt-2 flex flex-col gap-2">
+        {FIELDS.map(({ key, label, hint }) => (
+          <div key={key} className="flex flex-col gap-1">
+            <Label htmlFor={`screening-${key}`}>{label}</Label>
+            <Textarea
+              id={`screening-${key}`}
+              value={fields[key]}
+              maxLength={CRITERIA_MAX}
+              disabled={running}
+              placeholder={hint}
+              onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
+              rows={key === 'research_question' ? 2 : 3}
+            />
+          </div>
+        ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={running || draft === null || save.isPending}
+            onClick={() => save.mutate(fields, { onSuccess: () => setDraft(null) })}
+          >
+            Save criteria
+          </Button>
         </div>
-      ))}
+        <div className="flex flex-col gap-2 border-t pt-2">
+          <div className="flex items-center gap-2">
+            <Switch
+              id="screening-prescreen"
+              checked={data.prescreen_after_scheduled_runs}
+              disabled={save.isPending}
+              onCheckedChange={(checked) => save.mutate({ prescreen_after_scheduled_runs: checked })}
+            />
+            <Label htmlFor="screening-prescreen">Pre-screen new hits after a scheduled search (local model only)</Label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Label htmlFor="screening-auto-import">Import free PDFs automatically for hits rated</Label>
+            <select
+              id="screening-auto-import"
+              value={data.auto_import_min_relevance ?? ''}
+              disabled={save.isPending}
+              onChange={(event) =>
+                save.mutate({ auto_import_min_relevance: event.target.value ? (Number(event.target.value) as 4 | 5) : null })
+              }
+              className="h-8 rounded-lg border bg-background px-2 text-sm"
+            >
+              <option value="">Off</option>
+              <option value="4">4 and up</option>
+              <option value="5">5 only</option>
+            </select>
+          </div>
+          <p className="text-xs text-muted-foreground">Off by default. Only free PDFs are imported; your decisions stay yours.</p>
+        </div>
+        </div>
+      </details>
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={running || draft === null || save.isPending}
-          onClick={() => save.mutate(fields, { onSuccess: () => setDraft(null) })}
-        >
-          Save criteria
-        </Button>
         {!running && (
           <Button type="button" size="sm" disabled={noModel || !hasCriteria || start.isPending} onClick={onSuggest}>
             Suggest for unscreened hits
@@ -89,34 +135,9 @@ export function ScreeningAssist({ workspaceId }: { workspaceId: string }) {
         {noModel && (
           <span className="text-xs text-muted-foreground">Set up a chat model in Settings to get suggestions.</span>
         )}
-      </div>
-      <div className="flex flex-col gap-2 border-t pt-2">
-        <div className="flex items-center gap-2">
-          <Switch
-            id="screening-prescreen"
-            checked={data.prescreen_after_scheduled_runs}
-            disabled={save.isPending}
-            onCheckedChange={(checked) => save.mutate({ prescreen_after_scheduled_runs: checked })}
-          />
-          <Label htmlFor="screening-prescreen">Pre-screen new hits after a scheduled search (local model only)</Label>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Label htmlFor="screening-auto-import">Import free PDFs automatically for hits rated</Label>
-          <select
-            id="screening-auto-import"
-            value={data.auto_import_min_relevance ?? ''}
-            disabled={save.isPending}
-            onChange={(event) =>
-              save.mutate({ auto_import_min_relevance: event.target.value ? (Number(event.target.value) as 4 | 5) : null })
-            }
-            className="h-8 rounded-lg border bg-background px-2 text-sm"
-          >
-            <option value="">Off</option>
-            <option value="4">4 and up</option>
-            <option value="5">5 only</option>
-          </select>
-        </div>
-        <p className="text-xs text-muted-foreground">Off by default. Only free PDFs are imported; your decisions stay yours.</p>
+        {!noModel && !hasCriteria && !running && (
+          <span className="text-xs text-muted-foreground">Add a research question or inclusion criteria first.</span>
+        )}
       </div>
       {running && (
         <div className="flex flex-col gap-1.5">

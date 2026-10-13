@@ -10,7 +10,7 @@ function renderWithClient(ui: React.ReactElement, client = new QueryClient({ def
 }
 
 const state = (over = {}) => ({
-  criteria: 'RCTs on sleep', research_question: null, inclusion_criteria: null, exclusion_criteria: null,
+  criteria: 'RCTs on sleep', research_question: null, inclusion_criteria: 'RCTs on sleep', exclusion_criteria: null,
   prescreen_after_scheduled_runs: true, auto_import_min_relevance: null, ranked_used: false, suggest_status: 'idle', suggest_done: 0, suggest_total: 0,
   suggest_error: null, model_label: 'Ollama · qwen3:8b', model_is_local: true, model_host: 'localhost', ...over,
 })
@@ -109,9 +109,43 @@ describe('ScreeningAssist', () => {
   })
 
   it('disables Suggest until criteria are saved, and shows the last error', async () => {
-    stubFetch({ [`GET ${base}/screening`]: () => state({ criteria: null, suggest_error: "Can't reach localhost:11434" }) })
+    stubFetch({ [`GET ${base}/screening`]: () => state({ criteria: null, inclusion_criteria: null, suggest_error: "Can't reach localhost:11434" }) })
     renderWithClient(<ScreeningAssist workspaceId="w1" />)
     expect(await screen.findByRole('button', { name: 'Suggest for unscreened hits' })).toBeDisabled()
     expect(screen.getByRole('alert')).toHaveTextContent("Can't reach localhost:11434")
+  })
+
+  it('keeps the panel open when nothing is saved and folds it, with the question in its summary, when criteria exist', async () => {
+    stubFetch({ [`GET ${base}/screening`]: () => state({ inclusion_criteria: null, criteria: null }) })
+    const first = renderWithClient(<ScreeningAssist workspaceId="w1" />)
+    await screen.findByText('Screening criteria')
+    expect(document.querySelector('details')).toHaveProperty('open', true)
+    first.unmount()
+    stubFetch({ [`GET ${base}/screening`]: () => state({ research_question: 'Does sleep help memory?' }) })
+    renderWithClient(<ScreeningAssist workspaceId="w1" />)
+    await screen.findByText('Screening criteria')
+    expect(document.querySelector('summary')).toHaveTextContent('Does sleep help memory?')
+    expect(document.querySelector('details')).toHaveProperty('open', false)
+    expect(screen.getByRole('button', { name: 'Suggest for unscreened hits' })).toBeEnabled()
+  })
+
+  it('does not fold the panel after the first criteria are saved', async () => {
+    let saved = false
+    stubFetch({
+      [`GET ${base}/screening`]: () => state({ inclusion_criteria: saved ? 'RCTs' : null, criteria: null }),
+      [`PUT ${base}/screening`]: () => { saved = true; return state({ inclusion_criteria: 'RCTs' }) },
+    })
+    renderWithClient(<ScreeningAssist workspaceId="w1" />)
+    fireEvent.change(await screen.findByLabelText('Include when…'), { target: { value: 'RCTs' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save criteria' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Suggest for unscreened hits' })).toBeEnabled())
+    expect(document.querySelector('details')).toHaveProperty('open', true)
+  })
+
+  it('needs a research question or inclusion criteria: exclusion alone is not enough', async () => {
+    stubFetch({ [`GET ${base}/screening`]: () => state({ inclusion_criteria: null, exclusion_criteria: 'animal studies', criteria: null }) })
+    renderWithClient(<ScreeningAssist workspaceId="w1" />)
+    expect(await screen.findByRole('button', { name: 'Suggest for unscreened hits' })).toBeDisabled()
+    expect(screen.getByText('Add a research question or inclusion criteria first.')).toBeInTheDocument()
   })
 })
