@@ -47,6 +47,7 @@ _NARRATIVE = re.compile(
     r"(?P<names>[A-Z][\w'’\-]+(?:\s+et al\.?|\s+(?:&|and)\s+[A-Z][\w'’\-]+)?)\s+\((?P<year>(?:19|20)\d{2})[a-z]?\)"
 )
 _LEAD = re.compile(r"^(?:(?:see|also|e\.g\.,?|cf\.)\s+)+", re.I)
+_INITIALS = re.compile(r"[a-z]{1,2}\.?|(?:[a-z]\.)+")  # "j", "jk", "j.k." (folded)
 _INITIAL = re.compile(r"^\(?[A-Z]\.$")  # "J." before a surname: not a sentence end
 _FIRST_AUTHOR = re.compile(r",|\s&\s|\sand\s|\set al", re.I)
 
@@ -117,7 +118,7 @@ def _first_author_is(authors: list[str], surname: str) -> bool:
     if "," in name:  # "Smith, J." (bioRxiv, OpenAIRE): the surname comes first
         name = name.split(",")[0].strip()
     tokens = name.split()
-    if len(tokens) > 1 and tokens[0] == wanted and all(re.fullmatch(r"[a-z]{1,2}\.?|(?:[a-z]\.)+", t) for t in tokens[1:]):
+    if len(tokens) > 1 and tokens[0] == wanted and all(_INITIALS.fullmatch(t) for t in tokens[1:]):
         return True  # "Smith J", "Smith J.K."
     return name == wanted or name.endswith(f" {wanted}")
 

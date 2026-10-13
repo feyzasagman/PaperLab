@@ -370,6 +370,7 @@ async def verify_claims(
     the matching library paper, optionally only within one workspace. A citation it can't match is reported, never
     guessed; up to 30 claims per call. Verdicts are AI judgements backed by quotes; confidence=low means the quote
     couldn't be found in the paper (or none was given): tell the owner the verdict is unconfirmed and show no quote
-    as evidence. save=true keeps each as an AI note. A remote default model is refused unless the owner agreed and you pass allow_remote=true."""
+    as evidence. save=true keeps each as an AI note. A remote default model is refused unless the owner agreed and
+    you pass allow_remote=true."""
     async with sessions() as session:
         return await pipeline.verify_claims(session, text, workspace, save, allow_remote)
