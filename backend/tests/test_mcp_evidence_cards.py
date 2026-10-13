@@ -76,6 +76,7 @@ async def test_get_returns_kept_items_and_counts_the_ones_left_out(session, tmp_
     paper = await ready_card(session, tmp_path, reply)
     card = result(await call("get_evidence_card", paper_id=str(paper.id)))
     assert card["status"] == "ready" and card["fields"]["sample"]["n"] == 120
+    assert card["provenance"] == "llm" and card["model"] and card["prompt_version"] == evidence_cards.CARD_PROMPT_VERSION
     assert card["fields"]["limitations"] == [] and card["left_out"] == {"limitations": 1}
     assert "Invented" not in str(card)
     for items in (card["fields"]["findings"], card["fields"]["effect_sizes"]):

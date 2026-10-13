@@ -20,11 +20,12 @@ from app.core import claims, llm_json, numbers, prompts, queue, quotes, retrieva
 from app.core.errors import Conflict, InvalidInput, NotFound
 from app.models import Chunk, EvidenceCard, LLMOutput, Paper, PaperStatus, Workspace, workspace_papers
 
-CARD_PROMPT_VERSION = 1
+CARD_PROMPT_VERSION = 2
 JOB_TIMEOUT = 20 * 60  # seconds; the job's registered timeout. A card `generating` longer than this is stale.
 OUTPUT_KIND = "evidence_card"
 PER_FIELD = 4
 MAX_PASSAGES = 16
+LEAD_CHUNKS = 2  # the abstract and opening: where the question, sample and headline effect are stated
 CAPS = {"findings": 5, "effect_sizes": 8, "limitations": 5}
 SYSTEM_PROMPT, PROMPT_TEMPLATE = prompts.load("evidence_card", CARD_PROMPT_VERSION).split("\n<!-- prompt -->\n")
 FIELD_QUERIES = {
@@ -117,6 +118,8 @@ def _verified(item, passages: list[dict], texts: list[str]) -> dict | None:
     if found is None:
         return _blank(type(item), ["unsupported"])
     quote, index = found
+    if type(item) is _Effect and not numbers.tokens(str(item.value or "")):
+        return _blank(type(item), ["no_statistic"])
     if not all(numbers.all_in(str(data[k]), quote) for k in checked if data[k] is not None):
         return _blank(type(item), ["number_not_in_source"])
     chunk_id = passages[index]["chunk_id"]
@@ -134,11 +137,17 @@ def _fields(reply: _CardReply, passages: list[dict], texts: list[str]) -> dict:
 
 
 async def _passages(session: AsyncSession, paper_id: uuid.UUID) -> tuple[list[dict], list[str]]:
-    """The best chunks per field, interleaved so no field starves, deduped and capped."""
+    """The opening chunks, then the best chunks per field interleaved so no field starves; deduped and capped."""
     per_field = [
         await retrieval.retrieve(session, query, paper_ids=[paper_id], k=PER_FIELD) for query in FIELD_QUERIES.values()
     ]
-    chosen: dict[uuid.UUID, retrieval.RetrievedChunk] = {}
+    opening = await session.execute(
+        select(Chunk).where(Chunk.paper_id == paper_id).order_by(Chunk.ordinal).limit(LEAD_CHUNKS)
+    )
+    chosen: dict[uuid.UUID, retrieval.RetrievedChunk] = {
+        c.id: retrieval.RetrievedChunk(c.id, c.paper_id, c.page, c.section_title, c.bbox, c.text)
+        for c in opening.scalars()
+    }
     for rank in range(PER_FIELD):
         for found in per_field:
             if rank < len(found):
@@ -381,6 +390,7 @@ class CardSummary:
     error: str | None
     provenance: str
     model: str | None
+    prompt_version: int | None
     updated_at: datetime | None
     fields: dict
     left_out: dict  # field -> how many items had no usable quote or numbers (never shown as facts)
@@ -397,7 +407,7 @@ def summarize(view: CardView) -> CardSummary:
         if dropped:
             left_out[name] = len(dropped)
     return CardSummary(
-        view.paper_id, view.status, view.error, view.provenance, view.model, view.updated_at,
+        view.paper_id, view.status, view.error, view.provenance, view.model, view.prompt_version, view.updated_at,
         kept if view.status == "ready" else {}, left_out,
     )
 

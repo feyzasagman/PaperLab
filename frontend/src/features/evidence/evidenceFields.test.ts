@@ -14,9 +14,9 @@ test('a list cell shows its first value and counts the rest', () => {
 
 test('an unsupported item is counted, never shown', () => {
   const dropped = { value: null, quote: null, page: null, chunk_id: null, flags: ['unsupported'] }
-  const view = cellView(card({ findings: [item('A'), dropped, { ...dropped, flags: ['number_not_in_source'] }] }), 'findings')
+  const view = cellView(card({ findings: [item('A'), dropped, { ...dropped, flags: ['number_not_in_source'] }, { ...dropped, flags: ['no_statistic'] }] }), 'findings')
   expect(view.shown.map((s) => s.text)).toEqual(['A'])
-  expect(view.leftOut).toBe(2)
+  expect(view.leftOut).toBe(3)
 })
 
 test('a cleared item has a quote but no value: not shown, not "left out"', () => {
