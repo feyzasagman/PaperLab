@@ -31,7 +31,7 @@ export function SavedSearchDialog({ workspaceId, saved, initialQuery, onClose }:
   const [sources, setSources] = useState<Source[]>(saved?.sources.filter(isSearchSource) ?? [])
   const [yearFrom, setYearFrom] = useState(saved?.year_from?.toString() ?? '')
   const [yearTo, setYearTo] = useState(saved?.year_to?.toString() ?? '')
-  const [kind, setKind] = useState<Kind>(saved?.schedule_kind ?? 'daily')
+  const [kind, setKind] = useState<Kind>((saved?.schedule_kind as Kind | undefined) ?? 'daily')
   const [time, setTime] = useState(saved?.time ?? '02:00')
   const [weekday, setWeekday] = useState(saved?.weekday ?? 1)
   const [cron, setCron] = useState(saved?.schedule_kind === 'custom' ? saved.schedule : '')
