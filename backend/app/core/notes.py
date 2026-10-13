@@ -518,18 +518,45 @@ async def create_llm_note(session: AsyncSession, paper_id: uuid.UUID, body: str,
     output = LLMOutput(paper_id=paper_id, kind=MCP_OUTPUT_KIND, content=text, model="mcp", prompt_version=0)
     session.add(output)
     await session.flush()
-    note = Note(body=text, provenance=Provenance.LLM, source_id=output.id)
+    return await _add_llm_note(session, paper_id, text, output.id, anchor)
+
+
+async def create_ai_note(
+    session: AsyncSession, paper_id: uuid.UUID, body: str, output_id: uuid.UUID, quoted_text: str | None = None
+) -> NoteView:
+    """A note PaperLab's own model wrote (a claim check): provenance='llm', source_id = the llm_outputs row it came
+    from (no second row). Anchored when `quoted_text` locates in the paper, else just linked to it.
+
+    Raises InvalidInput("empty_body").
+    """
+    text = body.strip()
+    if not text:
+        raise InvalidInput("empty_body")
+    anchor = None
+    if quoted_text:
+        try:
+            anchor = await locate_quote(session, paper_id, quoted_text)
+        except (InvalidInput, Conflict):
+            pass  # a quote spanning chunks, or an abstract-only paper: keep the note, drop the anchor
+    return await _add_llm_note(session, paper_id, text, output_id, anchor)
+
+
+async def _add_llm_note(
+    session: AsyncSession, paper_id: uuid.UUID, text: str, output_id: uuid.UUID, anchor: Anchor | None
+) -> NoteView:
+    note = Note(body=text, provenance=Provenance.LLM, source_id=output_id)
     session.add(note)
     await session.flush()
     await _link(session, note.id, [paper_id])
-    await session.execute(
-        insert(note_anchors).values(
-            note_id=note.id,
-            paper_id=paper_id,
-            page=anchor.page,
-            bbox=[list(rect) for rect in anchor.bbox],
-            quoted_text=anchor.quoted_text,
+    if anchor:
+        await session.execute(
+            insert(note_anchors).values(
+                note_id=note.id,
+                paper_id=paper_id,
+                page=anchor.page,
+                bbox=[list(rect) for rect in anchor.bbox],
+                quoted_text=anchor.quoted_text,
+            )
         )
-    )
     await session.commit()
     return await _view(session, note)

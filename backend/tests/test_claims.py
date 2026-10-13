@@ -168,3 +168,35 @@ def test_check_quotes_applies_the_shared_rules():
     )
     assert kept == [("cost- effective care for", 0), ("x y z", 1)] and dropped
     assert quotes.check_quotes(["a b c", "b c d"], ["a b c d"], 1) == ([("a b c", 0)], False)
+
+
+async def saved(session, paper_id, note_id):
+    return next(n for n in await notes.list_notes_for_paper(session, paper_id) if n.id == note_id)
+
+
+async def test_save_on_full_text_writes_an_anchored_ai_note_on_the_check_row(session, tmp_path):
+    paper, _, _ = await chunked_paper(session, tmp_path)
+    llm = Scripted(reply(passage=1, quote=TWO_LINE_QUOTE, reason="It cites them."))
+    check = await claims.verify_claim(session, "Models cite.", paper_id=paper.id, llm=llm, save=True)
+    note = await saved(session, paper.id, check.note_id)
+    assert (note.provenance, note.source_id, note.paper_ids) == ("llm", check.output_id, [paper.id])
+    assert note.body == "Claim: Models cite.\nVerdict: Supported. It cites them."
+    assert len(note.anchors) == 1 and note.anchors[0].page == check.quote_page
+
+
+async def test_save_on_abstract_only_or_an_unlocatable_quote_is_an_unanchored_note(session, tmp_path):
+    paper = await bare_paper(session, abstract=ABSTRACT)
+    llm = Scripted(reply("partially_supported", passage=1, quote="Outputs were 23% less diverse"))
+    check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=llm, save=True)
+    note = await saved(session, paper.id, check.note_id)
+    assert note.anchors == [] and note.paper_ids == [paper.id] and note.body.startswith("Claim: c\nVerdict: Partly")
+    full, _, _ = await chunked_paper(session, tmp_path)
+    note = await notes.create_ai_note(session, full.id, "b", check.output_id, quoted_text="no such words in it")
+    assert note.anchors == []
+
+
+async def test_cannot_verify_and_unsaved_checks_write_no_note(session):
+    paper = await bare_paper(session, abstract=ABSTRACT)
+    bad = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted("x", "y"), save=True)
+    kept = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("not_addressed")))
+    assert (bad.verdict, bad.note_id, kept.note_id) == ("cannot_verify", None, None)

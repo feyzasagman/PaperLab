@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import llm_connections, llm_json, prompts, quotes, retrieval
+from app.core import llm_connections, llm_json, notes, prompts, quotes, retrieval
 from app.core.errors import InvalidInput, NotFound
 from app.models import Chunk, LLMOutput, Paper, PaperStatus
 from app.providers.llm import build_llm
@@ -19,6 +19,10 @@ CLAIM_PROMPT_VERSION = 1
 PASSAGES = 6
 SYSTEM_PROMPT, PROMPT_TEMPLATE = prompts.load("claim_check", CLAIM_PROMPT_VERSION).split("\n<!-- prompt -->\n")
 OUTPUT_KIND = "claim_check"
+VERDICT_WORDS = {
+    "supported": "Supported", "partially_supported": "Partly supported",
+    "not_supported": "Not supported", "not_addressed": "Not addressed",
+}
 CHECKED = ("supported", "partially_supported")  # verdicts that must rest on a kept quote
 
 
@@ -132,7 +136,8 @@ async def verify_claim(
     A metadata-only paper (no chunks, no abstract) is `cannot_verify` / `no_text`: no model call and no llm_outputs
     row, since nothing was asked. Every other check writes an llm_outputs row and returns its id as `output_id`,
     including two invalid model replies (`cannot_verify` / `model_error`), whose content records the failure.
-    `save` (an AI note on the quoted passage) is accepted here and implemented with the MCP tools.
+    `save` writes the verdict as an AI note on the quoted passage (unanchored when it can't be placed) and returns
+    its id as `note_id`; a `cannot_verify` check is never saved.
     """
     paper = await _paper(session, paper_id, doi)
     level, passages, texts = await _passages(session, paper, claim, quoted_text)
@@ -159,4 +164,9 @@ async def verify_claim(
     )
     content = {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in asdict(check).items() if k != "passages"}
     output_id = await _write_output(session, paper, claim, content, passages, model, connection_name)
-    return ClaimCheck(**{**asdict(check), "output_id": output_id})
+    note_id = None
+    if save:
+        body = f"Claim: {claim}\nVerdict: {VERDICT_WORDS[check.verdict]}. {check.reason}"
+        note = await notes.create_ai_note(session, paper.id, body, output_id, quote)
+        note_id = note.id
+    return ClaimCheck(**{**asdict(check), "output_id": output_id, "note_id": note_id})
