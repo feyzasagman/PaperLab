@@ -7,6 +7,7 @@ from app.api.deps import DiscoveryDep, SessionDep
 from app.core import screening, workspace_search
 from app.core.errors import InvalidInput
 from app.core.prisma_export import prisma_export
+from app.core.queue import INGEST_QUEUE
 from app.core.screening import RANKED_LIMIT_MAX
 from app.schemas.workspace_search import (
     AcquisitionStatus,
@@ -38,7 +39,7 @@ async def _enqueue(request: Request, run_id: uuid.UUID) -> None:
 
 
 async def _enqueue_ingest(request: Request, paper_id: uuid.UUID) -> None:
-    await request.app.state.arq.enqueue_job("ingest_paper", str(paper_id))
+    await request.app.state.arq.enqueue_job("ingest_paper", str(paper_id), _queue_name=INGEST_QUEUE)
 
 
 @router.post("/runs", status_code=201)

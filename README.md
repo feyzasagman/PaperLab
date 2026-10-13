@@ -308,7 +308,7 @@ For contributors, with Docker and [Ollama](https://ollama.com/) installed:
 
 ```sh
 ollama pull qwen3:8b                  # the default chat model
-docker compose up -d --build          # db (:5433), redis, api (:8000), worker, frontend (:5180)
+docker compose up -d --build          # db (:5433), redis, api (:8000), worker, ingest-worker, frontend (:5180)
 open http://localhost:5180
 ```
 
@@ -472,11 +472,11 @@ docker compose exec api python -m evals.answer_check --paper "<title prefix>" --
 
 - **End-to-end tests** run against the real stack, with no mocked backend. They expect the fake model, which always
 gives the same answer, and the search model downloaded: start the API and the worker with
-`LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker`, run the tests, then go back with
-`docker compose up -d api worker`. The specs tagged `@no-search-model` need a stack with no search model and skip
+`LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker ingest-worker`, run the tests, then go back with
+`docker compose up -d api worker ingest-worker`. The specs tagged `@no-search-model` need a stack with no search model and skip
 themselves otherwise: start it with
-`MODELS_DIR=/models/none LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker`, then run
-`npx playwright test --project=no-search-model --no-deps`, then `docker compose up -d api worker` again to bring the
+`MODELS_DIR=/models/none LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker ingest-worker`, then run
+`npx playwright test --project=no-search-model --no-deps`, then `docker compose up -d api worker ingest-worker` again to bring the
 models folder back.
 - **The release stack** is what the desktop app and the two-command install run. Build it with
 `docker build -t ghcr.io/khannoussi-malek/paperlab:dev -t ghcr.io/khannoussi-malek/paperlab:<desktop/package.json's version> .`,

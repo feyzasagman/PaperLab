@@ -34,6 +34,8 @@ def test_the_image_builds_the_frontend_from_the_committed_api_types_and_serves_i
 
 APP_IMAGE = "ghcr.io/khannoussi-malek/paperlab:${PAPERLAB_VERSION:-dev}"
 OPTIONAL_ENV = [{"path": ".env", "required": False}]
+WORKERS = ("worker", "ingest-worker")
+APP_SERVICES = ("api", *WORKERS)
 
 
 def compose(path: str) -> dict:
@@ -45,13 +47,15 @@ def test_the_release_stack_runs_the_published_image_and_pinned_databases():
     services = release["services"]
 
     assert release["name"] == "paperlab-app"
-    assert set(services) == {"db", "redis", "migrate", "api", "worker"}
+    assert set(services) == {"db", "redis", "migrate", "api", "worker", "ingest-worker"}
     assert services["db"]["image"] == "pgvector/pgvector:0.8.6-pg16"
     assert services["redis"]["image"] == "redis:7.4.11-alpine"
-    assert [services[name]["image"] for name in ("migrate", "api", "worker")] == [APP_IMAGE] * 3
+    assert [services[name]["image"] for name in ("migrate", *APP_SERVICES)] == [APP_IMAGE] * 4
     assert "latest" not in (ROOT / "desktop/docker-compose.yml").read_text()
     for name, service in services.items():
-        assert {"build", "restart"} & set(service) == set(), name  # nothing starts with the computer
+        assert "build" not in service, name
+        # Nothing starts with the computer: on-failure brings a crashed worker back, but never on Docker's own start.
+        assert service.get("restart", "no") == ("on-failure" if name in WORKERS else "no"), name
         assert all(volume.split(":")[0] in release["volumes"] for volume in service.get("volumes", [])), name
 
 
@@ -62,7 +66,8 @@ def test_migrate_runs_once_before_the_api_and_the_worker_which_run_as_pid_1():
     assert services["migrate"]["depends_on"] == {"db": {"condition": "service_healthy"}}
     assert services["api"]["command"] == ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     assert services["worker"]["command"] == ["arq", "app.workers.settings.WorkerSettings"]
-    for name in ("api", "worker"):
+    assert services["ingest-worker"]["command"] == ["arq", "app.workers.settings.IngestWorkerSettings"]
+    for name in APP_SERVICES:
         assert services[name]["depends_on"]["migrate"] == {"condition": "service_completed_successfully"}
         assert services[name]["extra_hosts"] == ["host.docker.internal:host-gateway"]
         assert services[name]["environment"]["LLM_PROVIDER"] == "${LLM_PROVIDER:-ollama}"
@@ -84,15 +89,23 @@ def test_the_library_lives_in_named_volumes_and_redis_keeps_its_queue():
     assert set(release["volumes"]) == {"pgdata", "pdfs", "redisdata", "models"}
     assert services["redis"]["command"] == ["redis-server", "--appendonly", "yes"]
     assert services["redis"]["volumes"] == ["redisdata:/data"]
-    for name in ("api", "worker"):
+    for name in APP_SERVICES:
         assert "models:/models" in services[name]["volumes"]
+
+
+def test_the_dev_stack_runs_the_ingest_worker_beside_the_worker():
+    services = compose("docker-compose.yml")["services"]
+
+    assert "app.workers.settings.WorkerSettings" in services["worker"]["command"]
+    assert "app.workers.settings.IngestWorkerSettings" in services["ingest-worker"]["command"]
+    assert services["ingest-worker"]["environment"] == services["worker"]["environment"]
 
 
 def test_no_env_file_is_needed_in_either_stack():
     """Every setting has a default in config.py, so `cp .env.example .env` left the Quick start."""
     release = compose("desktop/docker-compose.yml")["services"]
 
-    assert [release[name]["env_file"] for name in ("migrate", "api", "worker")] == [OPTIONAL_ENV] * 3
+    assert [release[name]["env_file"] for name in ("migrate", *APP_SERVICES)] == [OPTIONAL_ENV] * 4
     assert compose("docker-compose.yml")["x-backend"]["env_file"] == OPTIONAL_ENV
 
 

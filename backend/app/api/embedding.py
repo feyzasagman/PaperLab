@@ -16,6 +16,7 @@ from app.api.deps import SessionDep, TransportDep
 from app.config import settings
 from app.core import chat, embedding_index, embedding_sources
 from app.core.errors import Conflict, InvalidInput
+from app.core.queue import INGEST_QUEUE
 from app.db import SessionLocal
 from app.providers import embedding, search_model
 from app.providers.base import LLMError, LLMUnavailable, ModelNotPulled, WrongDimensions
@@ -168,7 +169,7 @@ async def switch_source(
     paper_ids = await embedding_index.papers_to_embed(session, candidate.name)
     try:
         for paper_id in paper_ids:
-            await request.app.state.arq.enqueue_job("reembed_paper", str(paper_id), True)
+            await request.app.state.arq.enqueue_job("reembed_paper", str(paper_id), True, _queue_name=INGEST_QUEUE)
     except Exception:
         logger.exception("queueing papers for the search source %s failed", candidate.label)
         message = NOT_QUEUED_SWITCH.format(label=candidate.label)
@@ -218,7 +219,7 @@ async def download_model(request: Request, transport: TransportDep) -> AsyncIter
         async with SessionLocal() as session:
             paper_ids = await embedding_index.unembedded_papers(session)
         for paper_id in paper_ids:
-            await request.app.state.arq.enqueue_job("reembed_paper", str(paper_id))
+            await request.app.state.arq.enqueue_job("reembed_paper", str(paper_id), _queue_name=INGEST_QUEUE)
     except Exception:
         # Without this the client waits for an event that never comes.
         logger.exception("queueing papers for embedding after the search model download failed")
@@ -239,5 +240,7 @@ async def reindex_library(payload: ReindexRequest, request: Request, session: Se
     else:
         paper_ids = await embedding_index.indexed_papers(session)
     for paper_id in paper_ids:
-        await request.app.state.arq.enqueue_job("reembed_paper", str(paper_id), payload.missing_only)
+        await request.app.state.arq.enqueue_job(
+            "reembed_paper", str(paper_id), payload.missing_only, _queue_name=INGEST_QUEUE
+        )
     return ReindexOut(papers=len(paper_ids))

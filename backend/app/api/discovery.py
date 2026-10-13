@@ -6,6 +6,7 @@ from app.api.deps import DiscoveryDep, SessionDep
 from app.config import settings
 from app.core import discovery, workspaces
 from app.core.errors import InvalidInput
+from app.core.queue import INGEST_QUEUE
 from app.schemas.discovery import AddPaperRequest, SearchOut
 from app.schemas.papers import PaperOut
 
@@ -35,5 +36,5 @@ async def add_paper(
     paper = await discovery.add(session, providers, payload.candidate.to_candidate(), settings.pdf_dir)
     if payload.workspace_id is not None:
         await workspaces.add_paper(session, payload.workspace_id, paper.id)
-    await request.app.state.arq.enqueue_job("ingest_paper", str(paper.id))
+    await request.app.state.arq.enqueue_job("ingest_paper", str(paper.id), _queue_name=INGEST_QUEUE)
     return paper

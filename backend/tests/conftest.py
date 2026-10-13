@@ -18,7 +18,7 @@ from sqlalchemy.pool import NullPool
 from app.api import chat as chat_api
 from app.api.deps import get_transport, resolve_llm, resolve_llm_by_model_id
 from app.config import settings
-from app.core import discovery
+from app.core import discovery, queue
 from app.db import get_session
 from app.main import create_app
 from app.models import Author, Paper, PaperSources
@@ -99,12 +99,15 @@ async def session():
 
 
 class FakeArq:
-    """Records enqueued jobs instead of talking to Redis (ASGITransport skips the lifespan)."""
+    """Records enqueued jobs instead of talking to Redis (ASGITransport skips the lifespan). Every enqueue in every test
+    also checks its queue: a paper's ingest or re-embed queued anywhere but the ingest queue would run ten at once."""
 
     def __init__(self):
         self.jobs: list[tuple] = []
 
-    async def enqueue_job(self, name: str, *args) -> None:
+    async def enqueue_job(self, name: str, *args, _queue_name: str | None = None) -> None:
+        expected = queue.INGEST_QUEUE if name in queue.INGEST_JOBS else None
+        assert _queue_name == expected, f"{name} was queued on {_queue_name}, not {expected}"
         self.jobs.append((name, *args))
 
 

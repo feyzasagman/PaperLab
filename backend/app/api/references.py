@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request
 from app.api.deps import DiscoveryDep, SessionDep
 from app.config import settings
 from app.core import references, workspaces
+from app.core.queue import INGEST_QUEUE
 from app.schemas.papers import PaperOut
 from app.schemas.references import Direction, ImportReferenceIn, QueueOut, ReferencePageOut, ReferencesOut, RefreshOut
 
@@ -38,7 +39,7 @@ async def import_reference(
     paper = await references.import_reference(session, providers, ref_id, settings.pdf_dir)
     if payload.workspace_id is not None:
         await workspaces.add_paper(session, payload.workspace_id, paper.id)
-    await request.app.state.arq.enqueue_job("ingest_paper", str(paper.id))
+    await request.app.state.arq.enqueue_job("ingest_paper", str(paper.id), _queue_name=INGEST_QUEUE)
     return paper
 
 

@@ -66,10 +66,13 @@ services:
       redis:
         condition: service_healthy
 
-  worker:
+  worker: &worker
     <<: *app
     # Exec form: arq is PID 1, so `compose stop` cancels a running job and arq queues it again for the next start.
     command: ["arq", "app.workers.settings.WorkerSettings"]
+    # A worker that crashes (out of memory, say) comes back and picks its jobs up again. on-failure never starts it
+    # with Docker itself, so nothing starts with the computer.
+    restart: on-failure
     environment:
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       DISCOVERY_PROVIDER: ${DISCOVERY_PROVIDER:-live}
@@ -79,6 +82,11 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+
+  ingest-worker:
+    <<: *worker
+    # A paper's ingest and re-embed, one paper at a time: ten at once ran the worker out of memory.
+    command: ["arq", "app.workers.settings.IngestWorkerSettings"]
 
 # The library. The project name and these volume names are where it lives: releases never rename them.
 volumes:

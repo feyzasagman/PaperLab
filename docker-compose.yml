@@ -52,7 +52,7 @@ services:
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     ports: ["127.0.0.1:8000:8000"]
 
-  worker:
+  worker: &worker
     <<: *backend
     # The References fetch runs here, so the E2E stack's fake discovery must reach the worker too.
     environment:
@@ -64,6 +64,11 @@ services:
       MODELS_DIR: ${MODELS_DIR:-/models}
     # Not `arq --watch`: that restarts the worker in-process and never re-imports changed code.
     command: watchfiles --filter python "arq app.workers.settings.WorkerSettings" app
+
+  ingest-worker:
+    <<: *worker
+    # A paper's ingest and re-embed, one paper at a time: ten at once ran the worker out of memory.
+    command: watchfiles --filter python "arq app.workers.settings.IngestWorkerSettings" app
 
   frontend:
     build: ./frontend
