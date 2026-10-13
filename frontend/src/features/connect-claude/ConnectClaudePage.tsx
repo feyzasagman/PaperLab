@@ -89,6 +89,14 @@ export function ConnectClaudePage() {
           </li>
           <li>Find the papers in your library connected to one, up to three links away.</li>
           <li>Save a note on a passage it quotes exactly.</li>
+          <li>Add papers by DOI, arXiv ID or PDF link. It only fetches free copies.</li>
+          <li>Create workspaces, file papers in them, or take them out.</li>
+          <li>
+            Run searches across your paper sources, screen and import the results, and follow citations to find
+            more papers.
+          </li>
+          <li>Record full-text eligibility and get your PRISMA counts.</li>
+          <li>Read your notes, in one workspace or on one paper.</li>
         </ul>
         <p className="text-sm text-muted-foreground">
           Notes Claude saves are marked AI and highlighted on the lines they quote.
@@ -98,7 +106,8 @@ export function ConnectClaudePage() {
       <Section id="claude-receives-heading" title="What Claude receives">
         <p className="text-sm">
           Passages from your papers, paper details (with your reading pass and decision) and workspace names, and
-          every note on a paper, marked as yours or AI. Claude Desktop and Claude Code send what the tools return to
+          every note on a paper, marked as yours or AI. It also receives search results (titles and abstracts), your
+          screening decisions and AI suggestions on them, workspace paper lists and PRISMA counts. Claude Desktop and Claude Code send what the tools return to
           Anthropic.
         </p>
       </Section>
@@ -191,7 +200,7 @@ export function ConnectClaudePage() {
         {check.data?.ok && (
           <p role="status" className="flex items-center gap-1.5 text-sm">
             <CircleCheck aria-hidden className="size-4 shrink-0 text-primary" />
-            The server answers with its tools, from add_paper to stop_search_run.
+            The server answers with all 20 of its tools.
           </p>
         )}
         {check.data?.detail && <ErrorAlert message={check.data.detail} />}

@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures'
 
 // Read-only: the page reads the folder Compose was started in, and the server check only reads the library.
-const TOOLS_LINE = 'The server answers with its tools, from add_paper to stop_search_run.'
+const TOOLS_LINE = 'The server answers with all 20 of its tools.'
 
 test('the library header opens Connect Claude with the folder filled in, and Copy puts the config on the clipboard', async ({
   page,
