@@ -394,12 +394,18 @@ Systematic search and screening:
 - `set_eligibility`: records include or exclude after full-text reading;
 - `get_prisma`: the PRISMA flow counts for a workspace or one run.
 
+Checking claims:
+- `verify_claim`: whether a library paper supports a claim, with a quote from the paper;
+- `verify_claims`: the same for every cited sentence in a pasted paragraph (DOI or author-year), up to 30.
+
 Scheduled searches:
 - `create_saved_search`: runs a search by itself, daily or weekly at a time you choose (or on a cron schedule), in your time zone;
 - `list_saved_searches`: a workspace's scheduled searches, with their last and next run and any error;
 - `set_saved_search_enabled`: pauses or resumes one.
 
 AI pre-screening: your default model reads each undecided hit's abstract and suggests include, exclude or unsure, with a score and the sentences it relied on. A local model is used by default, so abstracts stay on your machine. Suggestions never decide anything: a hit stays undecided until you accept the suggestion or screen it yourself. Importing papers automatically from high-scoring suggestions is off unless you turn it on, and a scheduled search can pre-screen its new hits overnight.
+
+Checking claims: ask Claude to check a sentence or paragraph against your papers before you write it. Each verdict (supported, partially supported, not supported, not addressed or cannot verify) is an AI judgement with a quote from the paper, and says whether it read the full text or only the abstract. A paper with no text is never guessed at, and a citation that matches no paper, or several, is reported as such. Say so if you want a check kept as an AI note on the paper. Like pre-screening, a remote model is used only after you agree.
 
 Scheduled searches run while PaperLab is running: the desktop app with **Keep running** on (Settings → Desktop app), or `docker compose up -d`. A time that passed while it was closed runs once when it next starts. New results land in the workspace for you to screen.
 

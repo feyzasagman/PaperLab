@@ -39,6 +39,8 @@ TOOLS = [
     "snowball",
     "start_search_run",
     "stop_search_run",
+    "verify_claim",
+    "verify_claims",
 ]
 # No paper has this id, so get_paper reads the database and answers not_found, without loading the embedding model.
 NO_PAPER = "00000000-0000-4000-8000-000000000000"
