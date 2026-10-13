@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import citations, llm_connections, llm_json, notes, prompts, quotes, retrieval
+from app.core.enrichment import normalize_doi
 from app.core.errors import DomainError, InvalidInput, NotFound
 from app.models import Chunk, LLMOutput, Paper, PaperStatus
 from app.providers.base import LLMError, LLMUnavailable
@@ -53,6 +54,7 @@ class ClaimCheck:
     prompt_version: int = CLAIM_PROMPT_VERSION
     output_id: uuid.UUID | None = None
     note_id: uuid.UUID | None = None
+    paper_status: str | None = None  # set when the paper is still being ingested (reason not_ready)
 
 
 async def _paper(session: AsyncSession, paper_id: uuid.UUID | None, doi: str | None) -> Paper:
@@ -61,7 +63,8 @@ async def _paper(session: AsyncSession, paper_id: uuid.UUID | None, doi: str | N
     if paper_id is not None:
         paper = await session.get(Paper, paper_id)
     else:
-        paper = await session.scalar(select(Paper).where(func.lower(Paper.doi) == doi.strip().lower()))
+        wanted = normalize_doi(doi) or doi.strip().lower()
+        paper = await session.scalar(select(Paper).where(func.lower(Paper.doi) == wanted))
     if paper is None:
         raise NotFound("paper_not_in_library", detail=f"{doi or paper_id} is not in the library.", doi=doi)
     return paper
@@ -141,10 +144,14 @@ async def verify_claim(
     `save` writes the verdict as an AI note on the quoted passage (unanchored when it can't be placed) and returns
     its id as `note_id`; a `cannot_verify` check is never saved.
     """
+    if not claim.strip():
+        raise InvalidInput("empty_claim", detail="The claim is empty.")
     paper = await _paper(session, paper_id, doi)
     level, passages, texts = await _passages(session, paper, claim, quoted_text)
     base = {"claim": claim, "paper_id": paper.id, "paper_title": paper.title, "evidence_level": level}
     if level == "metadata_only":
+        if paper.status not in (PaperStatus.READY, PaperStatus.FAILED):  # still ingesting: text may come
+            return ClaimCheck(**base, verdict="cannot_verify", reason="not_ready", paper_status=str(paper.status))
         return ClaimCheck(**base, verdict="cannot_verify", reason="no_text")
     llm = await _llm(session, llm)
     model = getattr(llm, "model", "unknown")
@@ -182,13 +189,19 @@ class ClaimItem:
     claim: str  # the sentence with its citation(s) removed
     citation: citations.Citation
     check: ClaimCheck | None = None
-    error: str | None = None  # citation_not_found | ambiguous_citation
+    error: str | None = None  # citation_not_found | ambiguous_citation | empty_claim
     candidates: list[str] = field(default_factory=list)  # titles when ambiguous
 
 
 def _without(sentence: str, found: list[citations.Citation]) -> str:
     """The sentence with every citation span cut out and the spacing tidied."""
-    for start, end in sorted({c.span for c in found}, reverse=True):
+    merged: list[list[int]] = []
+    for start, end in sorted({c.span for c in found}):  # overlapping spans (a DOI inside a parenthesis) become one
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    for start, end in reversed(merged):
         sentence = sentence[:start] + sentence[end:]
     sentence = " ".join(sentence.split())
     return re.sub(r"\s+([.,;:!?])", r"\1", sentence).strip()
@@ -221,6 +234,8 @@ async def verify_claims(
             items.append(ClaimItem(claim, citation, error="citation_not_found"))
         elif len(found.paper_ids) > 1:
             items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=found.titles))
+        elif len(claim.split()) < 3:
+            items.append(ClaimItem(claim, citation, error="empty_claim"))
         else:
             llm = await _llm(session, llm)  # no default model fails the whole batch, once, before any check
             try:

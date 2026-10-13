@@ -107,3 +107,22 @@ async def test_verify_claims_workspace_remote_and_limits(session, llm, monkeypat
     many = " ".join(f"Claim {n} here (doi:10.9999/m{n})." for n in range(31))
     big = await call("verify_claims", text=many, allow_remote=True)
     assert big.structured_content["error"] == "too_many_claims" and llm.calls == 0
+
+
+async def test_an_unreachable_model_is_model_unavailable(session, monkeypatch):
+    from app.providers.base import LLMUnavailable
+
+    _model(monkeypatch, True)
+
+    class Down(Scripted):
+        async def stream(self, system, prompt):
+            raise LLMUnavailable("down")
+            yield
+
+    async def given(_session, _llm):
+        return Down()
+
+    monkeypatch.setattr(claims, "_llm", given)
+    row = await paper(session)
+    out = await call("verify_claim", claim="LLMs reduce diversity.", paper_id=str(row.id))
+    assert out.is_error and out.structured_content["error"] == "model_unavailable"

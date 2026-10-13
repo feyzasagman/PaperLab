@@ -1,4 +1,5 @@
 import json
+import uuid
 
 import pytest
 from pdf_papers import TWO_LINE_QUOTE, chunked_paper
@@ -200,3 +201,35 @@ async def test_cannot_verify_and_unsaved_checks_write_no_note(session):
     bad = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted("x", "y"), save=True)
     kept = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("not_addressed")))
     assert (bad.verdict, bad.note_id, kept.note_id) == ("cannot_verify", None, None)
+
+
+async def test_an_ingesting_paper_without_an_abstract_is_not_ready_and_a_failed_one_is_no_text(session):
+    llm = Scripted()
+    ingesting = await bare_paper(session)
+    ingesting.status = PaperStatus.EMBEDDING
+    check = await claims.verify_claim(session, "c", paper_id=ingesting.id, llm=llm)
+    assert (check.verdict, check.reason, check.paper_status) == ("cannot_verify", "not_ready", "embedding")
+    failed = await bare_paper(session)
+    failed.status = PaperStatus.FAILED
+    check = await claims.verify_claim(session, "c", paper_id=failed.id, llm=llm)
+    assert (check.reason, check.paper_status) == ("no_text", None) and llm.prompts == []
+
+
+async def test_an_ingesting_paper_with_an_abstract_is_checked_on_the_abstract(session):
+    paper = await bare_paper(session, abstract=ABSTRACT)
+    paper.status = PaperStatus.CHUNKING
+    check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("not_addressed")))
+    assert check.evidence_level == "abstract_only" and check.paper_status is None
+
+
+async def test_doi_lookup_accepts_a_url_and_a_bracketed_doi(session):
+    paper = await bare_paper(session, abstract=ABSTRACT, doi="10.1016/0140-6736(93)00000-x")
+    for given in ("https://doi.org/10.1016/0140-6736(93)00000-X.", "doi:10.1016/0140-6736(93)00000-X"):
+        check = await claims.verify_claim(session, "c", doi=given, llm=Scripted(reply("not_addressed")))
+        assert check.paper_id == paper.id
+
+
+async def test_a_blank_claim_is_empty_claim(session):
+    with pytest.raises(InvalidInput) as raised:
+        await claims.verify_claim(session, "  ", paper_id=uuid.uuid4(), llm=Scripted())
+    assert str(raised.value) == "empty_claim"

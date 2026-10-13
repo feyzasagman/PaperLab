@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.enrichment import normalize_doi
 from app.models import Paper, workspace_papers
 
 ABBREVIATIONS = {
@@ -45,7 +46,8 @@ _PART = re.compile(r"^(?P<names>[^\d]*?),?\s*(?P<year>(?:19|20)\d{2})[a-z]?\b")
 _NARRATIVE = re.compile(
     r"(?P<names>[A-Z][\w'’\-]+(?:\s+et al\.?|\s+(?:&|and)\s+[A-Z][\w'’\-]+)?)\s+\((?P<year>(?:19|20)\d{2})[a-z]?\)"
 )
-_LEAD = re.compile(r"^(?:see|e\.g\.,?|cf\.|also)\s+", re.I)
+_LEAD = re.compile(r"^(?:(?:see|also|e\.g\.,?|cf\.)\s+)+", re.I)
+_INITIAL = re.compile(r"^\(?[A-Z]\.$")  # "J." before a surname: not a sentence end
 _FIRST_AUTHOR = re.compile(r",|\s&\s|\sand\s|\set al", re.I)
 
 
@@ -69,7 +71,8 @@ def split_sentences(text: str) -> list[str]:
     """Splits on . ! ? followed by a capital, digit or opening bracket, except after "et al.", "e.g.", "Fig." etc."""
     out: list[str] = []
     for piece in _BOUNDARY.split(text.strip()):
-        if out and out[-1].split()[-1].lstrip("([").lower() in ABBREVIATIONS:
+        last = out[-1].split()[-1] if out else ""
+        if out and (last.lstrip("([").lower() in ABBREVIATIONS or _INITIAL.match(last)):
             out[-1] = f"{out[-1]} {piece}"
         elif piece.strip():
             out.append(piece.strip())
@@ -80,12 +83,11 @@ def find(sentence: str) -> list[Citation]:
     """DOIs, then author-year forms, in sentence order."""
     found: list[Citation] = []
     for m in _DOI.finditer(sentence):
-        doi = m.group(1).rstrip(".,;:)]")
-        found.append(
-            Citation(
-                "doi", m.group(0).rstrip(".,;:)]"), (m.start(), m.start() + len(m.group(0).rstrip(".,;:)]"))), doi=doi
-            )
-        )
+        doi = normalize_doi(m.group(1))
+        if doi is None:
+            continue
+        end = m.start(1) + len(doi)  # normalising only trims and lowercases, so lengths line up
+        found.append(Citation("doi", sentence[m.start() : end], (m.start(), end), doi=doi))
     for group in _PAREN.finditer(sentence):
         for part in group.group(1).split(";"):
             parsed = _PART.match(_LEAD.sub("", part.strip()))
@@ -112,6 +114,11 @@ def _first_author_is(authors: list[str], surname: str) -> bool:
     if not authors:
         return False
     name, wanted = fold(authors[0]).strip(), fold(surname).strip()
+    if "," in name:  # "Smith, J." (bioRxiv, OpenAIRE): the surname comes first
+        name = name.split(",")[0].strip()
+    tokens = name.split()
+    if len(tokens) > 1 and tokens[0] == wanted and all(re.fullmatch(r"[a-z]{1,2}\.?|(?:[a-z]\.)+", t) for t in tokens[1:]):
+        return True  # "Smith J", "Smith J.K."
     return name == wanted or name.endswith(f" {wanted}")
 
 

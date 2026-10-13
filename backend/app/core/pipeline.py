@@ -33,6 +33,7 @@ from app.core import (
 from app.core.errors import Conflict, InvalidInput, NotFound
 from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import PaperStatus
+from app.providers.base import LLMError, LLMUnavailable
 from app.schemas.papers import PaperOut
 from app.schemas.workspace_search import HitOut, ScreeningStateOut, SearchRunOut
 
@@ -389,9 +390,12 @@ async def verify_claim(
     quoted_text: str | None = None, save: bool = False, allow_remote: bool = False,
 ) -> claims.ClaimCheck:
     await _refuse_remote(session, allow_remote)
-    return await claims.verify_claim(
-        session, claim, paper_id=paper_id, doi=doi, quoted_text=quoted_text, save=save
-    )
+    try:
+        return await claims.verify_claim(
+            session, claim, paper_id=paper_id, doi=doi, quoted_text=quoted_text, save=save
+        )
+    except (LLMError, LLMUnavailable) as exc:
+        raise Conflict("model_unavailable", detail=str(exc)) from exc
 
 
 async def verify_claims(

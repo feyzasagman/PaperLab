@@ -159,7 +159,60 @@ async def test_one_failing_check_does_not_lose_the_others(session):
 
     for n, name in enumerate(("Aaflaky", "Bbflaky", "Ccflaky")):
         await add(session, f"Flaky {n}", [f"X {name}"], 1987)
-    text = "One (Aaflaky, 1987). Two (Bbflaky, 1987). Three (Ccflaky, 1987)."
+    text = "One claim here (Aaflaky, 1987). Two claim here (Bbflaky, 1987). Three claim here (Ccflaky, 1987)."
     items = await claims.verify_claims(session, text, llm=Flaky())
     assert [bool(i.check) for i in items] == [True, False, True]
     assert items[1].error == "check_failed"
+
+
+@pytest.mark.parametrize("authors", [["Smith, J."], ["Smith J"], ["Smith J.K."], ["John Smith"]])
+async def test_byline_forms_all_match_the_surname(session, authors):
+    assert citations._first_author_is(authors, "Smith")
+
+
+def test_a_different_surname_with_the_same_start_does_not_match():
+    assert not citations._first_author_is(["Smithson, A."], "Smith")
+    assert not citations._first_author_is(["Smith Jonathan Q"], "Smith")
+
+
+def test_see_also_before_a_citation_is_stripped():
+    found = citations.find("It holds (Smith et al., 2021; see also Lee, 2020).")
+    assert [(c.surname, c.year) for c in found] == [("Smith", 2021), ("Lee", 2020)]
+
+
+@pytest.mark.parametrize(
+    ("sentence", "doi"),
+    [
+        ("It holds (doi:10.1016/0140-6736(93)00000-X).", "10.1016/0140-6736(93)00000-x"),
+        ("See https://doi.org/10.1000/ABC.", "10.1000/abc"),
+    ],
+)
+def test_dois_are_normalised_with_balanced_brackets_kept(sentence, doi):
+    [found] = citations.find(sentence)
+    assert found.doi == doi
+    assert ")" not in sentence[: found.span[0]] and sentence[found.span[1] :].strip() in {").", "."}
+
+
+def test_an_initial_before_a_narrative_citation_does_not_split_the_sentence():
+    sentence = "As noted by J. Smith (2021), models flatten style."
+    assert citations.split_sentences(sentence) == [sentence]
+    assert [(c.surname, c.year) for c in citations.find(sentence)] == [("Smith", 2021)]
+
+
+async def test_overlapping_citation_spans_keep_the_rest_of_the_claim(session):
+    await add(session, "Overlap paper", ["Ann Overlapsurname"], 2021, doi="10.1000/overlap")
+    text = "It holds (Overlapsurname, 2021; doi:10.1000/overlap) in all adult cases."
+    items = await claims.verify_claims(session, text, llm=Scripted())
+    assert {i.claim for i in items} == {"It holds in all adult cases."}
+
+
+async def test_a_claim_with_under_three_words_is_empty_and_asks_no_model(session):
+    await add(session, "Short paper", ["Ann Shortsurname"], 1987)
+
+    class Never(Scripted):
+        async def stream(self, system, prompt):
+            raise AssertionError("no model call")
+            yield
+
+    [item] = await claims.verify_claims(session, "Yes (Shortsurname, 1987).", llm=Never())
+    assert item.error == "empty_claim" and item.check is None
