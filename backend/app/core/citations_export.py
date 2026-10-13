@@ -1,7 +1,15 @@
 """Citation export (M39 F7, D253-D255): one CSL-JSON item per paper is the hub; every format is rendered from it."""
 
+import json
 import re
 import unicodedata
+import warnings
+from pathlib import Path
+
+import bibtexparser
+import rispy
+from citeproc import Citation, CitationItem, CitationStylesBibliography, CitationStylesStyle, formatter
+from citeproc.source.json import CiteProcJSON
 
 CSL_TYPES = {
     "journal_article": "article-journal",
@@ -117,3 +125,140 @@ def bibtex_keys(items: list[dict]) -> dict[str, str]:
 
 def _suffix(n: int) -> str:
     return (_suffix(n // 26 - 1) if n >= 26 else "") + chr(97 + n % 26)
+
+
+# ---- renderers ----
+
+APA_STYLE = Path(__file__).resolve().parents[1] / "styles" / "apa.csl"
+FORMATS = {
+    "bibtex": ("application/x-bibtex", "bib"),
+    "ris": ("application/x-research-info-systems", "ris"),
+    "csljson": ("application/vnd.citationstyles.csl+json", "json"),
+    "apa": ("text/plain", "txt"),
+    "apa-html": ("text/html", "html"),
+}
+BIBTEX_TYPES = {
+    "article-journal": "article",
+    "article-magazine": "article",
+    "paper-conference": "inproceedings",
+    "book": "book",
+    "chapter": "incollection",
+    "thesis": "phdthesis",
+}
+RIS_TYPES = {
+    "article-journal": "JOUR",
+    "article-magazine": "MGZN",
+    "paper-conference": "CONF",
+    "book": "BOOK",
+    "chapter": "CHAP",
+    "thesis": "THES",
+}
+BIBTEX_SPECIALS = str.maketrans(
+    {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}",
+     "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"}
+)  # fmt: skip
+
+
+def render(items: list[dict], fmt: str) -> str:
+    """The items as one of FORMATS, in the order given (APA sorts itself). ValueError("unknown_format") otherwise."""
+    if fmt not in FORMATS:
+        raise ValueError("unknown_format")
+    if fmt == "csljson":
+        return json.dumps(items, ensure_ascii=False, indent=2)
+    if fmt == "bibtex":
+        return _bibtex(items)
+    if fmt == "ris":
+        return _ris(items)
+    return _apa(items, html=fmt == "apa-html")
+
+
+def _tex(text: str | None) -> str | None:
+    return text.translate(BIBTEX_SPECIALS) if text else text
+
+
+def _bibtex_names(people: list[dict]) -> str:
+    return " and ".join(
+        "{" + _tex(p["literal"]) + "}" if "literal" in p else _tex(f"{p['family']}, {p['given']}".rstrip(", "))
+        for p in people
+    )
+
+
+def _bibtex_fields(item: dict) -> dict[str, str]:
+    kind = item["type"]
+    container = item.get("container-title")
+    fields = {
+        "author": _bibtex_names(item.get("author", [])),
+        "editor": _bibtex_names(item.get("editor", [])),
+        "title": item["title"],
+        "journal": container if kind in ("article-journal", "article-magazine") else None,
+        "booktitle": container if kind in ("paper-conference", "chapter") else None,
+        "publisher": item.get("publisher"),
+        "year": str(item.get("issued", {}).get("date-parts", [[""]])[0][0]),
+        "volume": item.get("volume"),
+        "number": item.get("issue"),
+        "pages": (item.get("page") or "").replace("-", "--").replace("----", "--") or None,
+        "note": ". ".join(p for p in (item.get("genre"), item.get("note")) if p),
+    }
+    escaped = {k: v if k in ("author", "editor") else _tex(v) for k, v in fields.items()}
+    # DOIs and URLs are verbatim in BibTeX; escaping their underscores or percents would break the link.
+    return {**escaped, "doi": item.get("DOI"), "url": item.get("URL")}
+
+
+def _bibtex(items: list[dict]) -> str:
+    keys = bibtex_keys(items)
+    library = bibtexparser.Library()
+    for item in items:
+        fields = [bibtexparser.model.Field(k, v) for k, v in _bibtex_fields(item).items() if v]
+        entry_type = BIBTEX_TYPES.get(item["type"], "misc")
+        library.add(bibtexparser.model.Entry(entry_type, keys[item["id"]], fields))
+    return bibtexparser.write_string(library)
+
+
+def _ris_names(people: list[dict]) -> list[str]:
+    return [p["literal"] if "literal" in p else f"{p['family']}, {p['given']}".rstrip(", ") for p in people]
+
+
+def _ris_entry(item: dict) -> dict:
+    first, _, last = (item.get("page") or "").partition("-")
+    entry = {
+        "type_of_reference": RIS_TYPES.get(item["type"], "GEN"),
+        "title": item["title"],
+        "authors": _ris_names(item.get("author", [])),
+        "secondary_authors": _ris_names(item.get("editor", [])),
+        "secondary_title": item.get("container-title"),
+        "publisher": item.get("publisher"),
+        "year": str(item.get("issued", {}).get("date-parts", [[""]])[0][0]),
+        "volume": item.get("volume"),
+        "number": item.get("issue"),
+        "start_page": first or None,
+        "end_page": last.lstrip("-") or None,
+        "doi": item.get("DOI"),
+        "urls": [item["URL"]] if item.get("URL") else None,
+        "notes": [". ".join(p for p in (item.get("genre"), item.get("note")) if p)],
+    }
+    return {k: v for k, v in entry.items() if v}
+
+
+def _ris(items: list[dict]) -> str:
+    return rispy.dumps([_ris_entry(item) for item in items])
+
+
+def _apa_order(item: dict) -> tuple:
+    # citeproc-py's own bibliography.sort() leaves the order unchanged with this style, so order by author, year, title.
+    first = (item.get("author") or [{}])[0]
+    name = first.get("family") or first.get("literal") or ""
+    year = item.get("issued", {}).get("date-parts", [[0]])[0][0]
+    return (unicodedata.normalize("NFKD", name).lower(), year, item["title"].lower(), item["id"])
+
+
+def _apa(items: list[dict], *, html: bool) -> str:
+    # ponytail: the style is parsed on every call (~0.3 s); cache it if exports get hot.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # citeproc-py warns about CSL fields it doesn't know
+        style = CitationStylesStyle(str(APA_STYLE), validate=False)
+        bibliography = CitationStylesBibliography(
+            style, CiteProcJSON(items), formatter.html if html else formatter.plain
+        )
+        for item in sorted(items, key=_apa_order):
+            bibliography.register(Citation([CitationItem(item["id"])]))
+        return "\n".join(str(entry) for entry in bibliography.bibliography()) + "\n"
