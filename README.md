@@ -259,15 +259,19 @@ If you use [Homebrew](https://brew.sh/), it can install the desktop app for you.
 
 ```sh
 brew tap khannoussi-malek/paperlab https://github.com/khannoussi-malek/PaperLab
-brew install --cask paperlab
+brew install --cask khannoussi-malek/paperlab/paperlab
 ```
+
+Use the full name the first time: Homebrew only loads a cask from a tap outside its own once you've asked for it by
+name.
 
 Homebrew picks the right download for Apple silicon or Intel, and macOS opens PaperLab without the Open Anyway step.
 Run `brew upgrade --cask paperlab` when the app says a new version is out, and `brew uninstall --cask paperlab` to
 remove the app; your library stays either way.
 
-Each release also has its own cask, for example `brew install --cask paperlab@0.1.0`. Install one version at a
-time, and keep in mind that an older version can't open a library a newer one has used.
+Each release also has its own cask, for example
+`brew install --cask khannoussi-malek/paperlab/paperlab@0.1.0`. Install one version at a time, and keep in mind that
+an older version can't open a library a newer one has used.
 
 ### Without the app
 
