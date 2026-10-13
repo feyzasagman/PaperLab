@@ -124,6 +124,12 @@ _SUGGESTION_COLUMNS = dict.fromkeys(
 )
 
 
+def _criteria_summary(workspace: Workspace) -> str | None:
+    parts = (("Research question", workspace.research_question), ("Include when", workspace.inclusion_criteria),
+             ("Exclude when", workspace.exclusion_criteria))
+    return "\n".join(f"{label}: {text}" for label, text in parts if text) or None
+
+
 async def set_criteria(
     session: AsyncSession, workspace_id: uuid.UUID, criteria=_UNSET, *,
     research_question=_UNSET, inclusion=_UNSET, exclusion=_UNSET,
@@ -147,7 +153,7 @@ async def set_criteria(
             setattr(workspace, column, value)
             changed = True
     if changed:
-        workspace.screening_criteria = workspace.inclusion_criteria  # PRISMA's export still reads the old column
+        workspace.screening_criteria = _criteria_summary(workspace)  # the PRISMA export reads this column
         await session.execute(
             update(WorkspaceSearchHit).where(WorkspaceSearchHit.workspace_id == workspace_id)
             .values(**_SUGGESTION_COLUMNS)

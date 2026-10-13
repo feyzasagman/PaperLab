@@ -115,10 +115,13 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                     hit.suggested_at = datetime.now(timezone.utc)
                     workspace.suggest_done += 1
                     await session.commit()
-                else:  # a normal finish, not a stop or the deadline
-                    await session.refresh(workspace)
-                    if workspace.auto_import_min_relevance is not None:
-                        await _auto_import(session, workspace, run_id)
+                # Only a normal finish imports: not a Stop (pressed during the last hit too) or the deadline.
+                await session.refresh(workspace)
+                if (
+                    workspace.suggest_status == "running" and time.monotonic() < deadline
+                    and workspace.auto_import_min_relevance is not None
+                ):
+                    await _auto_import(session, workspace, run_id)
             except (LLMUnavailable, Conflict) as exc:
                 workspace.suggest_error = (
                     "Set up a chat model in Settings first" if isinstance(exc, Conflict) else str(exc)

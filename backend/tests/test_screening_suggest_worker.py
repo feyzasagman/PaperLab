@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from conftest import FakeArq
-from sqlalchemy import delete, select, text
+from sqlalchemy import case, delete, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -404,11 +404,33 @@ async def test_auto_import_skips_a_decided_hit_and_a_rating_below_the_bar(sessio
     assert arq.jobs == []
 
 
-async def test_a_stopped_job_does_not_auto_import(session, worker, free_and_closed):
+async def _stop_during_the_only_hit(session, worker, free_and_closed):
     workspace, free, closed, arq = free_and_closed
     workspace.auto_import_min_relevance = 4
-    workspace.suggest_status = "stopping"
+    # Every hit but the seed already has a suggestion: one model call, and Stop is pressed during it.
+    await session.execute(
+        update(WorkspaceSearchHit).where(WorkspaceSearchHit.workspace_id == workspace.id)
+        .values(suggestion=case((WorkspaceSearchHit.normalized_title == "paper 0", None), else_="include"))
+    )
     await session.flush()
-    worker(ScriptedLLM([]))
+
+    async def stop(call):
+        workspace.suggest_status = "stopping"
+        await session.flush()
+
+    llm = worker(ScriptedLLM([J("include")], on_call=stop))
     await worker_module.suggest_screening({}, str(workspace.id))
+    assert len(llm.calls) == 1
+    return arq
+
+
+async def test_stop_pressed_during_the_last_hit_does_not_auto_import(session, worker, free_and_closed):
+    arq = await _stop_during_the_only_hit(session, worker, free_and_closed)
     assert arq.jobs == []
+
+
+async def test_a_stopped_job_does_not_auto_import(session, worker, free_and_closed):
+    workspace, free, closed, arq = free_and_closed
+    arq = await _stop_during_the_only_hit(session, worker, free_and_closed)
+    await session.refresh(free)
+    assert (free.acquisition_status, arq.jobs) == ("not_attempted", [])
