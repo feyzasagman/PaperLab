@@ -1,15 +1,17 @@
 """Saved searches (M39 F2): a workspace search with a schedule. CRUD here; `run_due`/`run_now` (Task 3) start runs.
 Hits go through the normal search_batch dedup, so only new ones are stored."""
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import delete as delete_rows
 from sqlalchemy import select
+from sqlalchemy import update as update_rows
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import schedules, workspaces, year_range
+from app.core import paper_sources, queue, schedules, workspace_search, workspaces, year_range
 from app.core.errors import InvalidInput, NotFound
 from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import SavedSearch
@@ -170,3 +172,87 @@ async def list_for_workspace(session: AsyncSession, workspace_id: uuid.UUID) -> 
         select(SavedSearch).where(SavedSearch.workspace_id == workspace_id).order_by(SavedSearch.created_at.desc())
     )
     return [await _view(session, row) for row in rows]
+
+
+logger = logging.getLogger(__name__)
+SKIPPED_BUSY = "skipped: the previous run is still going"
+NO_SOURCE = "no paper source is turned on"
+
+
+async def _due(session: AsyncSession, now: datetime) -> list[SavedSearch]:
+    query = select(SavedSearch).where(SavedSearch.enabled.is_(True), SavedSearch.next_run_at <= now)
+    return list(await session.scalars(query))
+
+
+async def _claim(session: AsyncSession, row: SavedSearch, seen: datetime, now: datetime) -> bool:
+    """Compare-and-set on next_run_at (D224): only the scheduler that still sees `seen` — the value it read before
+    claiming anything — moves it. The next fire is computed from now, so any number of missed fire times collapse
+    into this one run."""
+    nxt = schedules.next_fire(row.schedule, row.timezone, now)
+    claimed = await session.scalar(
+        update_rows(SavedSearch)
+        .where(SavedSearch.id == row.id, SavedSearch.next_run_at == seen)
+        .values(last_run_at=now, next_run_at=nxt)
+        .returning(SavedSearch.id)
+    )
+    await session.commit()
+    if claimed:
+        await session.refresh(row)
+    return claimed is not None
+
+
+async def _sources_on(session: AsyncSession) -> list[str]:
+    on = (await paper_sources.get(session)).enabled
+    return [s for s in DISCOVERY_SOURCE_IDS if on.get(s)]
+
+
+async def _start(session: AsyncSession, row: SavedSearch, now: datetime) -> uuid.UUID | None:
+    """Starts and enqueues one run for this saved search, or records why not (last_error)."""
+    last = await _last_run(session, row.id)
+    if last is not None and last.status == "running":
+        row.last_error = SKIPPED_BUSY
+        await session.commit()
+        return None
+    on = await _sources_on(session)
+    sources = [s for s in (row.sources or on) if s in on]
+    if not sources:
+        row.last_error = NO_SOURCE
+        await session.commit()
+        return None
+    run = await workspace_search.start_run(
+        session, row.workspace_id, row.query, {"year_from": row.year_from, "year_to": row.year_to}, sources
+    )
+    run.saved_search_id = row.id
+    row.last_error = None
+    await session.commit()
+    await queue.enqueue("run_workspace_search", str(run.id))
+    return run.id
+
+
+async def run_due(session: AsyncSession, now: datetime) -> list[uuid.UUID]:
+    """Every enabled saved search whose next_run_at has passed, claimed once each. Returns the runs started."""
+    started = []
+    # Snapshot each row's next_run_at before any claim: a claim refreshes the row, and a second scheduler (or a
+    # duplicate in this list) must compare against what it originally saw.
+    # Ids, not rows: the rollback below expires every loaded row, and an async session can't lazy-load it back.
+    for row_id, seen in [(row.id, row.next_run_at) for row in await _due(session, now)]:
+        try:
+            row = await session.get(SavedSearch, row_id)
+            if await _claim(session, row, seen, now) and (run_id := await _start(session, row, now)):
+                started.append(run_id)
+        except Exception as exc:  # one broken saved search never stops the others
+            logger.exception("saved search %s failed to start", row_id)
+            await session.rollback()
+            await session.execute(update_rows(SavedSearch).where(SavedSearch.id == row_id).values(last_error=str(exc)))
+            await session.commit()
+    return started
+
+
+async def run_now(session: AsyncSession, workspace_id: uuid.UUID, saved_search_id: uuid.UUID) -> WorkspaceSearchRun:
+    """Runs it now, outside its schedule (next_run_at stays). Raises InvalidInput with last_error's reason when it
+    can't start."""
+    row = await _row(session, saved_search_id, workspace_id)
+    run_id = await _start(session, row, _now())
+    if run_id is None:
+        raise InvalidInput(row.last_error or "This saved search can't start right now.")
+    return await workspace_search.get_run(session, run_id)

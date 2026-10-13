@@ -15,6 +15,7 @@ from app.workers.harvest import (
 )
 from app.workers.ingest import MAX_TRIES, ingest_paper, reembed_paper
 from app.workers.references import fetch_references
+from app.workers.saved_searches import schedule_saved_searches
 from app.workers.screening_suggest import SUGGEST_JOB_TIMEOUT, suggest_screening
 from app.workers.workspace_search import SEARCH_RUN_JOB_TIMEOUT, run_workspace_search
 
@@ -72,6 +73,7 @@ class WorkerSettings:
             run_at_startup=True,
             timeout=BIORXIV_HARVEST_JOB_TIMEOUT,
         ),
+        cron(schedule_saved_searches, name="schedule_saved_searches", second=0, run_at_startup=True),
     ]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
 
