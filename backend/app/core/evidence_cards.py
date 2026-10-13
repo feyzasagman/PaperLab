@@ -390,6 +390,7 @@ class CardSummary:
     error: str | None
     provenance: str
     model: str | None
+    prompt_version: int | None
     updated_at: datetime | None
     fields: dict
     left_out: dict  # field -> how many items had no usable quote or numbers (never shown as facts)
@@ -406,7 +407,7 @@ def summarize(view: CardView) -> CardSummary:
         if dropped:
             left_out[name] = len(dropped)
     return CardSummary(
-        view.paper_id, view.status, view.error, view.provenance, view.model, view.updated_at,
+        view.paper_id, view.status, view.error, view.provenance, view.model, view.prompt_version, view.updated_at,
         kept if view.status == "ready" else {}, left_out,
     )
 
