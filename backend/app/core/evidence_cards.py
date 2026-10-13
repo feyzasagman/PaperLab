@@ -363,6 +363,36 @@ def _shown(name: str, item: dict) -> str:
     return "; ".join(str(v) for v in parts if v not in (None, ""))
 
 
+@dataclass(frozen=True)
+class CardSummary:
+    """A card for Claude: only items that hold a value (each with its quote and page); dropped ones are counted."""
+
+    paper_id: uuid.UUID
+    status: str
+    error: str | None
+    provenance: str
+    model: str | None
+    updated_at: datetime | None
+    fields: dict
+    left_out: dict  # field -> how many items had no usable quote or numbers (never shown as facts)
+
+
+def summarize(view: CardView) -> CardSummary:
+    kept, left_out = {}, {}
+    for name in _EDITABLE:
+        value = view.fields.get(name)
+        items = value if isinstance(value, list) else [value] if value else []
+        shown = [i for i in items if i.get("quote") and _shown(name, i)]
+        kept[name] = shown if isinstance(value, list) else (shown[0] if shown else None)
+        dropped = [i for i in items if not _shown(name, i) and {"unsupported", "number_not_in_source"} & {*i["flags"]}]
+        if dropped:
+            left_out[name] = len(dropped)
+    return CardSummary(
+        view.paper_id, view.status, view.error, view.provenance, view.model, view.updated_at,
+        kept if view.status == "ready" else {}, left_out,
+    )
+
+
 CSV_HEADER = ["paper", "year", "field", "value", "quote", "page", "author", "edited"]
 
 

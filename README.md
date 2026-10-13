@@ -398,6 +398,11 @@ Checking claims:
 - `verify_claim`: whether a library paper supports a claim, with a quote from the paper;
 - `verify_claims`: the same for every cited sentence in a pasted paragraph (DOI or author-year), up to 30.
 
+Evidence cards:
+- `generate_evidence_card`: builds a paper's card in the background (about a minute); ask again with `get_evidence_card` until it is ready;
+- `get_evidence_card`: the research question, design, sample, findings, effect sizes and stated limitations, each with its quote and page;
+- `list_evidence_cards`: a workspace's cards, one row per paper.
+
 Scheduled searches:
 - `create_saved_search`: runs a search by itself, daily or weekly at a time you choose (or on a cron schedule), in your time zone;
 - `list_saved_searches`: a workspace's scheduled searches, with their last and next run and any error;
@@ -406,6 +411,8 @@ Scheduled searches:
 AI pre-screening: your default model reads each undecided hit's abstract and suggests include, exclude or unsure, with a score and the sentences it relied on. A local model is used by default, so abstracts stay on your machine. Suggestions never decide anything: a hit stays undecided until you accept the suggestion or screen it yourself. Importing papers automatically from high-scoring suggestions is off unless you turn it on, and a scheduled search can pre-screen its new hits overnight.
 
 Claim checks: ask Claude to check a sentence or paragraph against your papers before you write it. Each verdict (supported, partially supported, not supported, not addressed or cannot verify) is an AI judgement, with a quote from the paper when it found one; cannot verify when the paper has no text. Each says whether it read the full text or only the abstract. A paper with no text is never guessed at, and a citation that matches no paper, or several, is reported as such. Say so if you want a check kept as an AI note on the paper. Like pre-screening, a remote model is used only after you agree.
+
+Evidence cards: ask Claude for a card and it reads the paper's full text and fills in the research question, design, sample, findings, effect sizes and the limitations the authors state. Every value comes with a quote from the paper and its page, and every number in a value appears in that quote. Anything the text could not back is left out and counted, never filled in. Your default model does the work, one paper at a time, and a remote model is used only after you agree. A card you edit is shown as AI · edited, and replacing it asks first.
 
 Scheduled searches run while PaperLab is running: the desktop app with **Keep running** on (Settings → Desktop app), or `docker compose up -d`. A time that passed while it was closed runs once when it next starts. New results land in the workspace for you to screen.
 
