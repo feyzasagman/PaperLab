@@ -1,0 +1,162 @@
+"""Claim verification (M39 F4): is a claim supported by a library paper? One model call over the paper's best
+passages, a verbatim quote that is checked against them, and an llm_outputs row for provenance."""
+
+import json
+import uuid
+from dataclasses import asdict, dataclass, field
+from typing import Literal
+
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core import llm_connections, llm_json, prompts, quotes, retrieval
+from app.core.errors import InvalidInput, NotFound
+from app.models import Chunk, LLMOutput, Paper, PaperStatus
+from app.providers.llm import build_llm
+
+CLAIM_PROMPT_VERSION = 1
+PASSAGES = 6
+SYSTEM_PROMPT, PROMPT_TEMPLATE = prompts.load("claim_check", CLAIM_PROMPT_VERSION).split("\n<!-- prompt -->\n")
+OUTPUT_KIND = "claim_check"
+CHECKED = ("supported", "partially_supported")  # verdicts that must rest on a kept quote
+
+
+class _Reply(BaseModel):
+    verdict: Literal["supported", "partially_supported", "not_supported", "not_addressed"]
+    passage: int | None = None
+    quote: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class ClaimCheck:
+    claim: str
+    paper_id: uuid.UUID
+    paper_title: str
+    verdict: str  # supported | partially_supported | not_supported | not_addressed | cannot_verify
+    reason: str
+    evidence_level: str  # full_text | abstract_only | metadata_only
+    quote: str | None = None
+    quote_page: int | None = None
+    quote_section: str | None = None
+    quote_chunk_id: uuid.UUID | None = None
+    passages: list[dict] = field(default_factory=list)  # {chunk_id, page, section}; chunk_id None for an abstract
+    confidence: str | None = None  # high | low
+    model: str | None = None
+    prompt_version: int = CLAIM_PROMPT_VERSION
+    output_id: uuid.UUID | None = None
+    note_id: uuid.UUID | None = None
+
+
+async def _paper(session: AsyncSession, paper_id: uuid.UUID | None, doi: str | None) -> Paper:
+    if (paper_id is None) == (not doi):
+        raise InvalidInput("claim_scope", detail="Give either a paper_id or a doi.")
+    if paper_id is not None:
+        paper = await session.get(Paper, paper_id)
+    else:
+        paper = await session.scalar(select(Paper).where(func.lower(Paper.doi) == doi.strip().lower()))
+    if paper is None:
+        raise NotFound("paper_not_in_library", detail=f"{doi or paper_id} is not in the library.", doi=doi)
+    return paper
+
+
+async def _passages(session, paper: Paper, claim: str, quoted_text: str | None) -> tuple[str, list[dict], list[str]]:
+    """(evidence level, passage descriptions, passage texts): the paper's best chunks, else its abstract."""
+    has_chunks = paper.status == PaperStatus.READY and await session.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.paper_id == paper.id)
+    )
+    if has_chunks:
+        found = await retrieval.retrieve(
+            session, f"{claim} {quoted_text}" if quoted_text else claim, paper_ids=[paper.id], k=PASSAGES
+        )
+        if found:
+            return (
+                "full_text",
+                [{"chunk_id": c.id, "page": c.page, "section": c.section} for c in found],
+                [c.text for c in found],
+            )
+    if (paper.abstract or "").strip():
+        return "abstract_only", [{"chunk_id": None, "page": None, "section": None}], [paper.abstract]
+    return "metadata_only", [], []
+
+
+def _prompt(claim: str, quoted_text: str | None, texts: list[str], passages: list[dict]) -> str:
+    numbered = "\n\n".join(
+        f"[{i}] (page {p['page']}, section {p['section']}) {t}" if p["page"] is not None else f"[{i}] (abstract) {t}"
+        for i, (p, t) in enumerate(zip(passages, texts, strict=True), start=1)
+    )
+    quoted = f"\nThe researcher quotes this from the paper: {quoted_text}\n" if quoted_text else ""
+    # str.format only parses the template, so braces in the claim or passages are safe.
+    return PROMPT_TEMPLATE.format(claim=claim, passages=numbered, quoted_text=quoted)
+
+
+def _pick_quote(reply: _Reply, texts: list[str]) -> tuple[str | None, int | None, bool]:
+    """(kept quote, 0-based passage index, a quote was asked for but dropped). The named passage is tried first
+    (a number outside the passages counts as none), then every passage; the quote's passage wins over the named one."""
+    if not reply.quote.strip():
+        return None, None, False
+    named = reply.passage - 1 if reply.passage is not None and 1 <= reply.passage <= len(texts) else None
+    if named is not None:
+        kept, _ = quotes.check_quotes([reply.quote], [texts[named]], 1)
+        if kept:
+            return kept[0][0], named, False
+    kept, _ = quotes.check_quotes([reply.quote], texts, 1)
+    return (kept[0][0], kept[0][1], False) if kept else (None, None, True)
+
+
+async def _write_output(session, paper, claim, content: dict, passages, model, connection_name) -> uuid.UUID:
+    output = LLMOutput(
+        paper_id=paper.id, kind=OUTPUT_KIND, question=claim, content=json.dumps(content),
+        source_chunks=[p["chunk_id"] for p in passages if p["chunk_id"] is not None],
+        model=model, connection_name=connection_name, prompt_version=CLAIM_PROMPT_VERSION,
+    )
+    session.add(output)
+    await session.commit()
+    return output.id
+
+
+async def _llm(session: AsyncSession, llm):
+    if llm is not None:
+        return llm
+    connection, model = await llm_connections.resolve(session, None)
+    return build_llm(connection, model.name)
+
+
+async def verify_claim(
+    session: AsyncSession, claim: str, *, paper_id: uuid.UUID | None = None, doi: str | None = None,
+    quoted_text: str | None = None, llm=None, save: bool = False,
+) -> ClaimCheck:
+    """Checks `claim` against one library paper (by id or by DOI, exactly one) and returns the verdict.
+
+    A metadata-only paper (no chunks, no abstract) is `cannot_verify` / `no_text`: no model call and no llm_outputs
+    row, since nothing was asked. Every other check writes an llm_outputs row and returns its id as `output_id`,
+    including two invalid model replies (`cannot_verify` / `model_error`), whose content records the failure.
+    `save` (an AI note on the quoted passage) is accepted here and implemented with the MCP tools.
+    """
+    paper = await _paper(session, paper_id, doi)
+    level, passages, texts = await _passages(session, paper, claim, quoted_text)
+    base = {"claim": claim, "paper_id": paper.id, "paper_title": paper.title, "evidence_level": level}
+    if level == "metadata_only":
+        return ClaimCheck(**base, verdict="cannot_verify", reason="no_text")
+    llm = await _llm(session, llm)
+    model = getattr(llm, "model", "unknown")
+    connection_name = getattr(llm, "connection_name", None)
+    reply = await llm_json.ask_json(llm, SYSTEM_PROMPT, _prompt(claim, quoted_text, texts, passages), _Reply)
+    if reply is None:
+        content = {"verdict": "cannot_verify", "reason": "model_error"}
+        output_id = await _write_output(session, paper, claim, content, passages, model, connection_name)
+        return ClaimCheck(
+            **base, verdict="cannot_verify", reason="model_error", passages=passages, model=model, output_id=output_id
+        )
+    quote, index, dropped = _pick_quote(reply, texts)
+    chosen = passages[index] if index is not None else {}
+    low = dropped or (reply.verdict in CHECKED and quote is None)
+    check = ClaimCheck(
+        **base, verdict=reply.verdict, reason=reply.reason.strip(), quote=quote,
+        quote_page=chosen.get("page"), quote_section=chosen.get("section"), quote_chunk_id=chosen.get("chunk_id"),
+        passages=passages, confidence="low" if low else "high", model=model,
+    )
+    content = {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in asdict(check).items() if k != "passages"}
+    output_id = await _write_output(session, paper, claim, content, passages, model, connection_name)
+    return ClaimCheck(**{**asdict(check), "output_id": output_id})
