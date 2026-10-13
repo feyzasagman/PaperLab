@@ -12,8 +12,8 @@ from pydantic import BaseModel, BeforeValidator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import claims, llm_json, numbers, prompts, quotes, retrieval
-from app.core.errors import NotFound
+from app.core import claims, llm_json, numbers, prompts, queue, quotes, retrieval
+from app.core.errors import Conflict, NotFound
 from app.models import Chunk, EvidenceCard, LLMOutput, Paper, PaperStatus
 
 CARD_PROMPT_VERSION = 1
@@ -214,3 +214,45 @@ async def build_card(session: AsyncSession, paper_id: uuid.UUID, *, llm=None, re
         return view
     output_id = await _write_output(session, paper_id, content, passages, model, connection_name)
     return await _store(session, CardView(**{**view.__dict__, "output_id": output_id}))
+
+
+def _view(card: EvidenceCard) -> CardView:
+    return CardView(
+        card.paper_id, card.status, card.error, card.fields, card.provenance, card.model, card.prompt_version,
+        card.output_id, card.updated_at,
+    )
+
+
+async def request_cards(
+    session: AsyncSession, *, paper_ids: list[uuid.UUID], workspace_id: uuid.UUID | None = None,
+    regenerate: bool = False, confirm: bool = False,
+) -> list[CardView]:
+    """Marks each target paper's card `generating` and queues ONE background job for the new targets.
+
+    A `ready` card is left alone unless `regenerate`; replacing an edited card also needs `confirm` (Conflict
+    `card_edited_needs_confirm`, checked for every paper before anything changes). A card already `generating` is
+    returned as is and not queued again, so two requests make one job. Returns one view per paper, in order.
+    """
+    cards = {
+        c.paper_id: c
+        for c in await session.scalars(select(EvidenceCard).where(EvidenceCard.paper_id.in_(paper_ids)))
+    }
+    if regenerate and not confirm and any(
+        c.status == "ready" and c.provenance == "llm_edited" for c in cards.values()
+    ):
+        raise Conflict("card_edited_needs_confirm")
+    queued = []
+    for paper_id in paper_ids:
+        card = cards.get(paper_id)
+        if card is not None and (card.status == "generating" or (card.status == "ready" and not regenerate)):
+            continue
+        if card is None:
+            card = cards[paper_id] = EvidenceCard(paper_id=paper_id, fields={}, status="generating")
+            session.add(card)
+        card.status, card.error, card.updated_at = "generating", None, datetime.now(UTC)
+        queued.append(paper_id)
+    await session.commit()
+    if queued:
+        await queue.enqueue("generate_evidence_cards", None if workspace_id is None else str(workspace_id),
+                            [str(i) for i in queued])
+    return [_view(cards[i]) for i in paper_ids]
