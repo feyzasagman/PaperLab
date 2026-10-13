@@ -8,6 +8,8 @@ test('save a search on a schedule, pause it, run it now, then delete it', async 
   await saved.getByRole('button', { name: 'Save this search…' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Query').fill(query)
+  await dialog.getByLabel('Schedule').click()
+  await page.getByRole('option', { name: 'Daily' }).click()
   await dialog.getByLabel('Time zone').fill('UTC')
   await dialog.getByLabel('Time', { exact: true }).fill('02:00')
   await dialog.getByRole('button', { name: 'Save', exact: true }).click()
@@ -25,9 +27,11 @@ test('save a search on a schedule, pause it, run it now, then delete it', async 
   ])
   expect(run.status()).toBeLessThan(300)
   const { id: runId } = await run.json()
+  expect(runId).toBeTruthy()
   // A real search run is going: stop it right away so none is left behind (the workspace delete also ends it).
-  await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible()
-  await request.post(`/api/workspaces/${workspaceId}/search/runs/${runId}/stop`)
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
+  const stopped = await request.post(`/api/workspaces/${workspaceId}/search/runs/${runId}/stop`)
+  expect(stopped.ok()).toBeTruthy()
 
   await saved.getByRole('button', { name: 'Delete' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click()
