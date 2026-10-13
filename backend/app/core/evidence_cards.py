@@ -2,6 +2,9 @@
 and every item checked: its quote must be a verbatim passage fragment (core/quotes) and every number in its values
 must appear in that quote (core/numbers). An item that fails either check is never shown as a fact."""
 
+import copy
+import csv
+import io
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -14,8 +17,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import claims, llm_json, numbers, prompts, queue, quotes, retrieval
-from app.core.errors import Conflict, NotFound
-from app.models import Chunk, EvidenceCard, LLMOutput, Paper, PaperStatus
+from app.core.errors import Conflict, InvalidInput, NotFound
+from app.models import Chunk, EvidenceCard, LLMOutput, Paper, PaperStatus, Workspace, workspace_papers
 
 CARD_PROMPT_VERSION = 1
 JOB_TIMEOUT = 20 * 60  # seconds; the job's registered timeout. A card `generating` longer than this is stale.
@@ -235,6 +238,8 @@ async def request_cards(
     `card_edited_needs_confirm`, checked for every paper before anything changes). A card already `generating` is
     returned as is and not queued again, so two requests make one job. Returns one view per paper, in order.
     """
+    if not paper_ids:
+        return []
     if regenerate and not confirm and await session.scalar(
         select(func.count()).select_from(EvidenceCard).where(
             EvidenceCard.paper_id.in_(paper_ids), EvidenceCard.status == "ready",
@@ -268,3 +273,112 @@ async def request_cards(
         await queue.enqueue("generate_evidence_cards", None if workspace_id is None else str(workspace_id),
                             [str(i) for i in queued])
     return [_view(cards[i]) for i in paper_ids]
+
+
+_EDITABLE = {"research_question": _Item, "design": _Item, "sample": _Sample, "findings": _Item,
+             "effect_sizes": _Effect, "limitations": _Item}
+
+
+async def get_card(session: AsyncSession, paper_id: uuid.UUID) -> CardView:
+    card = await session.scalar(select(EvidenceCard).where(EvidenceCard.paper_id == paper_id))
+    if card is None:
+        raise NotFound("card_not_found", detail=f"Paper {paper_id} has no evidence card.")
+    return _view(card)
+
+
+def _edited(fields: dict, change: dict) -> dict:
+    """A copy of `fields` with one change applied: {field, index (lists), values: {key: new value}}."""
+    name, values = change.get("field"), change.get("values") or {}
+    if name not in _EDITABLE:
+        raise InvalidInput("unknown_field", fields=list(_EDITABLE))
+    keys = _SHAPES[_EDITABLE[name]][0]
+    if not values or set(values) - set(keys):
+        raise InvalidInput("not_editable", editable=list(keys))  # quotes and pages are the evidence
+    out = copy.deepcopy(fields)
+    if name in CAPS:
+        index = change.get("index", 0)
+        if not isinstance(index, int) or not 0 <= index < len(out[name]):
+            raise InvalidInput("unknown_item", field=name, index=index)
+        item = out[name][index]
+    else:
+        item = out[name]
+    if not item.get("quote"):
+        raise InvalidInput("item_has_no_evidence", field=name)  # a dropped item has nothing to back an edit
+    for key, value in values.items():
+        item[key] = value if value is None else (value if key == "n" and isinstance(value, int) else str(value))
+    item["flags"] = sorted({*item["flags"], "edited"})
+    return out
+
+
+async def edit_card(session: AsyncSession, paper_id: uuid.UUID, changes: list[dict]) -> CardView:
+    """Changes item values (never quotes or pages), flags each `edited` and marks the card `llm_edited`."""
+    card = await session.scalar(select(EvidenceCard).where(EvidenceCard.paper_id == paper_id))
+    if card is None:
+        raise NotFound("card_not_found", detail=f"Paper {paper_id} has no evidence card.")
+    if card.status != "ready":
+        raise Conflict("card_not_ready")
+    fields = card.fields
+    for change in changes:
+        fields = _edited(fields, change)
+    if changes:
+        card.fields, card.provenance, card.updated_at = fields, "llm_edited", datetime.now(UTC)
+        await session.commit()
+    return _view(card)
+
+
+@dataclass(frozen=True)
+class CardRow:
+    paper_id: uuid.UUID
+    title: str
+    year: int | None
+    first_author: str | None
+    card: CardView | None
+
+
+async def workspace_cards(session: AsyncSession, workspace_id: uuid.UUID) -> list[CardRow]:
+    """One row per workspace paper (by title), with its card or None. NotFound for an unknown workspace."""
+    if await session.get(Workspace, workspace_id) is None:
+        raise NotFound("workspace_not_found", detail=f"Workspace {workspace_id} does not exist.")
+    rows = await session.execute(
+        select(Paper, EvidenceCard)
+        .join(workspace_papers, workspace_papers.c.paper_id == Paper.id)
+        .outerjoin(EvidenceCard, EvidenceCard.paper_id == Paper.id)
+        .where(workspace_papers.c.workspace_id == workspace_id)
+        .order_by(Paper.title, Paper.id)
+    )
+    return [
+        CardRow(p.id, p.title, p.year, (p.authors or [None])[0], None if c is None else _view(c)) for p, c in rows
+    ]
+
+
+def _shown(name: str, item: dict) -> str:
+    """The item's value as one cell, or "" when it holds none (a dropped or cleared item)."""
+    if name == "sample":
+        parts = [item.get("n"), item.get("population")]
+    else:
+        parts = [item.get("value"), item.get("ci"), item.get("p")] if name == "effect_sizes" else [item.get("value")]
+    return "; ".join(str(v) for v in parts if v not in (None, ""))
+
+
+CSV_HEADER = ["paper", "year", "field", "value", "quote", "page", "author", "edited"]
+
+
+async def workspace_csv(session: AsyncSession, workspace_id: uuid.UUID) -> str:
+    """Every kept item of every ready card in the workspace, one row each, UTF-8 BOM for Excel. Items without a
+    value (dropped as unsupported, or cleared) are left out: they are not facts."""
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(CSV_HEADER)
+    for row in await workspace_cards(session, workspace_id):
+        if row.card is None or row.card.status != "ready":
+            continue
+        for name in _EDITABLE:
+            value = row.card.fields.get(name)
+            for item in value if isinstance(value, list) else [value]:
+                if not item or not item.get("quote") or not (shown := _shown(name, item)):
+                    continue
+                writer.writerow([
+                    row.title, row.year or "", name, shown, item["quote"], item["page"] or "", row.first_author or "",
+                    "yes" if "edited" in item["flags"] else "no",
+                ])
+    return "\ufeff" + out.getvalue()
