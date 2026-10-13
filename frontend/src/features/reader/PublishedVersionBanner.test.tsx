@@ -48,3 +48,15 @@ it('points at the paper already in the library', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Add the published version' }))
   expect(await screen.findByRole('link', { name: 'Open it' })).toHaveAttribute('href', '#/papers/p9')
 })
+
+it('never adds a different paper: a search without the matching DOI links the landing page', async () => {
+  vi.spyOn(api, 'searchPapers').mockResolvedValue({
+    results: [candidate({ doi: '10.9/other', pdf_urls: ['https://x/o.pdf'] })],
+    notices: [],
+  } as never)
+  const add = vi.spyOn(api, 'addCandidate')
+  renderBanner()
+  fireEvent.click(screen.getByRole('button', { name: 'Add the published version' }))
+  expect(await screen.findByText(/couldn't find it/i)).toBeInTheDocument()
+  expect(add).not.toHaveBeenCalled()
+})

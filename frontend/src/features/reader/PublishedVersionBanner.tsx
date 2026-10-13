@@ -2,6 +2,7 @@ import { Info } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Paper } from '@/api/client'
 import { api } from '@/api/client'
+import { keys } from '@/api/queries'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { readerHref } from '@/lib/route'
@@ -11,7 +12,7 @@ type Outcome = { kind: 'added' } | { kind: 'owned'; paperId: string } | { kind: 
 /** Looks the published DOI up the way Find papers does, and adds it only when a free PDF is listed. */
 async function addPublished(doi: string): Promise<Outcome> {
   const { results } = await api.searchPapers(doi)
-  const found = results.find((c) => c.doi?.toLowerCase() === doi.toLowerCase()) ?? results[0]
+  const found = results.find((c) => c.doi?.toLowerCase() === doi.toLowerCase())
   if (!found) return { kind: 'not-found' }
   if (found.paper_id) return { kind: 'owned', paperId: found.paper_id }
   if (found.pdf_urls.length === 0) return { kind: 'no-pdf' }
@@ -26,7 +27,7 @@ export function PublishedVersionBanner({ paper }: { paper: Paper }) {
   const doiHref = `https://doi.org/${encodeURIComponent(doi)}`
   const add = useMutation({
     mutationFn: () => addPublished(doi),
-    onSuccess: (outcome) => outcome.kind === 'added' && client.invalidateQueries({ queryKey: ['papers'] }),
+    onSuccess: (outcome) => outcome.kind === 'added' && Promise.all([client.invalidateQueries({ queryKey: keys.papers }), client.invalidateQueries({ queryKey: keys.workspaces })]),
   })
   const outcome = add.data
   return (

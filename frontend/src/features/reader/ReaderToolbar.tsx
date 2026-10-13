@@ -23,6 +23,7 @@ type Props = {
 export function ReaderToolbar({ paper, zoomIndex, onZoomChange, capturing, onCaptureChange, onOpenReferences }: Props) {
   const title = paper?.title
   return (
+    <>
     <header className={cn('col-span-full flex h-11 items-center gap-1 border-b border-glass-border px-2', glass)}>
       <Button variant="ghost" size="sm" asChild className="shrink-0 text-muted-foreground">
         <a href="#/">← Library</a>
@@ -70,5 +71,11 @@ export function ReaderToolbar({ paper, zoomIndex, onZoomChange, capturing, onCap
       </Button>
       <ModeToggle />
     </header>
+    {paper && (
+      <div className={cn('flex flex-wrap items-center gap-1 border-b border-glass-border px-3 py-1.5 md:hidden', glass)}>
+        <SourceBadges paper={paper} />
+      </div>
+    )}
+    </>
   )
 }
