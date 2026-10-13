@@ -89,8 +89,13 @@ def _texts(card_fields: dict, name: str) -> str:
     return " ".join(str(i.get("value") or "") for i in _kept(items)).lower()
 
 
+def _stem(word: str) -> str:
+    """Lowercase, minus a trailing "s" then a trailing "e": "creative" is found in "creativity"."""
+    return word.lower().removesuffix("s").removesuffix("e")
+
+
 def _words_hit(words: list[str], text: str) -> bool:
-    return sum(w.lower() in text for w in words) * 2 >= len(words)
+    return sum(_stem(w) in text for w in words) * 2 >= len(words)
 
 
 def _effect_hit(expected: list[str], fields: dict) -> bool:

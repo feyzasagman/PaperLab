@@ -191,3 +191,9 @@ def test_cli_no_default_model_exits_2(monkeypatch):
     monkeypatch.setattr(ev, "SessionLocal", FakeSession)
     monkeypatch.setattr(ev.llm_connections, "resolve", no_model)
     assert run_main(monkeypatch) == 2
+
+
+def test_key_words_match_by_a_tiny_stem():
+    assert ev._words_hit(["creative", "memory"], "creativity ratings")
+    assert not ev._words_hit(["creative", "memory"], "originality ratings")
+    assert ev._words_hit(["measures"], "we measure it")

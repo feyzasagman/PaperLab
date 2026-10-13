@@ -34,7 +34,7 @@ export function cellView(card: EvidenceCard, key: FieldKey): CellView {
   let leftOut = 0
   items.forEach((item, index) => {
     if (!item.quote) {
-      if (item.flags?.some((f) => f === 'unsupported' || f === 'number_not_in_source')) leftOut += 1
+      if (item.flags?.some((f) => f === 'unsupported' || f === 'number_not_in_source' || f === 'no_statistic')) leftOut += 1
       return
     }
     const text = itemText(key, item)

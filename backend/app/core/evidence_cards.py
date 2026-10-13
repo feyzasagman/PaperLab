@@ -20,7 +20,7 @@ from app.core import claims, llm_json, numbers, prompts, queue, quotes, retrieva
 from app.core.errors import Conflict, InvalidInput, NotFound
 from app.models import Chunk, EvidenceCard, LLMOutput, Paper, PaperStatus, Workspace, workspace_papers
 
-CARD_PROMPT_VERSION = 1
+CARD_PROMPT_VERSION = 2
 JOB_TIMEOUT = 20 * 60  # seconds; the job's registered timeout. A card `generating` longer than this is stale.
 OUTPUT_KIND = "evidence_card"
 PER_FIELD = 4
@@ -117,6 +117,8 @@ def _verified(item, passages: list[dict], texts: list[str]) -> dict | None:
     if found is None:
         return _blank(type(item), ["unsupported"])
     quote, index = found
+    if type(item) is _Effect and not numbers.tokens(str(item.value or "")):
+        return _blank(type(item), ["no_statistic"])
     if not all(numbers.all_in(str(data[k]), quote) for k in checked if data[k] is not None):
         return _blank(type(item), ["number_not_in_source"])
     chunk_id = passages[index]["chunk_id"]

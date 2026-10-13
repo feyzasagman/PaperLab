@@ -165,10 +165,10 @@ async def test_two_invalid_replies_fail_the_card_as_model_error(session, paper):
 async def test_a_generation_stores_the_card_and_its_provenance_row(session, paper):
     view, _ = await build(session, paper, card_reply(**FULL))
     card = await session.scalar(select(EvidenceCard).where(EvidenceCard.paper_id == paper.id))
-    assert (card.status, card.provenance, card.model, card.prompt_version) == ("ready", "llm", "fake:scripted", 1)
+    assert (card.status, card.provenance, card.model, card.prompt_version) == ("ready", "llm", "fake:scripted", 2)
     assert card.output_id == view.output_id and card.fields["sample"]["n"] == 120
     row = await session.get(LLMOutput, card.output_id)
-    assert (row.kind, row.paper_id, row.prompt_version) == ("evidence_card", paper.id, 1)
+    assert (row.kind, row.paper_id, row.prompt_version) == ("evidence_card", paper.id, 2)
     assert json.loads(row.content)["sample"]["n"] == 120 and row.source_chunks
 
 
@@ -192,3 +192,18 @@ async def test_an_invented_outcome_or_statistic_number_drops_the_effect_size(ses
         bad = {**FULL["effect_sizes"][0], key: text}
         view, _ = await build(session, paper, card_reply(**{**FULL, "effect_sizes": [bad]}))
         assert view.fields["effect_sizes"][0]["flags"] == ["number_not_in_source"], key
+
+
+async def test_an_effect_size_with_no_number_in_its_value_is_dropped_as_no_statistic(session, paper):
+    prose = {**FULL["effect_sizes"][0], "value": "Ratings were higher for humans"}
+    view, _ = await build(session, paper, card_reply(**{**FULL, "effect_sizes": [prose, FULL["effect_sizes"][0]]}))
+    assert [e["value"] for e in view.fields["effect_sizes"]] == [None, "d = 0.45"]
+    assert view.fields["effect_sizes"][0]["flags"] == ["no_statistic"]
+    assert view.fields["effect_sizes"][0]["quote"] is None
+
+
+def test_prompt_v2_asks_for_the_statistic_as_printed():
+    from app.core import prompts
+
+    text = prompts.load("evidence_card", 2)
+    assert "exactly as the paper prints it" in text and "participants" in text
