@@ -319,6 +319,8 @@ async def create_saved_search(
     year_from: int | None = None, year_to: int | None = None, timezone: str = "UTC",
 ) -> saved_searches.SavedSearchView:
     ws = await workspace_id(session, workspace)
+    if (cron is not None and schedule != "cron") or (weekday is not None and schedule != "weekly"):
+        raise InvalidInput("invalid_schedule", hint="cron needs schedule='cron'; weekday needs schedule='weekly'.")
     expression = schedules.to_cron(schedule, time=time, weekday=weekday, cron=cron)
     return await saved_searches.create(
         session, ws, query=query, schedule=expression, timezone=timezone, sources=sources or [],

@@ -4,7 +4,7 @@ Hits go through the normal search_batch dedup, so only new ones are stored."""
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete as delete_rows
 from sqlalchemy import select
@@ -177,6 +177,8 @@ async def list_for_workspace(session: AsyncSession, workspace_id: uuid.UUID) -> 
 logger = logging.getLogger(__name__)
 SKIPPED_BUSY = "skipped: the previous run is still going"
 NO_SOURCE = "no paper source is turned on"
+# A run still "running" after twice the job timeout lost its job (Redis recreated, hard kill, a Mac asleep mid-run).
+STALE_RUN_AFTER = timedelta(seconds=2 * workspace_search.SEARCH_RUN_JOB_TIMEOUT)
 
 
 async def _due(session: AsyncSession, now: datetime) -> list[SavedSearch]:
@@ -209,7 +211,7 @@ async def _sources_on(session: AsyncSession) -> list[str]:
 async def _start(session: AsyncSession, row: SavedSearch, now: datetime) -> uuid.UUID | None:
     """Starts and enqueues one run for this saved search, or records why not (last_error)."""
     last = await _last_run(session, row.id)
-    if last is not None and last.status == "running":
+    if last is not None and last.status == "running" and now - last.started_at < STALE_RUN_AFTER:
         row.last_error = SKIPPED_BUSY
         await session.commit()
         return None
@@ -224,8 +226,15 @@ async def _start(session: AsyncSession, row: SavedSearch, now: datetime) -> uuid
     )
     run.saved_search_id = row.id
     row.last_error = None
+    row.last_run_at = now
     await session.commit()
-    await queue.enqueue("run_workspace_search", str(run.id))
+    try:
+        await queue.enqueue("run_workspace_search", str(run.id))
+    except Exception:
+        run.status = "failed"
+        run.stopped_at = _now()
+        await session.commit()
+        raise
     return run.id
 
 
@@ -238,12 +247,15 @@ async def run_due(session: AsyncSession, now: datetime) -> list[uuid.UUID]:
     for row_id, seen in [(row.id, row.next_run_at) for row in await _due(session, now)]:
         try:
             row = await session.get(SavedSearch, row_id)
+            if row is None:  # deleted between due and claim
+                continue
             if await _claim(session, row, seen, now) and (run_id := await _start(session, row, now)):
                 started.append(run_id)
         except Exception as exc:  # one broken saved search never stops the others
             logger.exception("saved search %s failed to start", row_id)
             await session.rollback()
-            await session.execute(update_rows(SavedSearch).where(SavedSearch.id == row_id).values(last_error=str(exc)))
+            message = str(exc) or type(exc).__name__
+            await session.execute(update_rows(SavedSearch).where(SavedSearch.id == row_id).values(last_error=message))
             await session.commit()
     return started
 

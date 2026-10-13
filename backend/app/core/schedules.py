@@ -24,6 +24,8 @@ def _zone(name: str) -> ZoneInfo:
 
 def _check(cron: str) -> str:
     try:
+        if len(cron.split()) != 5:
+            raise CronSimError("not 5 fields")
         CronSim(cron, datetime.now(timezone.utc))
     except CronSimError:
         raise InvalidInput("invalid_schedule", hint=_HINT) from None

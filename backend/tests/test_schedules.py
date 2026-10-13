@@ -20,7 +20,8 @@ def test_daily_and_weekly_become_cron_and_read_back():
 
 @pytest.mark.parametrize("args", [
     {"kind": "daily", "time": "24:00"}, {"kind": "daily", "time": "2:00"}, {"kind": "weekly", "time": "02:00"},
-    {"kind": "weekly", "time": "02:00", "weekday": 7}, {"kind": "cron", "cron": "not cron"}, {"kind": "hourly"},
+    {"kind": "weekly", "time": "02:00", "weekday": 7}, {"kind": "cron", "cron": "not cron"},
+    {"kind": "cron", "cron": "0 2 * * * *"}, {"kind": "hourly"},
 ])
 def test_bad_schedules_are_invalid_schedule(args):
     with pytest.raises(InvalidInput) as raised:

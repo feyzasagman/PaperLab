@@ -334,6 +334,8 @@ async def test_a_weekly_saved_search_is_created_listed_and_paused(session):
     ("args", "code"),
     [
         ({"schedule": "hourly"}, "invalid_schedule"),
+        ({"cron": "0 3 * * *"}, "invalid_schedule"),  # cron given but schedule stays daily
+        ({"weekday": 2}, "invalid_schedule"),  # weekday given but schedule stays daily
         ({"timezone": "Nowhere/X"}, "invalid_timezone"),
         ({"workspace": "No such workspace"}, "unknown_workspace"),
     ],

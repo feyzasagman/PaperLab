@@ -8,7 +8,7 @@ from sqlalchemy import select, text, update
 
 from app.config import settings
 from app.core import discovery, paper_sources
-from app.core.workspace_search import get_run, search_batch
+from app.core.workspace_search import SEARCH_RUN_JOB_TIMEOUT, get_run, search_batch
 from app.db import SessionLocal
 from app.models.workspace_search import WorkspaceSearchCursor, WorkspaceSearchRun
 from app.providers import discovery_fake
@@ -28,7 +28,6 @@ MAX_BATCH_ITERATIONS = 200
 # calls that can each take several seconds) can land in the same ballpark as this timeout on a broad query, so
 # the loop also checks a wall-clock deadline below (SEARCH_RUN_SAFETY_MARGIN) to make sure it always finishes
 # well inside this window, turning this into a true backstop instead of a race the loop might lose.
-SEARCH_RUN_JOB_TIMEOUT = 1800
 # ponytail: a hard kill mid-commit (e.g. a true ARQ-level cancellation past even this longer timeout) could still
 # rarely leave a run stuck at "running" — full cancellation-safe cleanup (asyncio.shield around the final status
 # write) is a known ceiling, not solved here, since the deadline check below makes it very unlikely in practice.
