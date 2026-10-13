@@ -1,0 +1,5 @@
+# Gate for AI pre-screening: the owner's own stage-1 decisions in this workspace are the labels.
+workspace: PaperLab
+min_decided: 30
+missed_relevant_rate_max: 0.05
+quote_drop_rate_max: 0.2
