@@ -289,22 +289,34 @@ async def unqueue(session: AsyncSession, ref_id: uuid.UUID) -> None:
 # --- embeddings --------------------------------------------------------------------------------------------------
 
 
+EMBED_BATCH = 64  # titles embedded, and committed, per lock hold
+
+
 async def embed_new(session: AsyncSession, embedder) -> None:
     """Vectors for reference titles and notes that have none, or were made by another source or before an edit, under
     the embedder's name. With no search model (embedder None) there are none to make: the listing ranks by its other
     signals (D136). Every source embeds them, cloud or not (P3 = A, D161): no source-specific branch."""
     if embedder is None:
         return
-    await session.execute(_TAKE_LOCK, {"key": REFERENCES_LOCK})
     model_name = embedder.name
-    refs = (
-        await session.execute(
-            select(ExternalRef.id, ExternalRef.title).where(
-                or_(ExternalRef.title_embedding.is_(None), ExternalRef.title_embed_model != model_name)
+    # Only references a listing can rank need a vector: cited by or citing a library paper, or on To read. Bulk
+    # harvests store 100k+ others; embedding them under the lock stalled every fetch. Batches commit, so the lock
+    # is held for one batch at a time.
+    needed = or_(
+        ExternalRef.queued_at.is_not(None),
+        select(paper_references.c.ref_id).where(paper_references.c.ref_id == ExternalRef.id).exists(),
+    )
+    while True:
+        await session.execute(_TAKE_LOCK, {"key": REFERENCES_LOCK})
+        refs = (
+            await session.execute(
+                select(ExternalRef.id, ExternalRef.title)
+                .where(or_(ExternalRef.title_embedding.is_(None), ExternalRef.title_embed_model != model_name), needed)
+                .limit(EMBED_BATCH)
             )
-        )
-    ).all()
-    if refs:
+        ).all()
+        if not refs:
+            break
         vectors = await embedding.embed_documents(embedder, [title for _, title in refs])
         for (ref_id, _), vector in zip(refs, vectors):
             await session.execute(
@@ -312,6 +324,8 @@ async def embed_new(session: AsyncSession, embedder) -> None:
                 .where(ExternalRef.id == ref_id)
                 .values(title_embedding=vector, title_embed_model=model_name)
             )
+        await session.commit()
+    await session.execute(_TAKE_LOCK, {"key": REFERENCES_LOCK})
     # ponytail: every fetch re-checks every note; with thousands of notes, embed on note save instead.
     notes = (
         await session.execute(
