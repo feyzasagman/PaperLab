@@ -398,7 +398,8 @@ async def get_evidence_card(paper_id: uuid.UUID) -> pipeline.evidence_cards.Card
     """Use to read a paper's evidence card, or to poll one that is generating (status generating, ready or failed).
     Every value is backed by a quote from the paper with its page, and items the paper's text could not back are left
     out: left_out counts them per field, so never fill them in. provenance llm_edited means the owner changed some
-    values. Answers card_not_found when no card was started."""
+    values:
+    items flagged edited hold the owner's values, not the model's. Answers card_not_found when no card was started."""
     async with sessions() as session:
         return await pipeline.get_evidence_card(session, paper_id)
 
@@ -408,6 +409,6 @@ async def get_evidence_card(paper_id: uuid.UUID) -> pipeline.evidence_cards.Card
 async def list_evidence_cards(workspace: str) -> list[pipeline.EvidenceRow]:
     """Use to compare a workspace's papers: one row per paper (title, year, first author) with its evidence card, or
     no card yet. Every value is backed by a quote with its page, and unsupported items are left out (counted in
-    left_out)."""
+    left_out). Values flagged edited are the owner's, not the model's."""
     async with sessions() as session:
         return await pipeline.list_evidence_cards(session, workspace)

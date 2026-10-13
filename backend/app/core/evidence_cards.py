@@ -84,7 +84,7 @@ class _CardReply(BaseModel):
 _SHAPES = {
     _Item: (("value",), ("value",)),
     _Sample: (("n", "population"), ("n", "population")),
-    _Effect: (("value", "statistic", "ci", "p", "outcome"), ("value", "ci", "p")),
+    _Effect: (("value", "statistic", "ci", "p", "outcome"), ("value", "statistic", "ci", "p", "outcome")),
 }
 
 
@@ -238,6 +238,7 @@ async def request_cards(
     `card_edited_needs_confirm`, checked for every paper before anything changes). A card already `generating` is
     returned as is and not queued again, so two requests make one job. Returns one view per paper, in order.
     """
+    paper_ids = list(dict.fromkeys(paper_ids))
     if not paper_ids:
         return []
     known = await session.scalar(select(func.count()).select_from(Paper).where(Paper.id.in_(set(paper_ids))))
@@ -273,8 +274,14 @@ async def request_cards(
         queued.append(paper_id)
     await session.commit()
     if queued:
-        await queue.enqueue("generate_evidence_cards", None if workspace_id is None else str(workspace_id),
-                            [str(i) for i in queued])
+        try:
+            await queue.enqueue("generate_evidence_cards", None if workspace_id is None else str(workspace_id),
+                                [str(i) for i in queued])
+        except Exception:
+            for paper_id in queued:  # no job will run: don't leave the cards `generating` until they go stale
+                cards[paper_id].status, cards[paper_id].error = "failed", "queue_error"
+            await session.commit()
+            raise
     return [_view(cards[i]) for i in paper_ids]
 
 
@@ -300,15 +307,17 @@ def _edited(fields: dict, change: dict) -> dict:
     out = copy.deepcopy(fields)
     if name in CAPS:
         index = change.get("index", 0)
-        if not isinstance(index, int) or not 0 <= index < len(out[name]):
+        if type(index) is not int or not 0 <= index < len(out[name]):
             raise InvalidInput("unknown_item", field=name, index=index)
         item = out[name][index]
     else:
         item = out[name]
     if not item.get("quote"):
         raise InvalidInput("item_has_no_evidence", field=name)  # a dropped item has nothing to back an edit
+    if "n" in values and values["n"] is not None and type(values["n"]) is not int:
+        raise InvalidInput("not_editable", editable=list(keys), detail="n must be a whole number")
     for key, value in values.items():
-        item[key] = value if value is None else (value if key == "n" and isinstance(value, int) else str(value))
+        item[key] = value if value is None else (value if key == "n" else str(value))
     item["flags"] = sorted({*item["flags"], "edited"})
     return out
 
@@ -393,6 +402,12 @@ def summarize(view: CardView) -> CardSummary:
     )
 
 
+def _cell(text) -> str:
+    """Text for a CSV cell that a spreadsheet will not run as a formula."""
+    text = str(text)
+    return "'" + text if text[:1] in tuple("=+-@\t\r") else text
+
+
 CSV_HEADER = ["paper", "year", "field", "value", "quote", "page", "author", "edited"]
 
 
@@ -411,7 +426,8 @@ async def workspace_csv(session: AsyncSession, workspace_id: uuid.UUID) -> str:
                 if not item or not item.get("quote") or not (shown := _shown(name, item)):
                     continue
                 writer.writerow([
-                    row.title, row.year or "", name, shown, item["quote"], item["page"] or "", row.first_author or "",
+                    _cell(row.title), row.year or "", name, _cell(shown), _cell(item["quote"]), item["page"] or "",
+                    _cell(row.first_author or ""),
                     "yes" if "edited" in item["flags"] else "no",
                 ])
     return "\ufeff" + out.getvalue()

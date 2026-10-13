@@ -199,3 +199,24 @@ async def test_the_requeue_refreshes_the_waiting_cards(session, tmp_path, monkey
     await worker.generate_evidence_cards({"llm": Scripted()}, None, [str(papers[0].id)])
     card = await card_of(session, papers[0])
     assert card.updated_at > old + timedelta(seconds=evidence_cards.JOB_TIMEOUT)
+
+
+async def test_duplicate_paper_ids_make_one_entry_each(session, tmp_path, arq):
+    (paper,) = await make_papers(session, tmp_path, 1)
+    views = await evidence_cards.request_cards(session, paper_ids=[paper.id, paper.id])
+    assert len(views) == 1
+    assert arq.jobs == [("generate_evidence_cards", None, [str(paper.id)])]
+
+
+async def test_a_failed_enqueue_puts_the_cards_back_to_failed(session, tmp_path, monkeypatch):
+    (paper,) = await make_papers(session, tmp_path, 1)
+
+    async def boom(*a, **k):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(queue, "enqueue", boom)
+    with pytest.raises(RuntimeError):
+        await evidence_cards.request_cards(session, paper_ids=[paper.id])
+    card = await card_of(session, paper)
+    await session.refresh(card)
+    assert (card.status, card.error) == ("failed", "queue_error")

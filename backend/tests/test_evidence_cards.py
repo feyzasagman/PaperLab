@@ -185,3 +185,10 @@ async def test_record_false_writes_nothing(session, paper):
     assert view.status == "ready" and view.output_id is None and view.fields["sample"]["n"] == 120
     assert await session.scalar(select(EvidenceCard).where(EvidenceCard.paper_id == paper.id)) is None
     assert await session.scalar(select(LLMOutput).where(LLMOutput.paper_id == paper.id)) is None
+
+
+async def test_an_invented_outcome_or_statistic_number_drops_the_effect_size(session, paper):
+    for key, text in (("outcome", "reduced by 40%"), ("statistic", "odds ratio 7.5")):
+        bad = {**FULL["effect_sizes"][0], key: text}
+        view, _ = await build(session, paper, card_reply(**{**FULL, "effect_sizes": [bad]}))
+        assert view.fields["effect_sizes"][0]["flags"] == ["number_not_in_source"], key

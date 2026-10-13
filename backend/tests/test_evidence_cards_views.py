@@ -4,12 +4,12 @@ import uuid
 
 import pytest
 from pdf_papers import chunked_paper
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 from test_evidence_cards import FULL, INTRO, Scripted, card_reply
 
 from app.core import evidence_cards, retrieval
-from app.core.errors import InvalidInput, NotFound
-from app.models import Workspace, workspace_papers
+from app.core.errors import Conflict, InvalidInput, NotFound
+from app.models import EvidenceCard, Workspace, workspace_papers
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 
@@ -103,3 +103,39 @@ async def test_csv_has_bom_header_one_row_per_kept_item_and_skips_dropped_ones(s
     assert finding[6] == "Ada Lovelace" and finding[7] == "yes"
     assert next(r for r in rows if r[2] == "design")[7] == "no"
     assert all(r[3] for r in rows[1:])  # never a row without a value
+
+
+async def test_csv_neutralises_formula_cells(session, tmp_path):
+    reply = {**FULL, "findings": [{"value": "x", "quote": "measured recall after one week"}]}
+    paper, ws = await card_in_workspace(session, tmp_path, reply)
+    paper.title = "=HYPERLINK(1)"
+    await evidence_cards.edit_card(session, paper.id, [{"field": "findings", "index": 0, "values": {"value": "-5"}}])
+    rows = list(csv.reader(io.StringIO((await evidence_cards.workspace_csv(session, ws.id)).lstrip("\ufeff"))))
+    assert next(r for r in rows if r[2] == "findings")[3] == "'-5"
+    assert all(c[:1] not in "=+-@\t\r" for r in rows[1:] for c in (r[0], r[3], r[4], r[6]) if c)
+    assert rows[1][0] == "'=HYPERLINK(1)"
+    assert evidence_cards._cell("=1+1") == "'=1+1" and evidence_cards._cell("") == ""
+
+
+async def test_edit_rejects_bool_and_non_int_index_and_n(session, tmp_path):
+    paper, _ = await card_in_workspace(session, tmp_path)
+    for bad in (
+        {"field": "findings", "index": True, "values": {"value": "z"}},
+        {"field": "sample", "values": {"n": True}},
+        {"field": "sample", "values": {"n": 12.5}},
+        {"field": "sample", "values": {"n": "120"}},
+    ):
+        with pytest.raises(InvalidInput):
+            await evidence_cards.edit_card(session, paper.id, [bad])
+
+
+async def test_edit_of_a_card_that_is_not_ready_is_refused(session, tmp_path):
+    paper, _ = await card_in_workspace(session, tmp_path)
+    for status in ("generating", "failed"):
+        card = await evidence_cards.get_card(session, paper.id)
+        assert card
+        row = await session.scalar(select(EvidenceCard).where(EvidenceCard.paper_id == paper.id))
+        row.status = status
+        await session.flush()
+        with pytest.raises(Conflict, match="card_not_ready"):
+            await evidence_cards.edit_card(session, paper.id, [{"field": "design", "values": {"value": "z"}}])
