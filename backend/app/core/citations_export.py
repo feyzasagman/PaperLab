@@ -3,6 +3,7 @@
 import json
 import re
 import unicodedata
+import uuid
 import warnings
 from pathlib import Path
 
@@ -10,6 +11,12 @@ import bibtexparser
 import rispy
 from citeproc import Citation, CitationItem, CitationStylesBibliography, CitationStylesStyle, formatter
 from citeproc.source.json import CiteProcJSON
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core import workspaces
+from app.core.errors import InvalidInput, NotFound
+from app.models import Paper
 
 CSL_TYPES = {
     "journal_article": "article-journal",
@@ -262,3 +269,34 @@ def _apa(items: list[dict], *, html: bool) -> str:
         for item in sorted(items, key=_apa_order):
             bibliography.register(Citation([CitationItem(item["id"])]))
         return "\n".join(str(entry) for entry in bibliography.bibliography()) + "\n"
+
+
+MAX_SELECTION = 1000
+
+
+async def export_papers(
+    session: AsyncSession, *, workspace_id: uuid.UUID | None = None, paper_ids: list[uuid.UUID] | None = None, fmt: str
+) -> tuple[str, int]:
+    """The workspace's papers (its own order) or the selected ones (the order given, repeats dropped) rendered as `fmt`.
+    Raises InvalidInput unknown_format / no_papers / too_many_papers, NotFound for an unknown workspace or paper."""
+    if fmt not in FORMATS:
+        raise InvalidInput("unknown_format")
+    if workspace_id is not None:
+        papers = await workspaces.papers(session, workspace_id)
+    else:
+        if len(paper_ids or []) > MAX_SELECTION:
+            raise InvalidInput("too_many_papers")
+        ids = list(dict.fromkeys(paper_ids or []))
+        found = {p.id: p for p in await session.scalars(select(Paper).where(Paper.id.in_(ids)))}
+        if missing := [i for i in ids if i not in found]:
+            raise NotFound(f"paper {missing[0]} not found")
+        papers = [found[i] for i in ids]
+    if not papers:
+        raise InvalidInput("no_papers")
+    return render([csl_item(p) for p in papers], fmt), len(papers)
+
+
+def filename_slug(name: str) -> str:
+    """A download-safe name: lowercase ASCII words joined by hyphens."""
+    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", folded).strip("-") or "citations"

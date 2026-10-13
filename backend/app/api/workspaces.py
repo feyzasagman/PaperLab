@@ -2,8 +2,9 @@ import uuid
 
 from fastapi import APIRouter, Response
 
+from app.api.citations import download
 from app.api.deps import SessionDep
-from app.core import workspace_search, workspaces
+from app.core import pipeline, workspace_search, workspaces
 from app.schemas.notes import NoteOut
 from app.schemas.papers import PaperOut
 from app.schemas.workspace_search import EligibilityOut, EligibilityUpdate
@@ -62,3 +63,11 @@ async def set_eligibility(
     return await workspace_search.set_eligibility(
         session, workspace_id, paper_id, run, payload.status, payload.exclude_reason
     )
+
+
+@router.get("/{workspace_id}/citations")
+async def export_citations(workspace_id: uuid.UUID, format: str, session: SessionDep) -> Response:
+    """The workspace's papers as a download: bibtex, ris, csljson, apa or apa-html. 404 unknown workspace, 422 for an
+    unknown format or no papers."""
+    text, _ = await pipeline.export_citations(session, workspace_id=workspace_id, fmt=format)
+    return download(text, format, (await workspaces.get(session, workspace_id)).name)

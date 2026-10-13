@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core import (
+    citations_export,
     claims,
     discovery,
     evidence_cards,
@@ -436,3 +437,10 @@ async def list_evidence_cards(session: AsyncSession, workspace: str) -> list[Evi
         EvidenceRow(r.paper_id, r.title, r.year, r.first_author, r.card and evidence_cards.summarize(r.card))
         for r in rows
     ]
+
+
+async def export_citations(
+    session: AsyncSession, *, workspace_id: uuid.UUID | None = None, paper_ids: list[uuid.UUID] | None = None, fmt: str
+) -> tuple[str, int]:
+    """(text, paper count) for a workspace or a selection of papers; shared by the API and the MCP tool."""
+    return await citations_export.export_papers(session, workspace_id=workspace_id, paper_ids=paper_ids, fmt=fmt)
