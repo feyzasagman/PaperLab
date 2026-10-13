@@ -11,7 +11,7 @@ from app.core.errors import Conflict
 from app.models import Chunk, Note, Paper
 from app.providers import embedding
 from app.workers import ingest
-from app.workers.settings import WorkerSettings
+from app.workers.settings import IngestWorkerSettings
 
 pytestmark = pytest.mark.anyio
 
@@ -177,7 +177,7 @@ async def test_reembed_paper_embeds_every_chunk_again_with_the_configured_model_
     assert embedder.calls[0][0] == [f"search_document: {paper.title} passage {i}" for i in range(3)]
     assert all(list(c.embedding) != list(before[c.id]) for c in after)
     await embedding_index.check_model(session, "test", [paper.id])
-    assert ingest.reembed_paper in WorkerSettings.functions
+    assert ingest.reembed_paper in IngestWorkerSettings.functions  # one paper at a time (2026-10-13)
 
 
 async def test_papers_to_embed_are_those_with_a_chunk_not_on_that_source(session):
