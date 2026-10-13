@@ -10,6 +10,7 @@ import { PrismaTab } from '@/features/workspace-search/PrismaTab'
 import { ReadingQueueTab } from '@/features/workspace-search/ReadingQueueTab'
 import { ScreeningTab } from '@/features/workspace-search/ScreeningTab'
 import { SearchTab } from '@/features/workspace-search/SearchTab'
+import { EvidenceTab } from '../evidence/EvidenceTab'
 import { workspaceHref, type WorkspaceTab } from '@/lib/route'
 import { cn } from '@/lib/utils'
 import { WorkspaceChat } from './WorkspaceChat'
@@ -83,6 +84,7 @@ export function WorkspacePage({ workspaceId, tab, runId }: { workspaceId: string
             <TabsTrigger value="screening">Screening</TabsTrigger>
             <TabsTrigger value="prisma">PRISMA</TabsTrigger>
             <TabsTrigger value="reading">Reading</TabsTrigger>
+            <TabsTrigger value="evidence">Evidence</TabsTrigger>
           </TabsList>
           <TabsContent value="papers" forceMount className={panel}>
             <WorkspacePapers workspaceId={workspaceId} />
@@ -117,6 +119,9 @@ export function WorkspacePage({ workspaceId, tab, runId }: { workspaceId: string
           </TabsContent>
           <TabsContent value="reading" forceMount className={panel}>
             <ReadingQueueTab workspaceId={workspaceId} runId={runId} />
+          </TabsContent>
+          <TabsContent value="evidence" forceMount className={panel}>
+            <EvidenceTab workspaceId={workspaceId} />
           </TabsContent>
         </Tabs>
       )}

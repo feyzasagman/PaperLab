@@ -794,6 +794,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/papers/{paper_id}/evidence-card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Card */
+        get: operations["get_card_api_papers__paper_id__evidence_card_get"];
+        put?: never;
+        /** Generate Card */
+        post: operations["generate_card_api_papers__paper_id__evidence_card_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit Card */
+        patch: operations["edit_card_api_papers__paper_id__evidence_card_patch"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/evidence-cards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Cards */
+        get: operations["list_cards_api_workspaces__workspace_id__evidence_cards_get"];
+        put?: never;
+        /** Generate Cards */
+        post: operations["generate_cards_api_workspaces__workspace_id__evidence_cards_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/evidence-cards.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cards Csv */
+        get: operations["cards_csv_api_workspaces__workspace_id__evidence_cards_csv_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/papers/{paper_id}/tables/preview": {
         parameters: {
             query?: never;
@@ -1764,6 +1818,45 @@ export interface components {
             /** Paper Id */
             paper_id: string | null;
         };
+        /** CardOut */
+        CardOut: {
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /** Status */
+            status: string;
+            /** Error */
+            error: string | null;
+            /** Fields */
+            fields: {
+                [key: string]: unknown;
+            };
+            /** Provenance */
+            provenance: string;
+            /** Model */
+            model: string | null;
+            /** Prompt Version */
+            prompt_version: number | null;
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /** CardRowOut */
+        CardRowOut: {
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /** Title */
+            title: string;
+            /** Year */
+            year: number | null;
+            /** First Author */
+            first_author: string | null;
+            card: components["schemas"]["CardOut"] | null;
+        };
         /** CellIn */
         CellIn: {
             /**
@@ -2275,6 +2368,13 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** EditIn */
+        EditIn: {
+            /** Changes */
+            changes: {
+                [key: string]: unknown;
+            }[];
+        };
         /** EligibilityOut */
         EligibilityOut: {
             /**
@@ -2337,6 +2437,19 @@ export interface components {
             message: string;
             /** Retryable */
             retryable: boolean;
+        };
+        /** GenerateIn */
+        GenerateIn: {
+            /**
+             * Regenerate
+             * @default false
+             */
+            regenerate: boolean;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
         };
         /**
          * GraphLink
@@ -5796,6 +5909,204 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchRunOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_card_api_papers__paper_id__evidence_card_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_card_api_papers__paper_id__evidence_card_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GenerateIn"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_card_api_papers__paper_id__evidence_card_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_cards_api_workspaces__workspace_id__evidence_cards_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardRowOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_cards_api_workspaces__workspace_id__evidence_cards_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GenerateIn"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cards_csv_api_workspaces__workspace_id__evidence_cards_csv_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
