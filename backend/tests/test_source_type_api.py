@@ -68,3 +68,14 @@ async def test_patch_sets_source_type_and_peer_reviewed_and_locks_them(client, s
 async def test_patch_rejects_bad_values(client, session, body):
     paper = await make(session)
     assert (await client.patch(f"/api/papers/{paper.id}", json=body)).status_code == 422
+
+
+async def test_patch_null_source_type_clears_and_locks_it(client, session):
+    paper = await make(session)
+    await client.patch(f"/api/papers/{paper.id}", json={"source_type": "book"})
+
+    response = await client.patch(f"/api/papers/{paper.id}", json={"source_type": None})
+
+    assert response.status_code == 200 and response.json()["source_type"] is None
+    await session.refresh(paper)
+    assert paper.source_type is None and "source_type" in paper.manual_fields

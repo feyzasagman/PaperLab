@@ -296,13 +296,13 @@ async def fill_source_type(
         asked = True
         try:
             work = await crossref.get_work(crossref_http, doi)
-        except httpx.HTTPError as exc:
+            if work:
+                source_type = source_type_of(work.get("type"), doi, crossref=True)
+                preprint_of = ((work.get("relation") or {}).get("is-preprint-of") or [{}])[0].get("id")
+                fields["published_doi"] = normalize_doi(preprint_of or "")
+        except (httpx.HTTPError, KeyError, TypeError, AttributeError) as exc:  # a reply without "message", odd shapes
             logger.warning("Crossref lookup failed for paper %s, source type left as is: %r", paper_id, exc)
-            work = None
-        if work:
-            source_type = source_type_of(work.get("type"), doi, crossref=True)
-            preprint_of = ((work.get("relation") or {}).get("is-preprint-of") or [{}])[0].get("id")
-            fields["published_doi"] = normalize_doi(preprint_of or "")
+            source_type, fields = None, {}
     if source_type:
         fields |= {"source_type": source_type, "peer_reviewed": peer_reviewed_of(source_type)}
     if fields:

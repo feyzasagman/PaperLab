@@ -109,3 +109,23 @@ async def test_backfill_maps_from_type_or_crossref_skips_manual_and_is_idempoten
     assert [p.source_type for p in (by_type, by_crossref, locked)] == ["proceedings", "chapter", "magazine"]
     assert first["updated"] == 2 and second["updated"] == 0
     assert len(seen) == 1  # only by_crossref ever asked, and the second run found it done
+
+
+def raw_crossref(body):
+    return crossref.new_client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body)))
+
+
+@pytest.mark.parametrize(
+    "body", [{}, {"status": "ok"}, {"message": {"type": "posted-content", "relation": ["x"]}}, {"message": []}]
+)
+async def test_an_odd_crossref_reply_leaves_fields_and_does_not_raise(session, body):
+    paper = await add_paper(session, doi=DOI)
+    await enrich(session, paper, raw_crossref(body))
+    assert (paper.source_type, paper.published_doi) == (None, None)
+
+
+async def test_published_doi_is_recorded_even_when_the_source_type_is_locked(session):
+    paper = await add_paper(session, doi=DOI, source_type=None, manual_fields=["source_type"])
+    client, _ = fake_crossref({"type": "posted-content", "relation": {"is-preprint-of": [{"id": "10.1234/pub"}]}})
+    await enrich(session, paper, client)
+    assert (paper.source_type, paper.published_doi) == (None, "10.1234/pub")

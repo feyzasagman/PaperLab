@@ -2,6 +2,7 @@
 
 Run once in the api container: `python -m app.scripts.backfill_source_types [--all]`. Paced (Crossref's polite pool
 allows about 3 requests a second), idempotent, and never touches a source type the owner set by hand.
+`--all` re-derives from the stored OpenAlex type only and never re-asks Crossref for papers that already have a type.
 """
 
 import argparse

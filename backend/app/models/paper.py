@@ -4,7 +4,7 @@ from enum import StrEnum
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, SmallInteger, Text, func, select, text
+from sqlalchemy import DateTime, ForeignKey, SmallInteger, Text, exists, func, select, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, aggregate_order_by
 from sqlalchemy.orm import Mapped, column_property, mapped_column
 
@@ -100,5 +100,5 @@ class Chunk(Base):
 
 # True when the paper has chunks; loaded with every paper so evidence_access needs no query.
 Paper.has_chunks = column_property(
-    select(func.count(Chunk.id) > 0).where(Chunk.paper_id == Paper.id).correlate_except(Chunk).scalar_subquery()
+    exists().where(Chunk.paper_id == Paper.id).correlate_except(Chunk)
 )
