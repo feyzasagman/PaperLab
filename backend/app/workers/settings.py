@@ -5,8 +5,9 @@ from arq.connections import RedisSettings
 from arq.cron import cron
 
 from app.config import settings
+from app.core.evidence_cards import JOB_TIMEOUT as EVIDENCE_CARDS_JOB_TIMEOUT
 from app.core.queue import INGEST_QUEUE
-from app.workers.evidence_cards import JOB_TIMEOUT as EVIDENCE_CARDS_JOB_TIMEOUT
+from app.workers.evidence_cards import MAX_TRIES as EVIDENCE_CARDS_MAX_TRIES
 from app.workers.evidence_cards import generate_evidence_cards
 from app.workers.harvest import (
     BIORXIV_HARVEST_JOB_TIMEOUT,
@@ -49,7 +50,7 @@ class WorkerSettings:
         fetch_references,
         func(run_workspace_search, timeout=SEARCH_RUN_JOB_TIMEOUT),
         func(suggest_screening, timeout=SUGGEST_JOB_TIMEOUT),
-        func(generate_evidence_cards, timeout=EVIDENCE_CARDS_JOB_TIMEOUT),
+        func(generate_evidence_cards, timeout=EVIDENCE_CARDS_JOB_TIMEOUT, max_tries=EVIDENCE_CARDS_MAX_TRIES),
     ]
     cron_jobs = [
         cron(

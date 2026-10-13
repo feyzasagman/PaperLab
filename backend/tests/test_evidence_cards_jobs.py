@@ -122,7 +122,7 @@ async def test_a_held_lock_makes_the_job_back_off(session, tmp_path):
     workspace = await workspace_with(session, papers)
     await evidence_cards.request_cards(session, paper_ids=[papers[0].id], workspace_id=workspace.id)
     engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
-    key = worker._lock_key(workspace.id)
+    key = worker._lock_key(workspace.id, [])
     async with engine.connect() as holder:
         assert await holder.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": key})
         try:
@@ -137,7 +137,7 @@ async def test_a_held_lock_makes_the_job_back_off(session, tmp_path):
 async def test_a_job_start_fails_old_generating_cards_it_will_not_process(session, tmp_path):
     papers = await make_papers(session, tmp_path, 3)
     workspace = await workspace_with(session, papers)
-    old = datetime.now(UTC) - timedelta(seconds=worker.JOB_TIMEOUT + 60)
+    old = datetime.now(UTC) - timedelta(seconds=evidence_cards.JOB_TIMEOUT + 60)
     for p in papers[:2]:
         await evidence_cards.request_cards(session, paper_ids=[p.id])
     await session.execute(update(EvidenceCard).where(EvidenceCard.paper_id == papers[0].id).values(updated_at=old))
@@ -156,6 +156,46 @@ async def test_a_job_near_its_deadline_requeues_the_rest(session, tmp_path, arq,
     ids = [str(p.id) for p in papers]
     await evidence_cards.request_cards(session, paper_ids=[p.id for p in papers])
     arq.jobs.clear()
-    monkeypatch.setattr(worker, "SAFETY_MARGIN", worker.JOB_TIMEOUT + 1)  # the deadline has already passed
+    monkeypatch.setattr(worker, "SAFETY_MARGIN", evidence_cards.JOB_TIMEOUT + 1)  # the deadline has already passed
     await worker.generate_evidence_cards({"llm": Scripted()}, None, ids)
     assert arq.jobs == [("generate_evidence_cards", None, ids)]
+
+
+async def test_the_last_try_marks_the_cards_busy_instead_of_retrying(session, tmp_path):
+    (paper,) = await make_papers(session, tmp_path, 1)
+    await evidence_cards.request_cards(session, paper_ids=[paper.id])
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    key = worker._lock_key(None, [paper.id])
+    async with engine.connect() as holder:
+        assert await holder.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": key})
+        try:
+            await worker.generate_evidence_cards(
+                {"llm": Scripted(), "job_try": worker.MAX_TRIES}, None, [str(paper.id)]
+            )
+        finally:
+            await holder.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
+    await engine.dispose()
+    card = await card_of(session, paper)
+    assert (card.status, card.error) == ("failed", "busy")
+
+
+async def test_a_stale_generating_card_is_queued_again(session, tmp_path, arq):
+    (paper,) = await make_papers(session, tmp_path, 1)
+    await evidence_cards.request_cards(session, paper_ids=[paper.id])
+    await evidence_cards.request_cards(session, paper_ids=[paper.id])
+    assert len(arq.jobs) == 1  # fresh: not queued again
+    old = datetime.now(UTC) - timedelta(seconds=evidence_cards.JOB_TIMEOUT + 60)
+    await session.execute(update(EvidenceCard).where(EvidenceCard.paper_id == paper.id).values(updated_at=old))
+    await evidence_cards.request_cards(session, paper_ids=[paper.id])
+    assert len(arq.jobs) == 2
+
+
+async def test_the_requeue_refreshes_the_waiting_cards(session, tmp_path, monkeypatch):
+    papers = await make_papers(session, tmp_path, 1)
+    await evidence_cards.request_cards(session, paper_ids=[papers[0].id])
+    old = datetime.now(UTC) - timedelta(seconds=evidence_cards.JOB_TIMEOUT + 60)
+    await session.execute(update(EvidenceCard).where(EvidenceCard.paper_id == papers[0].id).values(updated_at=old))
+    monkeypatch.setattr(worker, "SAFETY_MARGIN", evidence_cards.JOB_TIMEOUT + 1)
+    await worker.generate_evidence_cards({"llm": Scripted()}, None, [str(papers[0].id)])
+    card = await card_of(session, papers[0])
+    assert card.updated_at > old + timedelta(seconds=evidence_cards.JOB_TIMEOUT)

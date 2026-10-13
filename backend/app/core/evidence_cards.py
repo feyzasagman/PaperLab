@@ -5,11 +5,12 @@ must appear in that quote (core/numbers). An item that fails either check is nev
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import claims, llm_json, numbers, prompts, queue, quotes, retrieval
@@ -17,6 +18,7 @@ from app.core.errors import Conflict, NotFound
 from app.models import Chunk, EvidenceCard, LLMOutput, Paper, PaperStatus
 
 CARD_PROMPT_VERSION = 1
+JOB_TIMEOUT = 20 * 60  # seconds; the job's registered timeout. A card `generating` longer than this is stale.
 OUTPUT_KIND = "evidence_card"
 PER_FIELD = 4
 MAX_PASSAGES = 16
@@ -233,22 +235,32 @@ async def request_cards(
     `card_edited_needs_confirm`, checked for every paper before anything changes). A card already `generating` is
     returned as is and not queued again, so two requests make one job. Returns one view per paper, in order.
     """
-    cards = {
-        c.paper_id: c
-        for c in await session.scalars(select(EvidenceCard).where(EvidenceCard.paper_id.in_(paper_ids)))
-    }
-    if regenerate and not confirm and any(
-        c.status == "ready" and c.provenance == "llm_edited" for c in cards.values()
+    if regenerate and not confirm and await session.scalar(
+        select(func.count()).select_from(EvidenceCard).where(
+            EvidenceCard.paper_id.in_(paper_ids), EvidenceCard.status == "ready",
+            EvidenceCard.provenance == "llm_edited",
+        )
     ):
         raise Conflict("card_edited_needs_confirm")
+    # Insert missing rows first (ON CONFLICT: a concurrent request may have just made one), then read them all.
+    await session.execute(
+        pg_insert(EvidenceCard).values([{"paper_id": i, "status": "failed", "fields": {}} for i in paper_ids])
+        .on_conflict_do_nothing(index_elements=["paper_id"])
+    )
+    cards = {
+        c.paper_id: c
+        for c in await session.scalars(
+            select(EvidenceCard).where(EvidenceCard.paper_id.in_(paper_ids)).execution_options(populate_existing=True)
+        )
+    }
+    stale_before = datetime.now(UTC) - timedelta(seconds=JOB_TIMEOUT)
     queued = []
     for paper_id in paper_ids:
-        card = cards.get(paper_id)
-        if card is not None and (card.status == "generating" or (card.status == "ready" and not regenerate)):
+        card = cards[paper_id]
+        if card.status == "ready" and not regenerate:
             continue
-        if card is None:
-            card = cards[paper_id] = EvidenceCard(paper_id=paper_id, fields={}, status="generating")
-            session.add(card)
+        if card.status == "generating" and card.updated_at > stale_before:
+            continue  # a job has it (a stale one is a lost job: queue it again)
         card.status, card.error, card.updated_at = "generating", None, datetime.now(UTC)
         queued.append(paper_id)
     await session.commit()
