@@ -22,12 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import Conflict, InvalidInput
 from app.core.papers import get_paper
+from app.core.source_types import ARXIV_DOI_PREFIX, peer_reviewed_of, source_type_of
 from app.models import Author, Paper, paper_authors, paper_topics
-from app.providers import openalex
+from app.providers import crossref, openalex
 
 logger = logging.getLogger(__name__)
 
-ARXIV_DOI_PREFIX = "10.48550/arxiv."
 AUTHOR_REFRESH_AFTER = timedelta(days=30)
 YEAR_TOLERANCE = 1  # an arXiv preprint and its published version are often dated a year apart
 
@@ -115,7 +115,7 @@ def is_confirmed_match(work: dict[str, Any], hints: PdfHints) -> bool:
 
 
 def short_id(url: str | None) -> str | None:
-    """"https://openalex.org/W2963341956" -> "W2963341956"; also strips "https://orcid.org/"."""
+    """ "https://openalex.org/W2963341956" -> "W2963341956"; also strips "https://orcid.org/"."""
     return url.rsplit("/", 1)[-1] if url else None
 
 
@@ -267,9 +267,9 @@ async def refresh_authors(session: AsyncSession, http: httpx.AsyncClient, openal
 async def _write(session: AsyncSession, paper: Paper, fields: dict[str, Any]) -> None:
     # The OpenAlex lookup can take seconds; re-read the lock right before writing, in case a PATCH landed meanwhile.
     await session.refresh(paper, ["manual_fields"])
-    values = {
-        k: v for k, v in fields.items() if k not in paper.manual_fields and not _regresses(v, getattr(paper, k))
-    }
+    values = {k: v for k, v in fields.items() if k not in paper.manual_fields and not _regresses(v, getattr(paper, k))}
+    if "source_type" in paper.manual_fields:  # peer_reviewed was derived from a type the owner replaced
+        values.pop("peer_reviewed", None)
     # A duplicate upload can match the very work (or carry the very DOI) an existing paper already holds; doi and
     # openalex_id are both UNIQUE, so a value another paper already has is dropped here instead of raising. The
     # copy still gets the match's authorships and topics: those are written regardless, keyed on paper_id, not on
@@ -281,8 +281,42 @@ async def _write(session: AsyncSession, paper: Paper, fields: dict[str, Any]) ->
         await session.execute(update(Paper).where(Paper.id == paper.id).values(**values))
 
 
+async def fill_source_type(
+    session: AsyncSession, paper_id: uuid.UUID, raw_type: str | None, crossref_http: httpx.AsyncClient | None
+) -> bool:
+    """Sets source_type, peer_reviewed and published_doi (never past the owner's lock). `raw_type` is OpenAlex's type;
+    without one, a non-arXiv DOI is asked of Crossref (when `crossref_http` is given). A paper that already has a
+    source type is not asked again. Crossref errors are logged, never raised. True when Crossref was asked."""
+    paper = await get_paper(session, paper_id)
+    await session.refresh(paper)
+    doi = normalize_doi(paper.doi or "")
+    fields: dict[str, Any] = {}
+    asked = False
+    if (source_type := source_type_of(raw_type, doi)) is None and paper.source_type is None and doi and crossref_http:
+        asked = True
+        try:
+            work = await crossref.get_work(crossref_http, doi)
+        except httpx.HTTPError as exc:
+            logger.warning("Crossref lookup failed for paper %s, source type left as is: %r", paper_id, exc)
+            work = None
+        if work:
+            source_type = source_type_of(work.get("type"), doi, crossref=True)
+            preprint_of = ((work.get("relation") or {}).get("is-preprint-of") or [{}])[0].get("id")
+            fields["published_doi"] = normalize_doi(preprint_of or "")
+    if source_type:
+        fields |= {"source_type": source_type, "peer_reviewed": peer_reviewed_of(source_type)}
+    if fields:
+        await _write(session, paper, fields)
+        await session.commit()
+    return asked
+
+
 async def enrich_paper(
-    session: AsyncSession, http: httpx.AsyncClient | None, paper_id: uuid.UUID, hints: PdfHints
+    session: AsyncSession,
+    http: httpx.AsyncClient | None,
+    paper_id: uuid.UUID,
+    hints: PdfHints,
+    crossref_http: httpx.AsyncClient | None = None,
 ) -> None:
     """Fills a paper's metadata from OpenAlex, or from the PDF when OpenAlex has nothing. No client: OpenAlex is off.
 
@@ -304,11 +338,13 @@ async def enrich_paper(
             if fallback:
                 await _write(session, paper, fallback)  # never replaces what an earlier match found
         await session.commit()
+        await fill_source_type(session, paper_id, None, crossref_http)
         return
 
     await _write(session, paper, work_fields(work))
     await _replace_topics(session, paper_id, "openalex", work_topics(work))
     await session.commit()
+    await fill_source_type(session, paper_id, work.get("type"), crossref_http)
     author_ids = await _replace_authorships(session, paper_id, work)
     await session.commit()
     try:

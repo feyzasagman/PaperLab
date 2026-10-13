@@ -1,12 +1,13 @@
 import asyncio
 import logging
 import uuid
+from contextlib import AsyncExitStack
 
 from app.core import embedding_index, embedding_sources, enrichment, paper_sources, papers
 from app.core.chunking import chunk_blocks
 from app.db import SessionLocal
 from app.models import PaperStatus
-from app.providers import embedding, openalex
+from app.providers import crossref, embedding, openalex
 from app.providers.base import LLMError, LLMUnavailable
 from app.providers.extraction import ExtractedDoc, extract
 
@@ -29,12 +30,18 @@ async def _enrich(session, transport, paper_id: uuid.UUID, doc: ExtractedDoc) ->
     try:
         hints = enrichment.pdf_hints(doc.first_page_text, doc.metadata)
         sources = await paper_sources.get(session)
-        if not sources.enabled["openalex"]:
-            await enrichment.enrich_paper(session, None, paper_id, hints)
-            return
-        key = sources.api_keys["openalex"]
-        async with openalex.new_client(email=sources.contact_email, transport=transport, api_key=key) as http:
-            await enrichment.enrich_paper(session, http, paper_id, hints)
+        async with AsyncExitStack() as stack:
+            http = cr = None
+            if sources.enabled["openalex"]:
+                key = sources.api_keys["openalex"]
+                http = await stack.enter_async_context(
+                    openalex.new_client(email=sources.contact_email, transport=transport, api_key=key)
+                )
+            if sources.enabled["crossref"]:  # one polite-pool request at most, only for a paper OpenAlex left untyped
+                cr = await stack.enter_async_context(
+                    crossref.new_client(email=sources.contact_email, transport=transport)
+                )
+            await enrichment.enrich_paper(session, http, paper_id, hints, crossref_http=cr)
     except Exception:
         logger.exception("enrichment failed for %s; the paper stays usable", paper_id)
         await session.rollback()
