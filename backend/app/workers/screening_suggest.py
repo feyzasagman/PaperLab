@@ -51,6 +51,7 @@ async def _auto_import(session, workspace: Workspace, run_id: uuid.UUID | None) 
     """Imports the free-PDF hits rated at or above the owner's bar, and queues their ingest (D232). Never decides."""
     query = select(WorkspaceSearchHit.id).where(
         WorkspaceSearchHit.workspace_id == workspace.id,
+        WorkspaceSearchHit.suggestion == "include",
         WorkspaceSearchHit.suggestion_relevance >= workspace.auto_import_min_relevance,
         WorkspaceSearchHit.stage1_status.is_(None),
         WorkspaceSearchHit.acquisition_status == "not_attempted",
@@ -108,7 +109,9 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                         continue  # decided (or suggested) since the job started
                     suggestion = await _suggest_one(llm, workspace, hit, ref)
                     hit.suggestion, hit.suggestion_reason = suggestion.verdict, suggestion.reason
-                    hit.suggestion_note, hit.suggestion_model = suggestion.note, label
+                    hit.suggestion_note = suggestion.note
+                    # No abstract means no model was called, so there is no model to name.
+                    hit.suggestion_model = None if "no_abstract" in suggestion.flags else label
                     hit.suggestion_relevance, hit.suggestion_quotes = suggestion.relevance, suggestion.quotes
                     hit.suggestion_confidence, hit.suggestion_flags = suggestion.confidence, suggestion.flags
                     hit.suggestion_prompt_version = SCREENING_PROMPT_VERSION

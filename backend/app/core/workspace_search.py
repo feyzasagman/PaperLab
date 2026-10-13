@@ -653,9 +653,10 @@ async def list_hits(
         query = query.where(WorkspaceSearchHit.suggestion_relevance >= min_relevance)
     if sort not in (None, "ai"):
         raise InvalidInput("sort must be 'ai' or empty")
-    if sort == "ai":  # offset cursor, see ai_sort
-        offset = ai_sort.decode_offset(after)
-        query = query.order_by(*ai_sort.AI_ORDER).offset(offset).limit(limit)
+    if sort == "ai":  # keyset cursor, see ai_sort
+        if after:
+            query = query.where(ai_sort.after_cursor(after))
+        query = query.order_by(*ai_sort.AI_ORDER).limit(limit)
     else:
         if after:
             seen_at, hit_id = _decode_cursor(after)
@@ -674,7 +675,7 @@ async def list_hits(
     if len(rows) < limit:
         return items, None
     if sort == "ai":
-        return items, ai_sort.encode_offset(offset + limit)
+        return items, ai_sort.encode_cursor(rows[-1][0])
     return items, _encode_cursor(rows[-1][0].first_seen_at, rows[-1][0].id)
 
 

@@ -240,11 +240,16 @@ async def run_prescreen(session: AsyncSession, workspace: str, run_id: uuid.UUID
     return ScreeningStateOut.model_validate(state)
 
 
+MAX_ACCEPT_HITS = 5000  # the API's cap
+
+
 async def accept_suggestions(
     session: AsyncSession, workspace: str, hit_ids: list[uuid.UUID]
 ) -> screening.AcceptResult:
     """Records the owner's decision from each suggestion: include becomes relevant, exclude not_relevant."""
-    return await screening.accept_suggestions(session, await workspace_id(session, workspace), hit_ids[:MAX_HITS])
+    if len(hit_ids) > MAX_ACCEPT_HITS:
+        raise InvalidInput("too_many_hits", max=MAX_ACCEPT_HITS)
+    return await screening.accept_suggestions(session, await workspace_id(session, workspace), hit_ids)
 
 
 async def review_hits(

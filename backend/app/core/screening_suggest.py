@@ -4,7 +4,7 @@ off-format into `unsure` so a malformed reply never becomes an exclude."""
 from dataclasses import dataclass, field
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core import llm_json, notes, prompts
 
@@ -57,6 +57,12 @@ class _Reply(BaseModel):
     quotes: list[str] = Field(default_factory=list, max_length=10)
     why: str = ""
 
+    @model_validator(mode="after")
+    def _exclude_needs_a_reason(self):
+        if self.decision == "exclude" and self.reason is None:
+            raise ValueError('"exclude" needs a reason')
+        return self
+
 
 @dataclass(frozen=True)
 class SuggestionV2:
@@ -91,7 +97,8 @@ def _quote_ok(folded_quote: str, folded_abstract: str) -> bool:
 
 async def suggest(llm, question, inclusion, exclusion, title, abstract) -> SuggestionV2:
     """One hit's suggestion. No abstract -> unsure + no_abstract without a model call. Quotes are kept only when they
-    are in the abstract (notes.fold); any drop, or an include/exclude with no kept quote, makes it low confidence."""
+    are in the abstract (notes.fold) and are at least 3 words and at most 300 characters; any drop, or an
+    include/exclude with no kept quote, makes it low confidence."""
     if not (abstract or "").strip():
         return SuggestionV2("unsure", None, None, flags=["no_abstract"])
     reply = await llm_json.ask_json(

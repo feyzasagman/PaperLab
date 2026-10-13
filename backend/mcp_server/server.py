@@ -228,7 +228,8 @@ async def run_prescreen(workspace: str, run_id: uuid.UUID | None = None) -> pipe
 @recoverable
 async def accept_suggestions(workspace: str, hit_ids: list[uuid.UUID]) -> screening.AcceptResult:
     """Use to record the owner's decision on hits by accepting their suggestions (include becomes relevant,
-    exclude becomes not_relevant with its reason). Unsure, undecided-less and already decided hits are skipped.
+    exclude becomes not_relevant with its reason). Hits with no suggestion, unsure ones, already decided ones
+    and ones not in the workspace are skipped.
     Ask the owner before calling."""
     async with sessions() as session:
         return await pipeline.accept_suggestions(session, workspace, hit_ids)

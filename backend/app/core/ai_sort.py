@@ -1,35 +1,36 @@
 """The hit list ordered by the AI's score (M39 F3): relevance high to low, then confident before unsure, then found
-order. Pages by an opaque offset cursor (base64 of the offset); the found order keeps its keyset cursor."""
+order. Pages by a keyset cursor over the four sort keys, so a hit decided between pages can't shift the next page."""
 
 import base64
 import binascii
+import json
+import uuid
+from datetime import datetime
 
-from sqlalchemy import case
+from sqlalchemy import case, func, tuple_
 
 from app.core.errors import InvalidInput
 from app.models.workspace_search import WorkspaceSearchHit as Hit
 
-MAX_OFFSET = 100_000
-
-AI_ORDER = (
-    Hit.suggestion_relevance.desc().nulls_last(),
-    case({"high": 0, "medium": 1}, value=Hit.suggestion_confidence, else_=2),
-    Hit.first_seen_at,
-    Hit.id,
-)
+# Unsuggested hits have no relevance (valid scores are 1-5), so 0 sorts them last.
+_RELEVANCE = -func.coalesce(Hit.suggestion_relevance, 0)
+_CONFIDENCE = case({"high": 0}, value=Hit.suggestion_confidence, else_=1)
+AI_ORDER = (_RELEVANCE, _CONFIDENCE, Hit.first_seen_at, Hit.id)
 
 
-def encode_offset(offset: int) -> str:
-    return base64.urlsafe_b64encode(str(offset).encode()).decode()
+def encode_cursor(hit: Hit) -> str:
+    key = [-(hit.suggestion_relevance or 0), 0 if hit.suggestion_confidence == "high" else 1,
+           hit.first_seen_at.isoformat(), str(hit.id)]
+    return base64.urlsafe_b64encode(json.dumps(key).encode()).decode()
 
 
-def decode_offset(cursor: str | None) -> int:
-    if not cursor:
-        return 0
+def after_cursor(cursor: str):
+    """A SQL condition selecting the hits strictly after the cursor's hit in AI order."""
     try:
-        offset = int(base64.urlsafe_b64decode(cursor.encode()).decode())
-    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+        rel, conf, seen, hit_id = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+        if not (isinstance(rel, int) and conf in (0, 1)):
+            raise ValueError
+        key = (rel, conf, datetime.fromisoformat(seen), uuid.UUID(hit_id))
+    except (binascii.Error, ValueError, TypeError, UnicodeDecodeError) as exc:
         raise InvalidInput("invalid pagination cursor") from exc
-    if not 0 <= offset <= MAX_OFFSET:
-        raise InvalidInput("invalid pagination cursor")
-    return offset
+    return tuple_(*AI_ORDER) > tuple_(*key)

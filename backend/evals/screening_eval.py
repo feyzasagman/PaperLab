@@ -15,6 +15,7 @@ import statistics
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -116,9 +117,10 @@ async def evaluate(session: AsyncSession, workspace_name: str, llm, limit: int |
         inclusion = ws.screening_criteria
     if not (question or inclusion or exclusion):
         raise EvalError("This workspace has no screening criteria yet.")
+    epoch = datetime.min.replace(tzinfo=timezone.utc)  # decisions without a time (pre-M31) sort last
     decided = sorted(
-        (row for row in pool.rows if row[0].stage1_status and row[0].stage1_decided_at),
-        key=lambda row: row[0].stage1_decided_at, reverse=True,
+        (row for row in pool.rows if row[0].stage1_status),
+        key=lambda row: (row[0].stage1_decided_at or epoch, row[0].first_seen_at), reverse=True,
     )[:limit]
     rows = []
     for hit, ref in decided:

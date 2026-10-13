@@ -274,8 +274,18 @@ async def prescreen_after_run(session: AsyncSession, run: WorkspaceSearchRun) ->
     if not workspace.prescreen_after_scheduled_runs:
         return "pre-screening after scheduled runs is off"
     if not (workspace.research_question or workspace.inclusion_criteria):
+        workspace.suggest_error = (
+            "New hits from a scheduled search weren't pre-screened: "
+            "add a research question or inclusion criteria first."
+        )
+        await session.commit()
         return "no criteria"
     if workspace.suggest_status != "idle":
+        workspace.suggest_error = (
+            "New hits from a scheduled search weren't pre-screened because another job was running. "
+            "Press Suggest to score them."
+        )
+        await session.commit()
         return "suggestions already running"
     model = await _default_model(session)
     if model is None:
