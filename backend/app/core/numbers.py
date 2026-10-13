@@ -77,3 +77,25 @@ def find_numbers(text: str) -> list[NumberCandidate]:
         parsed = parse_number(raw)
         found.append(NumberCandidate(raw=raw, value=parsed.value, error=parsed.error, unit_hint=unit))
     return found
+
+
+# Matching numbers across a quote and a card value (M39 F5, D242): the same figure typeset two ways compares equal.
+_DASHES = str.maketrans({"\u2013": "-", "\u2014": "-", "\u2010": "-", "\u2011": "-"})  # parse_number's "−" is below
+_DIGIT_SPACES = re.compile(r"(?<=\d)[\u2009\u202f\u00a0\u200a](?=\d)")  # thin / no-break space inside 12 345
+# A sign counts only when it isn't glued to a word or number (so "2019-2020" is two years, not 2019 and -2020).
+# "1,234" is one number; "0.21, 0.69" stays two because a thousands group is exactly three digits with no space.
+_TOKEN = re.compile(r"(?:(?<![\w.])([-+]))?((?:\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.\d+)?|\.\d+)")
+
+
+def tokens(text: str) -> list[str]:
+    cleaned = _DIGIT_SPACES.sub("", text.replace("\u2212", "-").translate(_DASHES))
+    out = []
+    for sign, digits in _TOKEN.findall(cleaned):
+        digits = digits.replace(",", "")
+        out.append(f"{sign}{'0' if digits.startswith('.') else ''}{digits}")
+    return out
+
+
+def all_in(value: str, source: str) -> bool:
+    """Every number in `value` appears in `source` (a value with no numbers passes)."""
+    return set(tokens(value)) <= set(tokens(source))

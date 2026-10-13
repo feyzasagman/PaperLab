@@ -26,3 +26,14 @@ def check_quotes(quotes: list[str], sources: list[str], max_kept: int) -> tuple[
         if index is not None:
             valid.append((quote, index))
     return valid[:max_kept], len(valid) < len(asked)
+
+
+def locate(quote: str, named: int | None, texts: list[str]) -> tuple[str, int] | None:
+    """(kept quote, 0-based passage index) or None. The named passage (1-based; a number outside the passages counts
+    as none) is tried first, then every passage; the passage that really holds the quote wins over the named one."""
+    if named is not None and 1 <= named <= len(texts):
+        kept, _ = check_quotes([quote], [texts[named - 1]], 1)
+        if kept:
+            return kept[0][0], named - 1
+    kept, _ = check_quotes([quote], texts, 1)
+    return kept[0] if kept else None

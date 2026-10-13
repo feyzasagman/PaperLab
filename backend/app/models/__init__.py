@@ -2,6 +2,7 @@ from app.models.author import Author, paper_authors, paper_topics
 from app.models.base import Base
 from app.models.dataset import Chart, Dataset, DatasetColumn, DatasetRow, cell_table, chart_datasets, note_charts
 from app.models.embedding_source import EmbeddingSource
+from app.models.evidence_card import EvidenceCard
 from app.models.graph import PaperLink
 from app.models.harvest import HarvestCursor
 from app.models.llm_connection import LLMConnection, LLMModel
@@ -23,6 +24,7 @@ __all__ = [
     "DatasetColumn",
     "DatasetRow",
     "EmbeddingSource",
+    "EvidenceCard",
     "ExternalRef",
     "HarvestCursor",
     "LLMConnection",

@@ -29,13 +29,13 @@ TWO_PARAGRAPH_QUOTE = "jump back to the source. Retrieval augmented generation"
 TWICE = "it came from"  # once in each page-1 paragraph
 
 
-def write_pdf(path: Path) -> Path:
+def write_pdf(path: Path, intro: str = FIRST_PARAGRAPH) -> Path:
     """Page 1: "1 Introduction", a wide paragraph and a narrow one below it (one chunk, two blocks), and two small
     captions that chunking drops. Page 2: "2 Method" and one paragraph."""
     doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
     page.insert_text((72, 90), "1 Introduction", fontsize=14, fontname="Times-Bold")
-    page.insert_textbox(pymupdf.Rect(72, 110, 540, 190), FIRST_PARAGRAPH, fontsize=11, fontname="Times-Roman")
+    page.insert_textbox(pymupdf.Rect(72, 110, 540, 190), intro, fontsize=11, fontname="Times-Roman")
     page.insert_textbox(pymupdf.Rect(72, 200, 300, 400), SECOND_PARAGRAPH, fontsize=11, fontname="Times-Roman")
     # Captions too small to be chunked, repeating both quotes elsewhere on the page: in the gap between the
     # paragraphs, and at the foot of the page.
@@ -50,7 +50,7 @@ def write_pdf(path: Path) -> Path:
 
 
 async def chunked_paper(
-    session, directory: Path, title: str = "Quoted paper"
+    session, directory: Path, title: str = "Quoted paper", intro: str = FIRST_PARAGRAPH
 ) -> tuple[Paper, list[Chunk], list[list[float]]]:
     """A ready paper whose chunks come from the real extraction and chunking, and each chunk's vector.
 
@@ -59,7 +59,7 @@ async def chunked_paper(
     The paper's PDF is `paper.file_path`; delete it to act as a machine without the file.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    pdf = write_pdf(directory / "source.pdf")
+    pdf = write_pdf(directory / "source.pdf", intro)
     doc = extract(pdf)
     paper = await papers.create_paper(session, "quoted.pdf", pdf.read_bytes(), directory, prefill={"title": title})
     await papers.replace_chunks(session, paper.id, chunk_blocks(doc.blocks))
