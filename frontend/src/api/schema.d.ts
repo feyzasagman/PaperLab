@@ -2971,6 +2971,20 @@ export interface components {
             venue: string | null;
             /** Type */
             type: string | null;
+            /** Source Type */
+            source_type: ("journal_article" | "proceedings" | "book" | "chapter" | "preprint" | "magazine" | "thesis" | "other") | null;
+            /**
+             * Peer Reviewed
+             * @enum {string}
+             */
+            peer_reviewed: "true" | "false" | "unknown";
+            /** Published Doi */
+            published_doi: string | null;
+            /**
+             * Evidence Access
+             * @enum {string}
+             */
+            evidence_access: "full_text" | "abstract" | "metadata";
             /** Is Retracted */
             is_retracted: boolean;
             /** Oa Status */
@@ -3056,6 +3070,10 @@ export interface components {
             abstract?: string | null;
             /** Is Retracted */
             is_retracted?: boolean | null;
+            /** Source Type */
+            source_type?: ("journal_article" | "proceedings" | "book" | "chapter" | "preprint" | "magazine" | "thesis" | "other") | null;
+            /** Peer Reviewed */
+            peer_reviewed?: ("true" | "false" | "unknown") | null;
         };
         /** ParcoordsChart */
         ParcoordsChart: {

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ReadingControl } from '../reading/ReadingControl'
 import { PaperDetailsDialog } from './PaperDetailsDialog'
+import { SourceBadges } from './SourceBadges'
 import { ZOOM_STEPS } from './zoom'
 
 type Props = {
@@ -29,6 +30,11 @@ export function ReaderToolbar({ paper, zoomIndex, onZoomChange, capturing, onCap
       <h1 className={cn('mx-1.5 min-w-0 flex-1 truncate font-heading text-base leading-none font-semibold', title === undefined && delayedIn)} title={title}>
         {title ?? 'Loading…'}
       </h1>
+      {paper && (
+        <div className="hidden shrink-0 items-center gap-1 md:flex">
+          <SourceBadges paper={paper} />
+        </div>
+      )}
       {paper && <ReadingControl paper={paper} onOpenReferences={onOpenReferences} />}
       <Button
         variant="ghost"

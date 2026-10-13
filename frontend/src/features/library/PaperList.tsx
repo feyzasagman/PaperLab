@@ -17,6 +17,7 @@ import { EmbeddingFlight, isEmbedding } from './EmbeddingFlight'
 import { PaperContextMenu, PaperMenu } from './PaperMenu'
 import { NoMatches, PaperSearch } from './PaperSearch'
 import { PaperPreview } from './PaperPreview'
+import { SourceBadges } from '../reader/SourceBadges'
 import { byline, matchesPaper, pageCountLabel } from './paperMeta'
 
 /** Skimming the list with the mouse shouldn't open a PDF for every row it crosses. */
@@ -73,6 +74,9 @@ function PaperRow({ paper, previewed, enterDelayMs, workspaceId, onPreview, onDe
             {paper.title}
           </a>
           {meta && <p className="mt-0.5 truncate text-sm text-muted-foreground">{meta}</p>}
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            <SourceBadges paper={paper} />
+          </div>
           {paper.status_error && <p className="mt-0.5 text-xs text-destructive">{paper.status_error}</p>}
         </div>
         {readingChip(paper.reading_pass, paper.triage) && (

@@ -18,7 +18,10 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { toForm, toUpdate, type PaperForm } from './paperForm'
+import { SOURCE_TYPES, toForm, toUpdate, type PaperForm } from './paperForm'
+
+const SELECT_CLASS =
+  'h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none'
 
 const ABSTRACT_MAX_LENGTH = 10_000
 
@@ -120,6 +123,35 @@ export function PaperDetailsDialog({ paper }: { paper: Paper }) {
               onChange={(e) => set({ abstract: e.target.value })}
             />
           </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field id="paper-source-type" label="Source type">
+              <select
+                id="paper-source-type"
+                className={SELECT_CLASS}
+                value={form.sourceType}
+                onChange={(e) => set({ sourceType: e.target.value as PaperForm['sourceType'] })}
+              >
+                <option value="">Not set</option>
+                {SOURCE_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field id="paper-peer-reviewed" label="Peer review">
+              <select
+                id="paper-peer-reviewed"
+                className={SELECT_CLASS}
+                value={form.peerReviewed}
+                onChange={(e) => set({ peerReviewed: e.target.value as PaperForm['peerReviewed'] })}
+              >
+                <option value="unknown">Unknown</option>
+                <option value="true">Peer-reviewed</option>
+                <option value="false">Not peer-reviewed</option>
+              </select>
+            </Field>
+          </div>
           <div className="flex items-center gap-2">
             <Checkbox
               id="paper-retracted"

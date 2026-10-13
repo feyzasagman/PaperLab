@@ -41,6 +41,7 @@ import { SelectionCopyButton } from './SelectionCopyButton'
 import { ReaderContextMenu, type ContextMenuState } from './ReaderContextMenu'
 import { ReaderToolbar } from './ReaderToolbar'
 import { ReadingContextBanner } from './ReadingContextBanner'
+import { PublishedVersionBanner } from './PublishedVersionBanner'
 import { RetractionBanner } from './RetractionBanner'
 import { EvidencePanel } from '../evidence/EvidencePanel'
 import { RightPanel } from './RightPanel'
@@ -416,6 +417,7 @@ export function ReaderPage({ paperId, tab, target }: Props) {
           onOpenReferences={() => showTab('references')}
         />
         {paper.data?.is_retracted && <RetractionBanner paper={paper.data} />}
+        {paper.data?.published_doi && <PublishedVersionBanner paper={paper.data} />}
         {paper.data && <ReadingContextBanner paperId={paperId} />}
       </div>
 
