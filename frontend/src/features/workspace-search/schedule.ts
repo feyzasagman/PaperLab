@@ -21,3 +21,14 @@ export function describeYears(from: number | null, to: number | null): string | 
   if (to) return `to ${to}`
   return null
 }
+
+export const ERRORS: Record<string, string> = {
+  invalid_schedule: 'That schedule is not valid. Check the time or the cron text.',
+  invalid_timezone: 'That time zone is not recognised. Use a name like Europe/Berlin.',
+  invalid_years: 'The first year must not be after the last year.',
+  unknown_source: 'One of the chosen sources is not available.',
+  saved_search_not_found: 'This saved search no longer exists.',
+}
+
+/** A server error code as a readable sentence (unknown codes pass through). */
+export const errorText = (code: string | undefined) => (code ? (ERRORS[code] ?? code) : null)

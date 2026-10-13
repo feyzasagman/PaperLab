@@ -7,7 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { SavedSearchDialog } from './SavedSearchDialog'
-import { describeSchedule, describeYears } from './schedule'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { describeSchedule, describeYears, errorText } from './schedule'
 
 const localTime = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
@@ -38,6 +39,9 @@ export function SavedSearches({
   const [editing, setEditing] = useState<Editing>(null)
   const [deleting, setDeleting] = useState<SavedSearch | null>(null)
   const rows = list.data ?? []
+  const actionError = errorText((runNow.error ?? update.error ?? remove.error)?.message)
+  // Keep the last name while the dialog fades out, so its text does not blank mid-animation.
+  const [lastDeleting, setLastDeleting] = useState<SavedSearch | null>(null)
 
   return (
     <section aria-label="Saved searches" className="grid gap-2 border-b px-3 py-2 text-sm">
@@ -45,17 +49,22 @@ export function SavedSearches({
         <h2 className="font-medium">Saved searches</h2>
         <Button variant="ghost" size="sm" onClick={() => setEditing('new')}>Save this search…</Button>
       </div>
+      {actionError && (
+        <Alert variant="destructive">
+          <AlertDescription>{actionError}</AlertDescription>
+        </Alert>
+      )}
       {rows.map((s) => (
         <div key={s.id} className="grid gap-0.5 rounded-md border px-3 py-2">
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate font-medium">{s.query}</span>
             <Switch size="sm" checked={s.enabled} aria-label={`Enabled: ${s.query}`}
               onCheckedChange={(enabled) => update.mutate({ id: s.id, body: { enabled } })} />
-            <Button variant="ghost" size="sm" onClick={() => runNow.mutate(s.id, { onSuccess: (r) => onRunStarted(r.id) })}>
+            <Button variant="ghost" size="sm" disabled={runNow.isPending} onClick={() => runNow.mutate(s.id, { onSuccess: (r) => onRunStarted(r.id) })}>
               Run now
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setEditing(s)}>Edit</Button>
-            <Button variant="ghost" size="sm" onClick={() => setDeleting(s)}>Delete</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setDeleting(s); setLastDeleting(s) }}>Delete</Button>
           </div>
           <p className="text-xs text-muted-foreground">
             {[
@@ -86,7 +95,7 @@ export function SavedSearches({
           <DialogHeader>
             <DialogTitle>Delete saved search?</DialogTitle>
             <DialogDescription>
-              “{deleting?.query}” will stop running. Papers it already found stay where they are.
+              “{lastDeleting?.query}” will stop running. Papers it already found stay where they are.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="bg-transparent">

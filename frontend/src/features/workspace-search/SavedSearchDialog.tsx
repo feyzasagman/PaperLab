@@ -11,18 +11,10 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { isSearchSource } from './SearchControls'
-import { WEEKDAYS, browserTimeZone } from './schedule'
+import { WEEKDAYS, browserTimeZone, errorText } from './schedule'
 
 type Kind = SavedSearchCreate['schedule_kind']
 type Source = SavedSearchCreate['sources'][number]
-
-const ERRORS: Record<string, string> = {
-  invalid_schedule: 'That schedule is not valid. Check the time or the cron text.',
-  invalid_timezone: 'That time zone is not recognised. Use a name like Europe/Berlin.',
-  invalid_years: 'The first year must not be after the last year.',
-  unknown_source: 'One of the chosen sources is not available.',
-  saved_search_not_found: 'This saved search no longer exists.',
-}
 
 const yearOrNull = (value: string) => (value ? Number(value) : null)
 
@@ -36,7 +28,7 @@ export function SavedSearchDialog({ workspaceId, saved, initialQuery, onClose }:
   const choices = (paperSources.data?.sources ?? []).filter((s) => s.enabled && isSearchSource(s.id))
 
   const [query, setQuery] = useState(saved?.query ?? initialQuery)
-  const [sources, setSources] = useState<Source[]>((saved?.sources as Source[] | undefined) ?? [])
+  const [sources, setSources] = useState<Source[]>(saved?.sources.filter(isSearchSource) ?? [])
   const [yearFrom, setYearFrom] = useState(saved?.year_from?.toString() ?? '')
   const [yearTo, setYearTo] = useState(saved?.year_to?.toString() ?? '')
   const [kind, setKind] = useState<Kind>(saved?.schedule_kind ?? 'daily')
@@ -46,8 +38,7 @@ export function SavedSearchDialog({ workspaceId, saved, initialQuery, onClose }:
   const [timezone, setTimezone] = useState(saved?.timezone ?? browserTimeZone())
 
   const mutation = saved ? update : create
-  const code = mutation.error?.message
-  const error = code ? (ERRORS[code] ?? code) : null
+  const error = errorText(mutation.error?.message)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -104,10 +95,10 @@ export function SavedSearchDialog({ workspaceId, saved, initialQuery, onClose }:
           </fieldset>
 
           <div className="flex gap-3">
-            {([['From year', yearFrom, setYearFrom], ['To year', yearTo, setYearTo]] as const).map(([label, value, set]) => (
-              <div key={label} className="grid gap-1.5">
-                <Label htmlFor={`ss-${label}`}>{label}</Label>
-                <Input id={`ss-${label}`} type="number" min={1900} max={2100} className="w-28 tabular-nums"
+            {([['ss-year-from', 'From year', yearFrom, setYearFrom], ['ss-year-to', 'To year', yearTo, setYearTo]] as const).map(([id, label, value, set]) => (
+              <div key={id} className="grid gap-1.5">
+                <Label htmlFor={id}>{label}</Label>
+                <Input id={id} type="number" min={1900} max={2100} className="w-28 tabular-nums"
                   value={value} onChange={(e) => set(e.target.value)} />
               </div>
             ))}

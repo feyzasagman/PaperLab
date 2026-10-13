@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, cleanup } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import * as queries from '@/api/queries'
 import type { SavedSearch } from '@/api/client'
@@ -14,7 +14,7 @@ const row: SavedSearch = {
 
 const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue(row), isPending: false, error: null })
 
-function setup(rows: SavedSearch[]) {
+function setup(rows: SavedSearch[], onRunStarted = vi.fn()) {
   const update = mutation(), del = mutation(), create = mutation(), runNow = mutation()
   vi.spyOn(queries, 'useSavedSearches').mockReturnValue({ data: rows } as any)
   vi.spyOn(queries, 'useUpdateSavedSearch').mockReturnValue(update as any)
@@ -24,7 +24,7 @@ function setup(rows: SavedSearch[]) {
   vi.spyOn(queries, 'usePaperSources').mockReturnValue({
     data: { contact_email: null, sources: [{ id: 'arxiv', name: 'arXiv', enabled: true, has_key: null, key_hint: null }] },
   } as any)
-  render(<SavedSearches workspaceId="w1" currentQuery="typed query" onRunStarted={vi.fn()} />)
+  render(<SavedSearches workspaceId="w1" currentQuery="typed query" onRunStarted={onRunStarted} />)
   return { update, del, create, runNow }
 }
 
@@ -63,6 +63,93 @@ test('Delete asks in the app dialog and confirming deletes', () => {
   fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
   expect(del.mutate).toHaveBeenCalledWith('s1')
   expect(confirm).not.toHaveBeenCalled()
+})
+
+async function pickSchedule(name: string) {
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'Schedule' }), { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('option', { name }))
+}
+const openNew = () => fireEvent.click(screen.getByRole('button', { name: /Save this search/ }))
+const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+test('daily create body: time set, weekday and cron null, no sources ticked means []', () => {
+  const { create } = setup([])
+  openNew()
+  save()
+  expect(create.mutateAsync).toHaveBeenCalledWith({
+    query: 'typed query', sources: [], year_from: null, year_to: null, schedule_kind: 'daily',
+    time: '02:00', weekday: null, cron: null, timezone: expect.any(String),
+  })
+})
+
+test('ticked sources are sent by id', () => {
+  const { create } = setup([])
+  openNew()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'arXiv' }))
+  save()
+  expect(create.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ sources: ['arxiv'] }))
+})
+
+test('custom body: cron set, time and weekday null', async () => {
+  const { create } = setup([])
+  openNew()
+  await pickSchedule('Custom')
+  fireEvent.change(screen.getByLabelText('Cron'), { target: { value: '0 2 * * 1-5' } })
+  save()
+  expect(create.mutateAsync).toHaveBeenCalledWith(
+    expect.objectContaining({ schedule_kind: 'custom', cron: '0 2 * * 1-5', time: null, weekday: null }),
+  )
+})
+
+test('edit sends {id, body} with non-null query, sources and timezone, and no enabled', () => {
+  const { update } = setup([row])
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+  save()
+  const [arg] = update.mutateAsync.mock.calls[0]
+  expect(arg.id).toBe('s1')
+  expect(arg.body).toEqual(expect.objectContaining({ query: 'llm code review', sources: ['arxiv'], timezone: 'Europe/Berlin', year_from: 2022, year_to: null }))
+  expect(arg.body).not.toHaveProperty('enabled')
+})
+
+test('a server code shows as a readable message in the dialog', () => {
+  const { create } = setup([])
+  vi.spyOn(queries, 'useCreateSavedSearch').mockReturnValue({ ...create, error: new Error('invalid_schedule') } as any)
+  cleanup()
+  render(<SavedSearches workspaceId="w1" currentQuery="q" onRunStarted={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: /Save this search/ }))
+  expect(screen.getByRole('dialog').textContent).toMatch(/schedule is not valid/)
+})
+
+test('Run now reports the new run id and is disabled while pending', () => {
+  const onRunStarted = vi.fn()
+  const { runNow } = setup([row], onRunStarted)
+  fireEvent.click(screen.getByRole('button', { name: 'Run now' }))
+  const [id, opts] = runNow.mutate.mock.calls[0]
+  expect(id).toBe('s1')
+  opts.onSuccess({ id: 'run9' })
+  expect(onRunStarted).toHaveBeenCalledWith('run9')
+})
+
+test('Run now is disabled while pending', () => {
+  setup([row])
+  vi.spyOn(queries, 'useRunSavedSearchNow').mockReturnValue({ ...mutation(), isPending: true } as any)
+  cleanup()
+  render(<SavedSearches workspaceId="w1" currentQuery="" onRunStarted={vi.fn()} />)
+  for (const b of screen.getAllByRole('button', { name: 'Run now' })) expect((b as HTMLButtonElement).disabled).toBe(true)
+})
+
+test('a failed Run now shows its error', () => {
+  setup([row])
+  vi.spyOn(queries, 'useRunSavedSearchNow').mockReturnValue({ ...mutation(), error: new Error('saved_search_not_found') } as any)
+  cleanup()
+  render(<SavedSearches workspaceId="w1" currentQuery="" onRunStarted={vi.fn()} />)
+  expect(screen.getByRole('alert').textContent).toMatch(/no longer exists/)
+})
+
+test('Next run shows next_run_at in local time', () => {
+  setup([row])
+  const expected = new Date(row.next_run_at!).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  expect(screen.getByText(`Next run: ${expected}`)).toBeTruthy()
 })
 
 test('Weekly shows a weekday select and creates a weekly search', async () => {
