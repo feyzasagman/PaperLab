@@ -43,8 +43,52 @@ _BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
 _DOI = re.compile(r"(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?(10\.\d{4,9}/[^\s]+)", re.I)
 _PAREN = re.compile(r"\(([^()]*?(?:19|20)\d{2}[a-z]?[^()]*)\)")
 _PART = re.compile(r"^(?P<names>[^\d]*?),?\s*(?P<year>(?:19|20)\d{2})[a-z]?\b")
+# Words that open a sentence and are followed by a comma, so a name list can't start with them ("However, Smith and
+# Lee (2020)"). ponytail: a word list; check candidate surnames against the library if a real surname collides.
+LEAD_WORDS = frozenset(SENTENCE_STARTERS) | {
+    "However",
+    "Thus",
+    "Hence",
+    "Moreover",
+    "Also",
+    "Similarly",
+    "Likewise",
+    "Here",
+    "Then",
+    "Still",
+    "Yet",
+    "Indeed",
+    "Finally",
+    "First",
+    "Second",
+    "Third",
+    "Further",
+    "Furthermore",
+    "Instead",
+    "Conversely",
+    "Notably",
+    "Overall",
+    "Again",
+    "Therefore",
+    "Meanwhile",
+    "Recently",
+    "Later",
+    "Earlier",
+    "Importantly",
+    "Specifically",
+    "Consequently",
+    "Nevertheless",
+    "Nonetheless",
+    "Additionally",
+    "Alternatively",
+    "Accordingly",
+}
+_PARTICLE = r"(?:(?:van|von|der|den|de|del|della|da|di|du|dos|la|le|ter|ten)\s+)*"
+_NAME = _PARTICLE + r"[A-Z][\w'’\-‐]+"
+# "Smith (2020)", "Smith et al. (2020, p. 4)", "Smith & Lee (2020)", "Smith, Lee, and van Dijk (2020)"
 _NARRATIVE = re.compile(
-    r"(?P<names>[A-Z][\w'’\-]+(?:\s+et al\.?|\s+(?:&|and)\s+[A-Z][\w'’\-]+)?)\s+\((?P<year>(?:19|20)\d{2})[a-z]?\)"
+    rf"(?P<names>{_NAME}(?:\s+et al\.?|(?:,\s+{_NAME})*,?\s+(?:&|and)\s+{_NAME})?)"
+    r"\s+\((?P<year>(?:19|20)\d{2})[a-z]?(?:,\s*(?:pp?\.|ch\.|sec\.)\s*[\w–\-]+)?\)"
 )
 _LEAD = re.compile(r"^(?:(?:see|also|e\.g\.,?|cf\.)\s+)+", re.I)
 _INITIALS = re.compile(r"[a-z]{1,2}\.?|(?:[a-z]\.)+")  # "j", "jk", "j.k." (folded)
@@ -60,6 +104,7 @@ class Citation:
     doi: str | None = None
     surname: str | None = None
     year: int | None = None
+    narrative: bool = False  # "Smith (2020) found": the names are part of the sentence, so a claim keeps them
 
 
 @dataclass(frozen=True)
@@ -98,10 +143,22 @@ def find(sentence: str) -> list[Citation]:
                     Citation("author_year", part.strip(), group.span(), surname=surname, year=int(parsed["year"]))
                 )
     for m in _NARRATIVE.finditer(sentence):
-        if m["names"] in SENTENCE_STARTERS:
+        names, start = m["names"], m.start()
+        while len(head := names.split(", ", 1)) == 2 and head[0] in LEAD_WORDS:
+            start, names = start + len(head[0]) + 2, head[1]
+        if names in LEAD_WORDS:
             continue
-        surname = _FIRST_AUTHOR.split(m["names"])[0].strip()
-        found.append(Citation("author_year", m.group(0), m.span(), surname=surname, year=int(m["year"])))
+        surname = _FIRST_AUTHOR.split(names)[0].strip()
+        found.append(
+            Citation(
+                "author_year",
+                sentence[start : m.end()],
+                (start, m.end()),
+                surname=surname,
+                year=int(m["year"]),
+                narrative=True,
+            )
+        )
     return sorted(found, key=lambda c: c.span)
 
 

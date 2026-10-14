@@ -216,3 +216,29 @@ async def test_a_claim_with_under_three_words_is_empty_and_asks_no_model(session
 
     [item] = await claims.verify_claims(session, "Yes (Shortsurname, 1987).", llm=Never())
     assert item.error == "empty_claim" and item.check is None
+
+
+@pytest.mark.parametrize(
+    "sentence, surname, year, text",
+    [
+        ("Anderson, Shah & Kreminski (2024) found it.", "Anderson", 2024, "Anderson, Shah & Kreminski (2024)"),
+        ("Anderson, Shah, and Kreminski (2024) found it.", "Anderson", 2024, "Anderson, Shah, and Kreminski (2024)"),
+        ("It holds (Anderson, Shah, & Kreminski, 2024).", "Anderson", 2024, "Anderson, Shah, & Kreminski, 2024"),
+        ("Anderson et al. (2024) found it.", "Anderson", 2024, "Anderson et al. (2024)"),
+        ("Doshi & Hauser (2024) found it.", "Doshi", 2024, "Doshi & Hauser (2024)"),
+        ("Runco and Jaeger (2012) found it.", "Runco", 2012, "Runco and Jaeger (2012)"),
+        ("Plucker et al. (2004, p. 90) define it.", "Plucker", 2004, "Plucker et al. (2004, p. 90)"),
+        (
+            "Ismayilzada, Paul, Bosselut & van der Plas (2024) survey it.",
+            "Ismayilzada",
+            2024,
+            "Ismayilzada, Paul, Bosselut & van der Plas (2024)",
+        ),
+        ("However, Smith and Lee (2020) argue it.", "Smith", 2020, "Smith and Lee (2020)"),
+        ("Thus, Smith, Jones and Lee (2021) agree.", "Smith", 2021, "Smith, Jones and Lee (2021)"),
+    ],
+)
+def test_name_lists_keep_the_first_author(sentence, surname, year, text):
+    [found] = citations.find(sentence)
+    assert (found.surname, found.year, found.text) == (surname, year, text)
+    assert found.narrative == (not sentence.startswith("It holds"))  # only "(Anderson, Shah, & Kreminski, 2024)" isn't
