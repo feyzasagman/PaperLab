@@ -48,6 +48,7 @@ EXPECTED_TOOLS = {
     "run_prescreen": None, "get_screening_suggestions": True, "accept_suggestions": None,
     "verify_claim": None, "verify_claims": None,
     "generate_evidence_card": None, "get_evidence_card": True, "list_evidence_cards": True,
+    "export_citations": True,
 }
 
 

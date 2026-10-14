@@ -421,6 +421,8 @@ Claim checks: ask Claude to check a sentence or paragraph against your papers be
 
 Evidence cards: ask Claude for a card and it reads the paper's full text and fills in the research question, design, sample, findings, effect sizes and the limitations the authors state. Every value comes with a quote from the paper and its page, and every number in a value appears in that quote. Anything the text could not back is left out and counted, never filled in. Your default model does the work, one paper at a time, and a remote model is used only after you agree. A card you edit is shown as AI · edited, and replacing it asks first.
 
+Citation export: ask Claude for a workspace's citations as BibTeX, RIS, CSL-JSON or APA 7, or use Export citations in the workspace header. Every format comes from the same record for each paper, so a title, author or DOI never differs between them. Preprints are marked as preprints, and names that aren't a person (a lab, a consortium) are kept whole rather than split.
+
 Scheduled searches run while PaperLab is running: the desktop app with **Keep running** on (Settings → Desktop app), or `docker compose up -d`. A time that passed while it was closed runs once when it next starts. New results land in the workspace for you to screen.
 
 Notes:

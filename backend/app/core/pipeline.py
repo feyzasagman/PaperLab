@@ -444,3 +444,15 @@ async def export_citations(
 ) -> tuple[str, int]:
     """(text, paper count) for a workspace or a selection of papers; shared by the API and the MCP tool."""
     return await citations_export.export_papers(session, workspace_id=workspace_id, paper_ids=paper_ids, fmt=fmt)
+
+
+@dataclass(frozen=True)
+class CitationExport:
+    format: str
+    count: int
+    text: str
+
+
+async def export_citations_as(session: AsyncSession, workspace: str, fmt: str) -> CitationExport:
+    text, count = await export_citations(session, workspace_id=await workspace_id(session, workspace), fmt=fmt)
+    return CitationExport(fmt, count, text)
