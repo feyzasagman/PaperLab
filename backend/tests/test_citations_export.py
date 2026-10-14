@@ -34,7 +34,7 @@ def paper(**kw):
         ("magazine", "article-magazine"),
         ("thesis", "thesis"),
         ("other", "document"),
-        (None, "article-journal"),
+        (None, "document"),
     ],
 )
 def test_source_type_maps_to_csl_type(source_type, csl):

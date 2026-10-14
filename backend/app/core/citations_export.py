@@ -90,7 +90,7 @@ def csl_item(paper) -> dict:
     """The CSL-JSON item for a paper-like object (no DB). Optional editors/volume/issue/pages are read when present."""
     item: dict = {
         "id": str(paper.id),
-        "type": CSL_TYPES.get(paper.source_type or "journal_article", "document"),
+        "type": CSL_TYPES.get(paper.source_type, "document"),
         "title": paper.title,
     }
     if paper.authors:
@@ -314,10 +314,21 @@ def _with_year_suffixes(ordered: list[dict]) -> list[dict]:
     return [{**i, "year-suffix": suffixes[i["id"]]} if i["id"] in suffixes else i for i in ordered]
 
 
+def _title_as_author(item: dict, *, html: bool) -> dict:
+    """APA 7: with no author the title takes the author slot and is not repeated (citeproc-py repeats it). A standalone
+    work keeps its italics; an article's title stays plain."""
+    if item.get("author"):
+        return item
+    standalone = html and not item.get("container-title")
+    title = f"<i>{item['title']}</i>" if standalone else item["title"]
+    return {**item, "author": [{"literal": title}], "title": ""}
+
+
 def _apa(items: list[dict], *, html: bool) -> str:
     ordered = _with_year_suffixes(sorted(items, key=_apa_order))
     if html:
         ordered = [_escaped(i) for i in ordered]  # citeproc's html formatter leaves field values raw
+    ordered = [_title_as_author(i, html=html) for i in ordered]
     # ponytail: the style is parsed on every call (~0.3 s); cache it if exports get hot.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # citeproc-py warns about CSL fields it doesn't know

@@ -137,3 +137,25 @@ def test_apa_order_ignores_leading_punctuation_and_articles_in_titles():
 def test_apa_html_escapes_a_hostile_title():
     html = render(items_of(paper(title="<img onerror=x>")), "apa-html")
     assert "&lt;img" in html and "<img" not in html
+
+
+def test_apa_shows_an_authorless_title_once():
+    p = paper(title="PaperLab E2E Fixture", authors=[], year=None, venue=None, source_type=None, doi=None)
+    assert render(items_of(p), "apa").strip() == "PaperLab E2E Fixture. (n.d.)."
+    assert render(items_of(p), "apa-html").strip() == "<i>PaperLab E2E Fixture</i>. (n.d.)."
+
+
+def test_apa_authorless_article_keeps_title_once_and_italic_venue():
+    p = paper(title="Quiet article", authors=[], year=None, venue="Journal of Things", doi=None)
+    assert render(items_of(p), "apa").strip() == "Quiet article. (n.d.). Journal of Things."
+    assert render(items_of(p), "apa-html").strip() == "Quiet article. (n.d.). <i>Journal of Things</i>."
+
+
+def test_authorless_title_change_leaves_other_formats_alone():
+    item = csl_item(paper(authors=[], source_type="journal_article"))
+    assert "author" not in item and item["title"] == "A study of things"
+    assert "A study of things" in render([item], "csljson")
+
+
+def test_a_paper_with_no_source_type_exports_as_a_document():
+    assert csl_item(paper(source_type=None))["type"] == "document"
