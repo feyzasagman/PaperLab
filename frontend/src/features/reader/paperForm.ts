@@ -1,5 +1,20 @@
 import type { Paper, PaperUpdate } from '@/api/client'
 
+export type SourceType = NonNullable<Paper['source_type']>
+export type PeerReviewed = Paper['peer_reviewed']
+
+/** The eight source types, in the order the select lists them. */
+export const SOURCE_TYPES: { value: SourceType; label: string }[] = [
+  { value: 'journal_article', label: 'Journal article' },
+  { value: 'proceedings', label: 'Conference paper' },
+  { value: 'book', label: 'Book' },
+  { value: 'chapter', label: 'Book chapter' },
+  { value: 'preprint', label: 'Preprint' },
+  { value: 'magazine', label: 'Magazine' },
+  { value: 'thesis', label: 'Thesis' },
+  { value: 'other', label: 'Other' },
+]
+
 /** The "Edit details" fields as the inputs hold them: plain strings, one author per line. */
 export type PaperForm = {
   title: string
@@ -9,6 +24,9 @@ export type PaperForm = {
   doi: string
   abstract: string
   isRetracted: boolean
+  /** '' is "Not set". */
+  sourceType: SourceType | ''
+  peerReviewed: PeerReviewed
 }
 
 export const toForm = (paper: Paper): PaperForm => ({
@@ -19,6 +37,8 @@ export const toForm = (paper: Paper): PaperForm => ({
   doi: paper.doi ?? '',
   abstract: paper.abstract ?? '',
   isRetracted: paper.is_retracted,
+  sourceType: paper.source_type ?? '',
+  peerReviewed: paper.peer_reviewed,
 })
 
 const orNull = (value: string) => value.trim() || null
@@ -36,5 +56,7 @@ export function toUpdate(paper: Paper, form: PaperForm): PaperUpdate {
   if (orNull(form.doi) !== orNull(paper.doi ?? '')) update.doi = orNull(form.doi)
   if (orNull(form.abstract) !== orNull(paper.abstract ?? '')) update.abstract = orNull(form.abstract)
   if (form.isRetracted !== paper.is_retracted) update.is_retracted = form.isRetracted
+  if (form.sourceType !== (paper.source_type ?? '')) update.source_type = form.sourceType || null
+  if (form.peerReviewed !== paper.peer_reviewed) update.peer_reviewed = form.peerReviewed
   return update
 }

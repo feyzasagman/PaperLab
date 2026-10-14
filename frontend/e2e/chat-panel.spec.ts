@@ -343,7 +343,9 @@ test('a small 3D page shows while the answer has no words yet, and goes when the
   // Sources at once, the first token 3 s later: long enough to see the waiting state.
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
-  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  // A paper with no evidence card answers 404 by design (queries.ts reads it as "no card"); the browser logs
+  // that as a console error, which is not a page error.
+  page.on('console', (m) => m.type() === 'error' && !m.location().url.endsWith('/evidence-card') && errors.push(m.text()))
   await installFakeChatStream(page, { lines: ['The first words.'], delayMs: 3000, done: null })
   await openChat(page, paperId)
   await askWithoutWaiting(page, 'Still waiting?')

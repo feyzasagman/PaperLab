@@ -368,6 +368,7 @@ async def test_the_e2e_fixture_paper_sends_no_openalex_request(worker_session, o
 
 
 async def test_the_worker_asks_openalex_nothing_while_it_is_off(worker_session, doi_pdf, ctx, fake_openalex):
+    await paper_sources.update(worker_session, {"enabled": {"crossref": False}})  # Crossref shares the fake transport
     paper = await add_paper(worker_session, doi_pdf)
 
     await ingest.ingest_paper({**ctx, "transport": fake_openalex.transport}, str(paper.id))
@@ -389,3 +390,18 @@ async def test_the_worker_sends_the_openalex_key_in_a_header_never_in_a_url(
     assert fake_openalex.requests
     assert all(r.headers["Authorization"] == "Bearer oa-key-0123456789" for r in fake_openalex.requests)
     assert not any("oa-key" in str(r.url) for r in fake_openalex.requests)
+
+
+async def test_with_openalex_off_the_worker_asks_crossref_for_the_source_type(worker_session, doi_pdf, ctx):
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.host)
+        return httpx.Response(200, json={"message": {"type": "journal-article"}})
+
+    paper = await add_paper(worker_session, doi_pdf)
+    await ingest.ingest_paper({**ctx, "transport": httpx.MockTransport(handler)}, str(paper.id))
+    await worker_session.refresh(paper)
+
+    assert (paper.status, paper.source_type, paper.peer_reviewed) == ("ready", "journal_article", "true")
+    assert seen == ["api.crossref.org"]

@@ -10,6 +10,8 @@ const paper = {
   doi: '10.18653/v1/n19-1423',
   abstract: 'We introduce a new language representation model.',
   is_retracted: false,
+  source_type: null,
+  peer_reviewed: 'unknown',
 } as Paper
 
 describe('toForm', () => {
@@ -22,6 +24,8 @@ describe('toForm', () => {
       doi: '10.18653/v1/n19-1423',
       abstract: 'We introduce a new language representation model.',
       isRetracted: false,
+      sourceType: '',
+      peerReviewed: 'unknown',
     })
   })
 })
@@ -60,5 +64,14 @@ describe('toUpdate', () => {
     })
     expect(toUpdate(paper, { ...toForm(paper), abstract: '   ' })).toEqual({ abstract: null })
     expect(toUpdate(paper, { ...toForm(paper), abstract: `${paper.abstract}\n` })).toEqual({})
+  })
+})
+
+describe('source type and peer review', () => {
+  it('sends a changed source type and peer review, and null when the type is set back to Not set', () => {
+    const form = { ...toForm(paper), sourceType: 'preprint' as const, peerReviewed: 'false' as const }
+    expect(toUpdate(paper, form)).toEqual({ source_type: 'preprint', peer_reviewed: 'false' })
+    const typed = { ...paper, source_type: 'preprint' } as Paper
+    expect(toUpdate(typed, { ...toForm(typed), sourceType: '' })).toEqual({ source_type: null })
   })
 })

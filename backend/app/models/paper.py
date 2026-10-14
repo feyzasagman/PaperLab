@@ -4,7 +4,7 @@ from enum import StrEnum
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, SmallInteger, Text, func, select, text
+from sqlalchemy import DateTime, ForeignKey, SmallInteger, Text, exists, func, select, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, aggregate_order_by
 from sqlalchemy.orm import Mapped, column_property, mapped_column
 
@@ -38,6 +38,10 @@ class Paper(Base):
     year: Mapped[int | None]
     venue: Mapped[str | None] = mapped_column(Text)
     type: Mapped[str | None] = mapped_column(Text)
+    # M39 F6: see app.core.source_types. evidence_access is derived (the property below), never stored.
+    source_type: Mapped[str | None] = mapped_column(Text)
+    peer_reviewed: Mapped[str] = mapped_column(Text, server_default=text("'unknown'"))
+    published_doi: Mapped[str | None] = mapped_column(Text)
     is_retracted: Mapped[bool] = mapped_column(server_default=text("false"))
     oa_status: Mapped[str | None] = mapped_column(Text)
     oa_url: Mapped[str | None] = mapped_column(Text)
@@ -72,6 +76,12 @@ class Paper(Base):
         .scalar_subquery()
     )
 
+    @property
+    def evidence_access(self) -> str:
+        from app.core.source_types import evidence_access
+
+        return evidence_access(self.abstract, self.status, self.has_chunks)
+
 
 class Chunk(Base):
     __tablename__ = "chunks"
@@ -86,3 +96,9 @@ class Chunk(Base):
     embedding: Mapped[Any | None] = mapped_column(Vector(768))
     embed_model: Mapped[str] = mapped_column(Text)
     strategy_ver: Mapped[int]
+
+
+# True when the paper has chunks; loaded with every paper so evidence_access needs no query.
+Paper.has_chunks = column_property(
+    exists().where(Chunk.paper_id == Paper.id).correlate_except(Chunk)
+)

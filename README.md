@@ -371,9 +371,12 @@ the folder you unpacked):
 The server's tools:
 
 Library:
-- `search_library`: passages closest to a question, in the whole library or one workspace;
-- `get_paper`: a paper's details, your reading pass and decision (`reading_pass`, `triage`), section outline,
-  workspaces and every note with who wrote it;
+- `search_library`: passages closest to a question, in the whole library or one workspace, each with its paper's
+  source type, peer-review status and how much of the paper PaperLab has (`source_type`, `peer_reviewed`,
+  `evidence_access`);
+- `get_paper`: a paper's details, those same three fields (and the published version of a preprint, `published_doi`),
+  your reading pass and decision (`reading_pass`, `triage`), section outline, workspaces and every note with who
+  wrote it;
 - `related_papers`: library papers connected to one, up to three links away;
 - `list_workspaces`: your workspaces, with their names;
 - `create_workspace`: a new workspace;

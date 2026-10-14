@@ -31,7 +31,7 @@ test('shows why a paper is here, its reading queue, and never a not-yet-imported
   //    reason both sibling specs avoid fixture 1: discovery_fake.py derives fixture 1's id as "2609.00001", which
   //    collides with FREE_ARXIV_ID and can import for free if another spec sharing this stack got there first.
   await page.goto(`/#/workspaces/${workspaceId}?tab=search`)
-  await page.getByLabel('Search query').fill('bert')
+  await page.getByLabel('Search query').fill('paperlab pagination fixture')
   const [startResponse] = await Promise.all([
     page.waitForResponse((r) => r.url().endsWith('/search/runs') && r.request().method() === 'POST'),
     page.getByRole('button', { name: 'Start' }).click(),

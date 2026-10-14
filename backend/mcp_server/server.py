@@ -77,7 +77,9 @@ async def search_library(query: str, workspace: str | None = None) -> list[libra
     `workspace` to search the whole library, or give a workspace's exact name; an unknown name answers with the
     names that exist. Until the owner downloads the search model, it answers search_not_set_up with a sentence to
     pass on. While search is being rebuilt with a new source, it answers search_rebuilding with how far it got (done
-    of total papers): try again when it finishes."""
+    of total papers): try again when it finishes. Each passage says what its paper is: `source_type` (journal_article,
+    proceedings, book, chapter, preprint, magazine, thesis, other, or null), `peer_reviewed` (true, false or unknown:
+    a heuristic) and `evidence_access` (full_text, abstract or metadata): weigh the evidence by them."""
     async with sessions() as session:
         return await library.search(session, query, workspace)
 
@@ -88,7 +90,9 @@ async def get_paper(paper_id: uuid.UUID) -> library.PaperCard:
     """A paper's details, its section outline with start pages, its workspaces, and every note on it. reading_pass is
     how many of Keshav's three passes the owner has finished (0–3), and triage their keep / later / drop decision, or
     null. Only the owner sets them. Each note has a provenance: `human` is the owner's own writing; `llm` and
-    `llm_edited` were written by an AI."""
+    `llm_edited` were written by an AI. `source_type`, `peer_reviewed` (true, false or unknown) and `evidence_access`
+    (full_text, abstract or metadata: how much of the paper PaperLab holds) say what kind of source it is;
+    `published_doi` is a preprint's published version, when known."""
     async with sessions() as session:
         return await library.paper_card(session, paper_id)
 

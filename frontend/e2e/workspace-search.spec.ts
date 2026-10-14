@@ -23,7 +23,7 @@ async function waitForRunToFinish(request: APIRequestContext, workspaceId: strin
 
 test('search, screen, import a hit, then upload its PDF manually', async ({ page, request, workspaceId }) => {
   await page.goto(`/#/workspaces/${workspaceId}?tab=search`)
-  await page.getByLabel('Search query').fill('bert')
+  await page.getByLabel('Search query').fill('paperlab pagination fixture')
   const [startResponse] = await Promise.all([
     page.waitForResponse((r) => r.url().endsWith('/search/runs') && r.request().method() === 'POST'),
     page.getByRole('button', { name: 'Start' }).click(),
