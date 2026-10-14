@@ -504,22 +504,22 @@ cd desktop && npm run e2e -- --project=stub              # its window against a 
 docker compose exec api python -m evals.answer_check --paper "<title prefix>" --workspace "<name>"  # manual, real LLM
 ```
 
-- **End-to-end tests** run against the real stack, with no mocked backend. They expect the fake model, which always
-gives the same answer, and the search model downloaded: start the API and the worker with
-`LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker ingest-worker`, run the tests, then go back with
-`docker compose up -d api worker ingest-worker`. The specs tagged `@no-search-model` need a stack with no search model and skip
-themselves otherwise: start it with
-`MODELS_DIR=/models/none LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker ingest-worker`, then run
-`npx playwright test --project=no-search-model --no-deps`, then `docker compose up -d api worker ingest-worker` again to bring the
-models folder back.
+- **End-to-end tests** run against the real stack, with no mocked backend, on their own compose project
+(`paperlab-e2e`, with its own database and ports), so your library is never touched. They expect the fake model, which
+always gives the same answer, and the search model, which the script copies from your `paperlab_models` volume. Run
+`scripts/e2e-stack.sh up`, then `npm run e2e` in `frontend/` (it targets :5280 and refuses any other stack), then
+`scripts/e2e-stack.sh down`. Your own stack is never restarted for tests. The specs tagged `@no-search-model` need a
+stack with no search model and skip themselves otherwise: run `scripts/e2e-stack.sh up --no-search-model`, then
+`npx playwright test --project=no-search-model --no-deps`, then `scripts/e2e-stack.sh up` again to bring the models
+folder back. To call an MCP tool against that stack, run
+`scripts/e2e-stack.sh exec api python - <tool> '<json>' < frontend/e2e/mcp_call.py`.
 - **The release stack** is what the desktop app and the two-command install run. Build it with
 `docker build -t ghcr.io/khannoussi-malek/paperlab:dev -t ghcr.io/khannoussi-malek/paperlab:<desktop/package.json's version> .`,
-then start it with `LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose -f desktop/docker-compose.yml up -d`. It
-serves the built app on :5190 with its own volumes. In `frontend/`,
-`E2E_RELEASE=1 E2E_BASE_URL=http://127.0.0.1:5190 npx playwright test --project=release` runs what a fresh install must
+then start it with `LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake PAPERLAB_PORT=5290 docker compose -p paperlab-release-e2e -f desktop/docker-compose.yml up -d`. It
+serves the built app on :5290 with its own volumes, apart from the desktop app's library (project `paperlab-app`). In `frontend/`,
+`E2E_RELEASE=1 E2E_BASE_URL=http://127.0.0.1:5290 npx playwright test --project=release` runs what a fresh install must
 pass. In `desktop/`, `npm run build && E2E_RELEASE=1 npx playwright test --project=release-stack` drives the app over
-it: upgrade backup, close and quit. `docker compose -f desktop/docker-compose.yml down -v` deletes that library, which
-is also the desktop app's.
+it: upgrade backup, close and quit. `docker compose -p paperlab-release-e2e -f desktop/docker-compose.yml down -v` deletes that test library.
 - **Retrieval eval:** `docker compose exec api python -m evals.run` prints recall@k for the questions in
 `backend/evals/questions.yaml`, asking with the search model PaperLab ships; `--variant full` or `--variant int8` asks
 with the other one once it is downloaded. Run it twice after a re-ingest before comparing results.

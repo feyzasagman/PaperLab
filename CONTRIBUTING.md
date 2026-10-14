@@ -77,14 +77,14 @@ same way:
 
 ```sh
 cd frontend && npx playwright install chromium           # once
-LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker ingest-worker
+scripts/e2e-stack.sh up                                  # its own stack (paperlab-e2e), fake providers, your library untouched
 cd frontend && npm run typecheck:e2e && npm run e2e
-docker compose up -d api worker ingest-worker                          # put the real providers back
+scripts/e2e-stack.sh down
 ```
 
 Two things that will waste your afternoon if nobody tells you:
 
-- The E2E suite drives a real browser against `:5180`. Wait for that proxy to be serving before you start, and run
+- The E2E suite drives a real browser against `:5280`. Wait for that proxy to be serving before you start, and run
   it with nothing else heavy on the machine — a loaded laptop produces timeouts that look like real failures.
 - Restarting the API kills a running eval. `docker compose exec api python -m evals.answers` takes a long time on a
   local model; leave the stack alone until it finishes.

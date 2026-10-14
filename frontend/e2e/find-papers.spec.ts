@@ -32,7 +32,7 @@ test.beforeEach(async ({ request }) => {
   await setSourceSettings(request, { enabled: FREE_SOURCES_ON })
   const found = await request.get('/api/discovery/search?q=fixture')
   const titles = found.ok() ? (await found.json()).results.map((c: { title: string }) => c.title) : []
-  const hint = 'start the API with DISCOVERY_PROVIDER=fake (see the api service comment in docker-compose.yml)'
+  const hint = 'start the test stack with scripts/e2e-stack.sh up'
   expect(titles, hint).toEqual([FREE, LANDING, CLOSED])
 })
 

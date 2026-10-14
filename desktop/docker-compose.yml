@@ -51,7 +51,7 @@ services:
     # Exec form: uvicorn is PID 1 and gets `compose stop`'s SIGTERM itself.
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
-      # Tests: `LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d`.
+      # Tests: `LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose -p paperlab-release-e2e up -d`.
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       DISCOVERY_PROVIDER: ${DISCOVERY_PROVIDER:-live}
       # The release run (`-p paperlab-release-e2e`) passes the fake-provider guard; this app keeps real providers.
