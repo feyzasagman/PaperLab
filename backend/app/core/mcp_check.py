@@ -19,6 +19,7 @@ TOOLS = [
     "create_note",
     "create_saved_search",
     "create_workspace",
+    "export_citations",
     "generate_evidence_card",
     "get_evidence_card",
     "get_paper",
@@ -67,9 +68,11 @@ async def check_server(*, timeout: float = 30) -> McpCheck:
         with anyio.fail_after(timeout):
             async with Client(server, mode="legacy") as client:
                 tools = sorted(tool.name for tool in (await client.list_tools()).tools)
-                if tools != TOOLS:
-                    missing = ", ".join(name for name in TOOLS if name not in tools)
-                    return McpCheck(ok=False, tools=tools, detail=f"The MCP server is missing tools: {missing}.")
+                missing = [name for name in TOOLS if name not in tools]  # extra tools: a newer server, not a fault
+                if missing:
+                    return McpCheck(
+                        ok=False, tools=tools, detail=f"The MCP server is missing tools: {', '.join(missing)}."
+                    )
                 answer = await client.call_tool("get_paper", {"paper_id": NO_PAPER})
     except TimeoutError:
         return McpCheck(ok=False, tools=tools, detail=f"The MCP server didn't answer within {timeout:g} seconds.")
