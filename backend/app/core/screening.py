@@ -18,6 +18,9 @@ from app.models.workspace_search import WorkspaceSearchHit, WorkspaceSearchRun
 from app.providers.llm import ANTHROPIC_HOST, host_of
 
 RANKED_LIMIT_MAX = 500
+# D265: auto pre-screen after a scheduled run scores this many of the run's new hits, best (ranked) first; the rest
+# stay unscored and the owner can press Suggest for them (manual runs are not capped).
+AUTO_PRESCREEN_MAX = 200
 _POSITIVE = {"relevant", "maybe"}
 
 
@@ -99,7 +102,14 @@ async def get_state(session: AsyncSession, workspace_id: uuid.UUID) -> dict:
     if workspace is None:
         raise NotFound(f"workspace {workspace_id} not found")
     model = await _default_model(session)
+    capped_stats = await session.scalar(
+        select(WorkspaceSearchRun.stats_json["prescreen_capped"]).where(
+            WorkspaceSearchRun.workspace_id == workspace_id, WorkspaceSearchRun.stats_json.has_key("prescreen_capped")
+        ).order_by(WorkspaceSearchRun.started_at.desc()).limit(1)
+    )
     return {
+        "capped": f"{capped_stats['queued']} of {capped_stats['total']}" if capped_stats else None,
+        "capped_left": capped_stats["total"] - capped_stats["queued"] if capped_stats else None,
         "criteria": workspace.inclusion_criteria,
         "research_question": workspace.research_question,
         "inclusion_criteria": workspace.inclusion_criteria,
@@ -193,7 +203,8 @@ def suggestion_queue(pool: Pool, run_id: uuid.UUID | None = None) -> list[uuid.U
 
 
 async def start_suggestions(
-    session: AsyncSession, workspace_id: uuid.UUID, confirm_remote: bool, run_id: uuid.UUID | None = None
+    session: AsyncSession, workspace_id: uuid.UUID, confirm_remote: bool, run_id: uuid.UUID | None = None,
+    limit: int | None = None,
 ) -> dict:
     """Marks the job running; the route enqueues it. Suggest only (D189): the job never writes stage1_status."""
     pool = await load_pool(session, workspace_id)
@@ -210,7 +221,11 @@ async def start_suggestions(
         raise Conflict(f"Abstracts will be sent to {host} and may cost money")
     workspace.suggest_status = "running"
     workspace.suggest_done = 0
-    workspace.suggest_total = len(suggestion_queue(pool, run_id))
+    queued = len(suggestion_queue(pool, run_id))
+    workspace.suggest_total = queued if limit is None else min(queued, limit)  # the job takes this many, best first
+    if run_id is not None and limit is not None and queued > limit:
+        run = await session.get(WorkspaceSearchRun, run_id)
+        run.stats_json = {**run.stats_json, "prescreen_capped": {"queued": limit, "total": queued}}
     workspace.suggest_run_id = run_id
     workspace.suggest_error = None
     await session.commit()
@@ -296,5 +311,5 @@ async def prescreen_after_run(session: AsyncSession, run: WorkspaceSearchRun) ->
         workspace.suggest_error = why
         await session.commit()
         return why
-    await start_suggestions(session, workspace.id, False, run.id)
+    await start_suggestions(session, workspace.id, False, run.id, limit=AUTO_PRESCREEN_MAX)
     return None

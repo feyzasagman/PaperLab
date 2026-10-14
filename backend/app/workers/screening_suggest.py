@@ -99,7 +99,7 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                 rows = {hit.id: (hit, ref) for hit, ref in pool.rows}
                 run_id = workspace.suggest_run_id
                 deadline = time.monotonic() + SUGGEST_JOB_TIMEOUT - SAFETY_MARGIN
-                for hit_id in suggestion_queue(pool, run_id):
+                for hit_id in suggestion_queue(pool, run_id)[: workspace.suggest_total or None]:  # D265: start sets it to the cap
                     await session.refresh(workspace)
                     if workspace.suggest_status != "running" or time.monotonic() >= deadline:
                         break

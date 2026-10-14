@@ -452,3 +452,11 @@ async def test_a_stopped_job_does_not_auto_import(session, worker, free_and_clos
     arq = await _stop_during_the_only_hit(session, worker, free_and_closed)
     await session.refresh(free)
     assert (free.acquisition_status, arq.jobs) == ("not_attempted", [])
+
+
+async def test_a_capped_start_scores_only_the_best_suggest_total_hits(session, worker):  # D265
+    workspace, hits = await _running(session, [(POSITIVE, "relevant"), (POSITIVE + " again", None), (NEGATIVE, None)])
+    workspace.suggest_total = 1
+    llm = worker(ScriptedLLM([J("include")]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    assert len(llm.calls) == 1
