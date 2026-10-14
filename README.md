@@ -403,7 +403,9 @@ Systematic search and screening:
 - `import_hit`: brings a hit into the library and the workspace;
 - `snowball`: finds papers a paper cites, or that cite it, as new hits;
 - `set_eligibility`: records include or exclude after full-text reading;
-- `get_prisma`: the PRISMA flow counts for a workspace or one run.
+- `get_prisma`: the PRISMA flow counts for a workspace or one run;
+- `get_screening_criteria`: a workspace's research question and screening criteria;
+- `set_screening_criteria`: changes them, which clears the AI suggestions, so Claude asks you first.
 
 Checking claims:
 - `verify_claim`: whether a library paper supports a claim, with a quote from the paper;
