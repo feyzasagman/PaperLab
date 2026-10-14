@@ -83,7 +83,7 @@ function launchDeps(docker: Docker | null, bin: string | null, signal: AbortSign
     version: app.getVersion(),
     lastVersion: settings.lastVersion,
     writeFiles: () =>
-      writeFiles(DATA, SOURCES, process.platform === 'win32' ? undefined : join(homedir(), '.local', 'bin')),
+      writeFiles(DATA, SOURCES, process.platform === 'win32' ? undefined : join(homedir(), '.local', 'bin'), log),
     backup: () => backUp(DATA, (path) => docker?.dumpTo(path) ?? Promise.reject(new Error('docker was not found'))),
     backedUpFrom: settings.backedUpFrom,
     markBackedUp: () => setSettings({ backedUpFrom: settings.lastVersion }),

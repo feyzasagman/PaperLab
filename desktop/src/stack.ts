@@ -278,15 +278,24 @@ export function viewFor(screen: Screen): View {
 /** Step 4: the compose file and the MCP launcher, copied from the app on every launch so an update refreshes them.
  * With `binDir` (~/.local/bin, macOS and Linux), also a `paperlab-mcp` there that runs the launcher, the same file
  * `scripts/paperlab-mcp --install` writes, so Connect Claude's config and command read the same for every user. */
-export function writeFiles(dataDir: string, sources: { compose: string; script: string }, binDir?: string): void {
+export function writeFiles(
+  dataDir: string,
+  sources: { compose: string; script: string },
+  binDir?: string,
+  log: (line: string) => void = () => {},
+): void {
   mkdirSync(join(dataDir, 'scripts'), { recursive: true })
   copyFileSync(sources.compose, join(dataDir, 'docker-compose.yml'))
   const script = join(dataDir, 'scripts', 'paperlab-mcp')
   copyFileSync(sources.script, script)
   chmodSync(script, 0o755)
   if (binDir === undefined) return
-  mkdirSync(binDir, { recursive: true })
-  const launcher = join(binDir, 'paperlab-mcp')
-  writeFileSync(launcher, `#!/bin/sh\nexec '${script.replaceAll("'", "'\\''")}' "$@"\n`)
-  chmodSync(launcher, 0o755)
+  try { // a read-only home or a file in the way must not stop the app: only Claude's setup loses its short command
+    mkdirSync(binDir, { recursive: true })
+    const launcher = join(binDir, 'paperlab-mcp')
+    writeFileSync(launcher, `#!/bin/sh\nexec '${script.replaceAll("'", "'\\''")}' "$@"\n`)
+    chmodSync(launcher, 0o755)
+  } catch (error) {
+    log(`couldn't write ${join(binDir, 'paperlab-mcp')}: ${String(error)}`)
+  }
 }

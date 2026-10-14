@@ -186,10 +186,11 @@ def _first_author_is(authors: list[str], surname: str) -> bool:
     return name == wanted or name.endswith(f" {wanted}")
 
 
-async def match(session: AsyncSession, citation: Citation, workspace_id=None) -> Match:
+async def match(session: AsyncSession, citation: Citation, workspace_id=None, only_doi: str | None = None) -> Match:
     """Library papers a citation points at: by DOI, or by first-author surname and year (inside a workspace if
-    given). Zero or several matches are returned as they are, never resolved."""
-    query = select(Paper.id, Paper.title, Paper.authors, Paper.year)
+    given). Zero or several matches are returned as they are, never resolved. `only_doi` (the reference list's DOI for
+    this citation) drops author–year candidates whose own DOI is another one."""
+    query = select(Paper.id, Paper.title, Paper.authors, Paper.year, Paper.doi)
     if workspace_id is not None:
         query = query.join(workspace_papers, workspace_papers.c.paper_id == Paper.id).where(
             workspace_papers.c.workspace_id == workspace_id
@@ -201,6 +202,8 @@ async def match(session: AsyncSession, citation: Citation, workspace_id=None) ->
     rows = (await session.execute(query.order_by(Paper.title))).all()
     if citation.kind == "author_year":
         rows = [r for r in rows if _first_author_is(r.authors, citation.surname)]
+        if only_doi:
+            rows = [r for r in rows if not r.doi or normalize_doi(r.doi) == only_doi]
         exact = [r for r in rows if r.year == citation.year]
         # A preprint or online-first year often differs from the issue year by one (D279): the cited year wins, and a
         # lone neighbour matches with a warning; two neighbours are left ambiguous.

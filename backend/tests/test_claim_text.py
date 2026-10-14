@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app.core.claim_text import Block, blocks, inline, reference_dois, split_references
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claims"
@@ -8,8 +10,25 @@ FIXTURES = Path(__file__).parent / "fixtures" / "claims"
 def test_headings_list_markers_and_emphasis_go_and_each_item_is_its_own_block():
     note = "# Title\n\n## Section\n\nA paragraph that\nwraps.\n\n- **Label.** First item.\n- Second *item*.\n1. Third."
     assert blocks(note) == [
-        Block("A paragraph that wraps."), Block("Label. First item."), Block("Second item."), Block("Third.")
+        Block("A paragraph that wraps."),
+        Block("Label. First item.", lead="Label."),
+        Block("Second item."),
+        Block("Third."),
     ]
+
+
+def test_only_a_block_that_opens_with_a_bold_span_has_a_lead():
+    note = "- **Smith (2020).** Finding.\n- __Lee (2021).__ Other.\n- Plain **bold** later.\n\n**Para** text."
+    assert [b.lead for b in blocks(note)] == ["Smith (2020).", "Lee (2021).", "", "Para"]
+
+
+def test_a_non_list_paragraph_is_only_interrupted_by_a_numbered_one():
+    assert [b.text for b in blocks("Published in\n2024. The authors found X (Smith, 2020).")] == [
+        "Published in 2024. The authors found X (Smith, 2020)."
+    ]
+    assert [b.text for b in blocks("1. a (Smith, 2020)\n2. b (Lee, 2021)")] == ["a (Smith, 2020)", "b (Lee, 2021)"]
+    assert [b.text for b in blocks("Intro line\n1. first (Smith, 2020)")] == ["Intro line", "first (Smith, 2020)"]
+    assert [b.text for b in blocks("- a (Smith, 2020)\n- b (Lee, 2021)")] == ["a (Smith, 2020)", "b (Lee, 2021)"]
 
 
 def test_a_table_row_is_one_block_with_its_cells_and_the_header_row_is_skipped():
@@ -40,6 +59,25 @@ def test_the_reference_list_is_split_off_under_any_usual_heading():
         body, refs = split_references(f"Body (Smith, 2020).\n\n{heading}\n\n- Smith, J. (2020). T.")
         assert (body.strip(), refs.strip()) == ("Body (Smith, 2020).", "- Smith, J. (2020). T.")
     assert split_references("No list here.") == ("No list here.", "")
+
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "References", "References:", "**References**", "**References:**", "__References__", "## **References**",
+        "### Reference list", "Bibliography", "# Works cited", "Sources", "## Références", "## Bibliografía",
+        "# Literatur", "## Literaturverzeichnis", "REFERENCES", "## References ##",
+    ],
+)
+def test_reference_heading_variants_split_the_list(heading):
+    body, refs = split_references(f"Body (Smith, 2020).\n\n{heading}\n\n- Smith, J. (2020). T.")
+    assert (body.strip(), refs.strip()) == ("Body (Smith, 2020).", "- Smith, J. (2020). T.")
+
+
+def test_a_sentence_that_merely_mentions_references_does_not_split():
+    text = "These references (Smith, 2020) matter.\nSee the sources above.\n**References are fun** too."
+    assert split_references(text) == (text, "")
 
 
 def test_no_pilot_block_keeps_markdown_syntax():

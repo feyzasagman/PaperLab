@@ -51,8 +51,8 @@ services:
       PAPERLAB_DIR: ${PWD:-}
       # The built-in search model's folder. E2E's no-search-model run points it at an empty one (README).
       MODELS_DIR: ${MODELS_DIR:-/models}
-      # DEV_RELOAD=1 restarts the api and workers on every saved change under backend/. Off by default: when your own
-      # library runs from this folder, a save would cancel its running jobs. scripts/e2e-stack.sh turns it on.
+      # Any non-empty DEV_RELOAD (e.g. DEV_RELOAD=1) restarts the api and workers on every saved change under backend/.
+      # Off by default: when your own library runs from this folder, a save would cancel its running jobs. scripts/e2e-stack.sh turns it on.
       DEV_RELOAD: ${DEV_RELOAD:-}
     command: sh -c 'alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 $${DEV_RELOAD:+--reload}'
     ports: ["127.0.0.1:${API_PORT:-8000}:8000"]

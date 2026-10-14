@@ -8,12 +8,19 @@ from dataclasses import dataclass
 from app.core import citations
 from app.core.enrichment import normalize_doi
 
+# A line of its own: "## References", "**References**", "References:", also in French, Spanish and German.
 _REFERENCES = re.compile(
-    r"^\s{0,3}#{1,6}\s*(?:references|bibliography|works cited|reference list)\s*#*\s*$", re.I | re.M
+    r"^\s{0,3}(?:#{1,6}\s*)?(?:\*\*|__)?\s*"
+    r"(?:references|reference list|bibliography|works cited|sources|r\u00e9f\u00e9rences|bibliograf\u00eda"
+    r"|literaturverzeichnis|literatur)"
+    r"\s*:?\s*(?:\*\*|__)?\s*:?\s*#*\s*$",
+    re.I | re.M,
 )
 _FRONT_MATTER = re.compile(r"\A---\n.*?\n---\n", re.S)
 _HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
 _ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+_FIRST_NUMBER = re.compile(r"^\s*1[.)]\s+")  # CommonMark: only "1." may interrupt a paragraph that isn't a list item
+_LEAD = re.compile(r"^(\*\*|__)(?=\S)(.+?)(?<=\S)\1")
 _QUOTE = re.compile(r"^\s*>\s?")
 _FENCE = re.compile(r"^\s*(?:```|~~~)")
 _TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$")
@@ -28,6 +35,7 @@ _CODE = re.compile(r"`([^`]*)`")
 class Block:
     text: str  # plain prose; a table row's non-empty cells joined by spaces
     cells: tuple[str, ...] = ()  # a table row's cells, plain; empty for prose
+    lead: str = ""  # the text of a bold span the block opens with ("**Smith (2020).** …"): the source's own label
 
 
 def split_references(text: str) -> tuple[str, str]:
@@ -56,12 +64,15 @@ def blocks(body: str) -> list[Block]:
     headings, blank lines and fences end a paragraph; fenced code is dropped."""
     out: list[Block] = []
     paragraph: list[str] = []
+    starts_as_item = False
     lines = body.split("\n")
     fenced = False
 
     def flush() -> None:
-        if text := inline(" ".join(paragraph)):
-            out.append(Block(text))
+        raw = " ".join(paragraph)
+        if text := inline(raw):
+            lead = _LEAD.match(raw)
+            out.append(Block(text, lead=inline(lead[2]) if lead else ""))
         paragraph.clear()
 
     for i, raw in enumerate(lines):
@@ -80,9 +91,12 @@ def blocks(body: str) -> list[Block]:
             if not _TABLE_RULE.match(line) and not header:
                 out.append(_row(line))
         else:
-            if _ITEM.match(line):
+            if _ITEM.match(line) and (not paragraph or starts_as_item or _FIRST_NUMBER.match(line)):
                 flush()
+                starts_as_item = True
                 line = _ITEM.sub("", line)
+            elif not paragraph:
+                starts_as_item = False
             paragraph.append(line.strip())
     flush()
     return out
@@ -92,14 +106,23 @@ def blocks(body: str) -> list[Block]:
 _ENTRY = re.compile(r"^\s*(?:[-*+]|\d+[.)])?\s*(?P<surname>[^,(]+?),.*?\((?P<year>(?:19|20)\d{2})[a-z]?[,)]")
 
 
-def reference_dois(references: str) -> dict[tuple[str, int], str]:
-    """(folded first-author surname, year) → DOI for each entry that gives one (D279). A key two entries share is left
-    out even when only one of them has a DOI: the citation can't say which paper it means (the benchmarks note cites
-    two Lu (2025) papers, one without a DOI)."""
+def _entries(references: str) -> dict[tuple[str, int], list[str | None]]:
     entries: dict[tuple[str, int], list[str | None]] = {}
     for line in references.split("\n"):
         if entry := _ENTRY.match(line):
             doi = citations._DOI.search(line)
             key = (citations.fold(entry["surname"].strip()), int(entry["year"]))
             entries.setdefault(key, []).append(normalize_doi(doi.group(1)) if doi else None)
-    return {key: dois[0] for key, dois in entries.items() if len(dois) == 1 and dois[0]}
+    return entries
+
+
+def reference_dois(references: str) -> dict[tuple[str, int], str]:
+    """(folded first-author surname, year) → DOI for each entry that gives one (D279). A key two entries share is left
+    out even when only one of them has a DOI: the citation can't say which paper it means (the benchmarks note cites
+    two Lu (2025) papers, one without a DOI)."""
+    return {key: dois[0] for key, dois in _entries(references).items() if len(dois) == 1 and dois[0]}
+
+
+def shared_keys(references: str) -> set[tuple[str, int]]:
+    """The (surname, year) keys two or more reference entries share: a citation with such a key is ambiguous."""
+    return {key for key, dois in _entries(references).items() if len(dois) > 1}

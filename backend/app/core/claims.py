@@ -212,8 +212,12 @@ class ClaimItem:
 
 _WIKILINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
 _SEE = re.compile(r"\(?\b[Ss]ee(?:\s+also)?\s+(?:the\s+)?\[\[[^\]]+\]\](?:\s*(?:,|and|or)\s*\[\[[^\]]+\]\])*\)?\.?")
-# "… are in [[note]]." or a "[[note]]: …" list item: it says where something is covered, not what a paper found (D278).
-_CROSS_REFERENCE = re.compile(r"\b(?:is|are)\s+(?:\w+\s+){0,2}in\s+\[\[[^\]]+\]\]\s*\.?$|^\[\[[^\]]+\]\]\s*[:—–-]")
+# "… are in [[note]]." / "… is covered in [[note]]" at the end, or a "[[note]]: …" list item: it says where something is
+# covered, not what a paper found (D278). Anything else with a wikilink is a claim.
+_CROSS_REFERENCE = re.compile(
+    r"\b(?:is|are)\s+(?:(?:covered|discussed|treated|described|summari[sz]ed|reviewed|listed)\s+)?in\s+"
+    r"\[\[[^\]]+\]\]\s*\.?$|^\[\[[^\]]+\]\]\s*:"
+)
 
 
 @dataclass(frozen=True)
@@ -250,14 +254,22 @@ def _prose(text: str) -> str:
 
 
 def _row_claims(block: claim_text.Block) -> list[Cited]:
-    """A table row's citation is checked against the row's other cells, as prose."""
+    """A table row's citation is checked against its own cell (the citation cut out), then against the row's cells
+    that cite nothing, as prose. With two or more cited cells each gets only its own: another cited cell is another
+    paper's finding."""
+    cited_cells = sum(1 for cell in block.cells if citations.find(cell))
+    uncited = [_prose(cell).rstrip(".") for cell in block.cells if not citations.find(cell)]
     out = []
-    for i, cell in enumerate(block.cells):
-        others = [  # a cell that cites a paper is that paper's cell, not evidence for this one
-            _prose(other).rstrip(".") for j, other in enumerate(block.cells) if j != i and not citations.find(other)
-        ]
-        claim = ". ".join(other for other in others if other)
-        out += [Cited(f"{claim}." if claim else "", c) for c in citations.find(cell)]
+    for cell in block.cells:
+        if not (found := citations.find(cell)):
+            continue
+        bare = _without(cell, found, keep_names=False)
+        own = _prose(_without(cell, found)).rstrip(".") if any(ch.isalnum() for ch in bare) else ""
+        parts = [own] + ([] if cited_cells > 1 else uncited)
+        claim = ". ".join(part for part in parts if part)
+        if cited_cells > 1 and len(claim.split()) < 3:
+            claim = ""
+        out += [Cited(f"{claim}." if claim else "", c) for c in found]
     return out
 
 
@@ -272,8 +284,9 @@ def _uncited_run(sentences: list[str]) -> list[str]:
 
 
 def _block_claims(block: claim_text.Block) -> list[Cited]:
-    """Each citation is checked against its own sentence (D277). A sentence that is only a label ("Smith (2020).")
-    hands its citation the rest of the block; a cross-reference is not_a_claim."""
+    """Each citation is checked against its own sentence (D277). Only a label the source marked (the block opens with
+    a bold span that is that first sentence: "**Smith (2020).** …") hands its citation the rest of the block; a
+    sentence that is only a citation otherwise has no claim. A cross-reference is not_a_claim."""
     sentences = citations.split_sentences(block.text)
     out = []
     for i, sentence in enumerate(sentences):
@@ -283,8 +296,10 @@ def _block_claims(block: claim_text.Block) -> list[Cited]:
         if _CROSS_REFERENCE.search(bare):
             out += [Cited(_prose(_without(sentence, found)), c, "not_a_claim") for c in found]
             continue
-        if len(_prose(bare).split()) < 3:  # a label: only a block's first sentence takes what follows it
-            claim = _prose(" ".join(_uncited_run(sentences[i + 1 :]))) if i == 0 else ""
+        if i == 0 and block.lead and sentence == block.lead:
+            claim = _prose(" ".join(_uncited_run(sentences[1:])))
+        elif not any(ch.isalnum() for ch in bare):  # nothing but the citation
+            claim = ""
         else:
             claim = _prose(_without(sentence, found))
         if claim and claim[-1].isalnum():
@@ -300,13 +315,14 @@ def cited_claims(body: str) -> list[Cited]:
 
 async def _match(session, citation: citations.Citation, dois: dict, workspace_id) -> citations.Match:
     """The note's reference list first: its DOI picks the one paper even when the library holds duplicates or the
-    paper has no authors or year. Author–year when the list gives none or the DOI isn't in the library."""
+    paper has no authors or year. Author–year when the list gives none or the DOI isn't in the library, but then
+    never a paper whose own DOI differs from the list's."""
     doi = dois.get((citations.fold(citation.surname), citation.year)) if citation.kind == "author_year" else None
     if doi:
         by_doi = await citations.match(session, replace(citation, kind="doi", doi=doi), workspace_id)
         if len(by_doi.paper_ids) == 1:
             return by_doi
-    return await citations.match(session, citation, workspace_id)
+    return await citations.match(session, citation, workspace_id, only_doi=doi)
 
 
 async def verify_claims(
@@ -330,6 +346,7 @@ async def verify_claims(
     """
     body, references = claim_text.split_references(text)
     dois = claim_text.reference_dois(references)
+    shared = claim_text.shared_keys(references)
     pending = cited_claims(body)
     if len(pending) > MAX_CLAIMS:
         raise InvalidInput("too_many_claims", detail=f"{len(pending)} cited claims; the limit is {MAX_CLAIMS}.")
@@ -338,6 +355,11 @@ async def verify_claims(
         claim, citation = cited.claim, cited.citation
         if cited.error:
             items.append(ClaimItem(claim, citation, error=cited.error))
+            continue
+        if citation.kind == "author_year" and (citations.fold(citation.surname), citation.year) in shared:
+            # two reference entries share this key: the citation can't say which paper it means
+            candidates = await citations.match(session, citation, workspace_id)
+            items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=candidates.titles))
             continue
         found = await _match(session, citation, dois, workspace_id)
         extra = {"warning": "year_mismatch", "library_year": found.library_year} if found.library_year else {}

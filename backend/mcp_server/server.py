@@ -377,10 +377,11 @@ async def verify_claims(
     library paper, its claim being the sentence, list item or table row that carries it; markdown is fine. Send the
     whole note: its reference list is never checked, but its DOIs are used to find the cited papers. A citation it
     can't match is reported, never guessed; one a year away from the only matching paper matches with warning
-    year_mismatch; a sentence that only points to another note is not_a_claim. Up to 30 citations per call. Verdicts
-    are AI judgements backed by quotes; confidence=low means the quote couldn't be found in the paper (or none was
-    given): tell the owner the verdict is unconfirmed and show no quote as evidence. save=true keeps each as an AI
-    note. A remote default model is refused unless the owner agreed and you pass allow_remote=true."""
+    year_mismatch; a sentence that only points to another note is not_a_claim. Up to 30 citations per call: send a
+    note with more in parts of at most 30, each with the reference list appended. Verdicts are AI judgements backed
+    by quotes; confidence=low means the quote couldn't be found in the paper (or none was given): tell the owner the
+    verdict is unconfirmed and show no quote as evidence. save=true keeps each as an AI note. A remote default model
+    is refused unless the owner agreed and you pass allow_remote=true."""
     async with sessions() as session:
         return await pipeline.verify_claims(session, text, workspace, save, allow_remote)
 

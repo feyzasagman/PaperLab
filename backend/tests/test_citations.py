@@ -333,7 +333,10 @@ def test_a_label_that_is_not_first_in_its_block_gets_no_claim_from_other_sentenc
     found = claims.cited_claims(
         "Other finding about novelty was large here. Smith (2020) agrees. More about other people (Lee, 2019)."
     )
-    assert [(c.citation.surname, c.claim) for c in found] == [("Smith", ""), ("Lee", "More about other people.")]
+    assert [(c.citation.surname, c.claim) for c in found] == [
+        ("Smith", "Smith agrees."),  # two words: verify_claims reports empty_claim
+        ("Lee", "More about other people."),
+    ]
 
 
 def test_a_first_sentence_label_stops_before_the_next_cited_sentence():
@@ -346,10 +349,7 @@ def test_a_first_sentence_label_stops_before_the_next_cited_sentence():
 
 def test_a_table_rows_claim_leaves_out_other_cells_that_cite_papers():
     found = claims.cited_claims("| A | B | C |\n|---|---|---|\n| Smith (2020) | Lee (2019) | Finding holds broadly |")
-    assert [(c.citation.surname, c.claim) for c in found] == [
-        ("Smith", "Finding holds broadly."),
-        ("Lee", "Finding holds broadly."),
-    ]
+    assert [(c.citation.surname, c.claim) for c in found] == [("Smith", ""), ("Lee", "")]  # two cited cells
 
 
 def test_a_citation_without_a_final_period_stays_inside_its_block():
@@ -418,3 +418,75 @@ async def test_a_reference_doi_missing_from_the_library_falls_back_to_author_yea
     )
     [item] = await claims.verify_claims(session, note, llm=Scripted())
     assert item.check.paper_id == paper.id
+
+
+def test_a_short_first_sentence_without_a_bold_lead_is_not_a_label():
+    [smith] = claims.cited_claims("Smith (2020) found convergence. Other work disagrees strongly with this view.")
+    assert smith.claim == "Smith found convergence."
+    [smith] = claims.cited_claims("Creativity rose (Smith, 2020). Diversity fell in every group studied.")
+    assert smith.claim == "Creativity rose."  # two words: verify_claims reports empty_claim
+    [smith] = claims.cited_claims("- Smith (2020). Finding one holds.")
+    assert smith.claim == ""
+    [smith] = claims.cited_claims("- __Smith (2020).__ Finding one holds.")
+    assert smith.claim == "Finding one holds."
+
+
+def test_a_table_citation_is_judged_on_its_own_cell_first():
+    note = (
+        "| Topic | Finding | Type |\n|---|---|---|\n"
+        "| Homogenization | Ideas converge across users (Smith, 2020) | Lab study |"
+    )
+    [smith] = claims.cited_claims(note)
+    assert smith.claim.startswith("Ideas converge across users.") and "Lab study" in smith.claim
+
+
+def test_a_cited_cell_never_borrows_another_cited_cells_finding():
+    found = claims.cited_claims("| A | B | C |\n|---|---|---|\n| Smith (2020) | Fluency rose | Lee (2021) |")
+    assert [(c.citation.surname, c.claim) for c in found] == [("Smith", ""), ("Lee", "")]
+    found = claims.cited_claims(
+        "| A | B |\n|---|---|\n| Ideas converge widely (Smith, 2020) | Fluency rose fast (Lee, 2021) |"
+    )
+    assert [c.claim for c in found] == ["Ideas converge widely.", "Fluency rose fast."]
+
+
+def test_a_wikilink_is_a_cross_reference_only_at_the_end_or_before_a_colon():
+    for text in (
+        "Divergent thinking is stronger in [[children]] (Smith, 2020).",
+        "- [[Homogenization]] \u2014 ideas converge (Anderson, 2024).",
+    ):
+        [cited] = claims.cited_claims(text)
+        assert cited.error is None, text
+    for text in (
+        "Both are covered in [[some-note]] (Smith, 2020).",
+        "- [[some-note]]: the full treatment (Smith, 2020).",
+        "These are summarised in [[some-note]] (Smith, 2020).",
+    ):
+        [cited] = claims.cited_claims(text)
+        assert cited.error == "not_a_claim", text
+
+
+async def test_a_list_doi_that_is_not_in_the_library_drops_a_candidate_with_another_doi(session):
+    await add(session, "Other doi paper", ["Ann Listdoi"], 1987, doi="10.1000/m46-b")
+    note = "It holds in general (Listdoi, 1987).\n\n## References\n\n- Listdoi, A. (1987). T. https://doi.org/10.1000/m46-a\n"
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check) == ("citation_not_found", None)
+
+
+async def test_a_key_two_list_entries_share_is_ambiguous_and_never_checked(session):
+    await add(session, "The only Sharedkey paper", ["Ann Sharedkey"], 1987)
+    note = (
+        "It holds in general (Sharedkey, 1987).\n\n## References\n\n"
+        "- Sharedkey, A. (1987). One. https://doi.org/10.1000/m46-one\n- Sharedkey, B. (1987). Two.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check, item.candidates) == ("ambiguous_citation", None, ["The only Sharedkey paper"])
+
+
+async def test_a_doi_paper_outside_the_workspace_is_not_matched_but_author_year_inside_it_is(session):
+    await add(session, "Outside by doi", ["Ann Wsscope"], 1987, doi="10.1000/m46-ws")
+    inside = await add(session, "Inside by name", ["Ann Wsscope"], 1987)
+    workspace = await workspaces.create(session, "m46 scope")
+    await workspaces.add_paper(session, workspace.id, inside.id)
+    note = "It holds in general (Wsscope, 1987).\n\n## References\n\n- Wsscope, A. (1987). T. https://doi.org/10.1000/m46-ws\n"
+    [item] = await claims.verify_claims(session, note, workspace_id=workspace.id, llm=Scripted())
+    assert item.check.paper_id == inside.id
