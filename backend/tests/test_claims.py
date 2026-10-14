@@ -285,3 +285,44 @@ async def test_a_previous_chunk_that_ends_cleanly_adds_no_context(session, monke
     llm = Scripted(reply("not_addressed"))
     await claims.verify_claim(session, "Something holds here.", paper_id=paper.id, llm=llm)
     assert "It ends cleanly" not in llm.prompts[0]
+
+
+async def chunks_on_pages(session, *pages_and_texts):
+    paper = await bare_paper(session)
+    made = [
+        Chunk(paper_id=paper.id, ordinal=i, page=page, bbox=[[0, 0, 1, 1]], text=text, embed_model="test",
+              strategy_ver=1)
+        for i, (page, text) in enumerate(pages_and_texts)
+    ]
+    session.add_all(made)
+    await session.flush()
+    return paper, made[-1]
+
+
+async def test_a_sidebar_between_the_halves_does_not_hide_the_sentence_start(session, monkeypatch):
+    paper, last = await chunks_on_pages(
+        session,
+        (14, "Table 9 summarizes it. On average, we find that none of"),
+        (15, "Sidebar quote one is here."),
+        (15, "It was always very simple."),
+        (15, "the LLMs produce assessments that correlate positively with experts."),
+    )
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    llm = Scripted(reply("not_addressed"))
+    await claims.verify_claim(session, "No LLM judge correlated positively.", paper_id=paper.id, llm=llm)
+    assert "On average, we find that none of" in llm.prompts[0]
+    assert llm.prompts[0].index("none of") < llm.prompts[0].index("the LLMs produce")
+
+
+async def test_a_dangling_chunk_just_before_wins_over_the_previous_page(session, monkeypatch):
+    paper, last = await chunks_on_pages(
+        session,
+        (14, "Table 9 summarizes it. On average, we find that none of"),
+        (15, "Intro done. Results show that most of the models fail and then the"),
+        (15, "models produce assessments that correlate positively with experts."),
+    )
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    llm = Scripted(reply("not_addressed"))
+    await claims.verify_claim(session, "No LLM judge correlated positively.", paper_id=paper.id, llm=llm)
+    assert "Results show that most of the models fail and then the" in llm.prompts[0]
+    assert "On average, we find" not in llm.prompts[0]

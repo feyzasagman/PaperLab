@@ -77,26 +77,39 @@ LEAD_CHARS = 300  # how much of a sentence's start, from the chunk before, the v
 _SENTENCE_END = re.compile(r"[.!?][\"'”’)\]]*\s+")
 
 
+def _dangles(text: str) -> bool:
+    """True when the text ends mid-sentence: its last character (past closing quotes/brackets) isn't . ! ? :"""
+    return not text.rstrip().rstrip("\"'”’)]").rstrip().endswith((".", "!", "?", ":"))
+
+
+async def _predecessor(session, chunk) -> str:
+    """The text a lower-case-starting chunk continues: the chunk before it if that ends mid-sentence, else the last
+    chunk of the previous page (a sidebar or figure caption can sit between the halves), else nothing."""
+    ordinal = select(Chunk.ordinal).where(Chunk.id == chunk.id).scalar_subquery()
+    queries = (
+        select(Chunk.text).where(Chunk.paper_id == chunk.paper_id, Chunk.ordinal == ordinal - 1),
+        select(Chunk.text)
+        .where(Chunk.paper_id == chunk.paper_id, Chunk.page == chunk.page - 1)
+        .order_by(Chunk.ordinal.desc())
+        .limit(1),
+    )
+    for query in queries:
+        before = await session.scalar(query) or ""
+        if before.strip() and _dangles(before):
+            return before
+    return ""
+
+
 async def _leads(session, found) -> list[str]:
     """For each passage that starts mid-sentence (its first letter is lower-case), the start of that sentence: the
-    text after the last sentence end of the chunk before it. Chunks never cross a page, so a sentence over a page break
-    is split, and its first half can hold the negation ("none of" | "the LLMs … correlate positively", pilot 2 N1).
-    Context only: quotes are still taken from the passage itself."""
+    text after the last sentence end of its predecessor chunk. Chunks never cross a page, so a sentence over a page
+    break is split, and its first half can hold the negation ("none of" | "the LLMs … correlate positively", pilot 2
+    N1). Context only: quotes are still taken from the passage itself."""
     leads = []
     for chunk in found:
-        if not chunk.text.lstrip()[:1].islower():
-            leads.append("")
-            continue
-        ordinal = select(Chunk.ordinal).where(Chunk.id == chunk.id).scalar_subquery()
-        before = (
-            await session.scalar(
-                select(Chunk.text).where(Chunk.paper_id == chunk.paper_id, Chunk.ordinal == ordinal - 1)
-            )
-            or ""
-        )
+        before = await _predecessor(session, chunk) if chunk.text.lstrip()[:1].islower() else ""
         ends = list(_SENTENCE_END.finditer(before))
-        tail = (before[ends[-1].end() :] if ends else before).strip()
-        leads.append(tail[-LEAD_CHARS:] if tail and not tail.endswith((".", "!", "?")) else "")
+        leads.append((before[ends[-1].end() :] if ends else before).strip()[-LEAD_CHARS:])
     return leads
 
 
