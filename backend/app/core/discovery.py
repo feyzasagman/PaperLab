@@ -317,7 +317,7 @@ async def download_pdf(http: httpx.AsyncClient, urls: list[str]) -> bytes | None
     return None
 
 
-def _prefill(candidate: Candidate) -> dict[str, Any]:
+def prefill(candidate: Candidate) -> dict[str, Any]:
     """Enrichment trusts a stored openalex_id, and a DOI only when it's locked (D69). The title is always locked:
     ingest's PDF-font heuristic and enrichment's metadata are both worse than the title the source already gave us,
     so it must survive both (M7.5)."""
@@ -328,6 +328,7 @@ def _prefill(candidate: Candidate) -> dict[str, Any]:
         "authors": candidate.authors,
         "year": candidate.year,
         "venue": candidate.venue,
+        "abstract": candidate.abstract,
         "cited_by_count": candidate.cited_by_count,
         "doi": doi,
         "openalex_id": openalex_id,
@@ -352,4 +353,4 @@ async def add(session: AsyncSession, providers: Providers, candidate: Candidate,
         raise Conflict(NO_FREE_PDF)
     # ponytail: two adds of one paper racing past the check above hit papers' UNIQUE doi and 500. The buttons disable
     # while adding; catch IntegrityError here if it ever happens.
-    return await papers.create_paper(session, _filename(candidate.title), data, pdf_dir, prefill=_prefill(candidate))
+    return await papers.create_paper(session, _filename(candidate.title), data, pdf_dir, prefill=prefill(candidate))

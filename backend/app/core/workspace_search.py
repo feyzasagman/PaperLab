@@ -782,6 +782,19 @@ async def _record_snowball_citation(session: AsyncSession, hit: WorkspaceSearchH
     )
 
 
+async def _ref_prefill(session: AsyncSession, ref: ExternalRef) -> dict:
+    """Everything the ExternalRef knows, locked like discovery.add's (so ingest keeps the title and enrichment can
+    match by DOI). A DOI/OpenAlex id the library already holds under another paper is left out: papers.doi is UNIQUE."""
+    candidate = Candidate(
+        title=ref.title, authors=ref.authors, year=ref.year, venue=ref.venue, doi=ref.doi,
+        external_ids=ref.external_ids, cited_by_count=ref.cited_by_count, abstract=ref.abstract,
+    )
+    [marked] = await discovery.mark_in_library(session, [candidate])
+    if marked.paper_id is not None:
+        candidate = Candidate(title=ref.title, authors=ref.authors, year=ref.year, venue=ref.venue, abstract=ref.abstract)
+    return discovery.prefill(candidate)
+
+
 async def import_hits(
     session: AsyncSession, providers: Providers, workspace_id: uuid.UUID, hit_ids: list[uuid.UUID] | None
 ) -> ImportResult:
@@ -833,7 +846,8 @@ async def import_hits(
             failed += 1
             continue
         paper = await papers.create_paper(
-            session, f"{hit.normalized_title}.pdf", data, settings.pdf_dir, prefill={"title": ref.title}
+            session, f"{hit.normalized_title}.pdf", data, settings.pdf_dir,
+            prefill=await _ref_prefill(session, ref),
         )
         await workspaces.add_paper(session, workspace_id, paper.id)
         same_paper = [ExternalRef.id == ref.id, *_same_reference(ref.external_ids, ref.doi)]
@@ -876,7 +890,7 @@ async def upload_hit_pdf(
 
     paper = await papers.create_paper(
         session, filename or f"{hit.normalized_title}.pdf", content, settings.pdf_dir,
-        prefill={"title": ref.title} if ref else None,
+        prefill=await _ref_prefill(session, ref) if ref else None,
     )
     await workspaces.add_paper(session, workspace_id, paper.id)
     if ref is not None:

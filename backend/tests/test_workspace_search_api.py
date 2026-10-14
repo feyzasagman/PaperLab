@@ -1468,3 +1468,30 @@ async def test_start_run_stores_a_year_range_and_rejects_other_filters(client):
 
     assert ok.status_code == 201 and ok.json()["filters_json"] == {"year_from": 2023}
     assert bad.status_code == 422
+
+
+async def test_import_hits_keeps_the_hits_bibliographic_metadata_and_locks_title_and_doi(
+    session, client, discovery_api
+):
+    """Bug: only the title was passed to create_paper, so DOI/authors/year vanished and ingest then replaced the
+    title with the PDF's font-heuristic guess."""
+    from app.models import Paper
+    from app.models.references import ExternalRef
+    from app.models.workspace_search import WorkspaceSearchHit
+
+    discovery_api.pdf_host.reply("/meta.pdf", 200, content=b"%PDF-1.4 meta content")
+    hit_id = await _make_importable_hit(session, pdf_urls=["https://pdf.example/meta.pdf"])
+    hit = await session.get(WorkspaceSearchHit, hit_id)
+    ref = await session.get(ExternalRef, hit.external_ref_id)
+    ref.title, ref.authors, ref.year, ref.venue = "Imported Meta Title", ["Ada A", "Bo B"], 2025, "Sci Rep"
+    ref.doi, ref.abstract = f"10.1038/import-meta-{hit_id}", "An abstract."
+    await session.commit()
+
+    resp = await client.post(f"/api/workspaces/{hit.workspace_id}/search/hits/import", json={"hit_ids": [str(hit_id)]})
+
+    assert resp.json() == {"imported": 1, "failed": 0}
+    await session.refresh(hit)
+    paper = await session.get(Paper, hit.paper_id)
+    assert (paper.title, paper.authors, paper.year, paper.venue) == ("Imported Meta Title", ["Ada A", "Bo B"], 2025, "Sci Rep")
+    assert (paper.doi, paper.abstract) == (ref.doi.lower(), "An abstract.")
+    assert set(paper.manual_fields) == {"title", "doi"}

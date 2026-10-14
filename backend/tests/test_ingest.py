@@ -405,3 +405,18 @@ async def test_with_openalex_off_the_worker_asks_crossref_for_the_source_type(wo
 
     assert (paper.status, paper.source_type, paper.peer_reviewed) == ("ready", "journal_article", "true")
     assert seen == ["api.crossref.org"]
+
+
+async def test_an_imported_papers_title_and_doi_survive_ingest_when_the_pdf_title_differs(
+    worker_session, sample_pdf, ctx
+):
+    # Shape import_hits creates: known record, title and DOI locked, no openalex id. The PDF says "Deep Paper Title".
+    paper = await add_paper(
+        worker_session, sample_pdf, title="Record Title", doi="10.1000/imported-keeps", year=2025,
+        manual_fields=["doi", "title"],
+    )
+
+    await ingest.ingest_paper(ctx, str(paper.id))
+    await worker_session.refresh(paper)
+
+    assert (paper.status, paper.title, paper.doi, paper.year) == ("ready", "Record Title", "10.1000/imported-keeps", 2025)
