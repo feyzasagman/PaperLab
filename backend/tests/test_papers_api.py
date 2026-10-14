@@ -3,6 +3,7 @@ import uuid
 import pytest
 from sqlalchemy import text, update
 
+from app.config import settings
 from app.core import papers
 from app.core.chunking import ChunkDraft
 from app.models import Paper, PaperStatus
@@ -115,7 +116,15 @@ async def test_reingest_unknown_paper_is_404_and_enqueues_nothing(client, arq):
 
 
 async def test_health_vector_roundtrip(client):
-    assert (await client.get("/api/health")).json() == {"orm_roundtrip": True, "raw_sql_nearest_is_self": True}
+    body = (await client.get("/api/health")).json()
+    assert {k: body[k] for k in ("orm_roundtrip", "raw_sql_nearest_is_self")} == {
+        "orm_roundtrip": True, "raw_sql_nearest_is_self": True
+    }
+
+
+async def test_health_names_the_stack(client, monkeypatch):
+    monkeypatch.setattr(settings, "paperlab_stack", "paperlab-e2e")
+    assert (await client.get("/api/health")).json()["stack"] == "paperlab-e2e"
 
 
 async def test_a_paper_shows_its_enrichment_metadata(client):

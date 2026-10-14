@@ -54,6 +54,8 @@ services:
       # Tests: `LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d`.
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       DISCOVERY_PROVIDER: ${DISCOVERY_PROVIDER:-live}
+      # The release run (`-p paperlab-release-e2e`) passes the fake-provider guard; this app keeps real providers.
+      PAPERLAB_STACK: ${COMPOSE_PROJECT_NAME}
       # Where Connect Claude points Claude Desktop: the desktop app sets its data folder; from a shell it is the folder
       # `docker compose up` ran in.
       PAPERLAB_DIR: ${PAPERLAB_DIR:-${PWD:-}}
@@ -76,6 +78,7 @@ services:
     environment:
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       DISCOVERY_PROVIDER: ${DISCOVERY_PROVIDER:-live}
+      PAPERLAB_STACK: ${COMPOSE_PROJECT_NAME}
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       migrate:

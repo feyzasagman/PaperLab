@@ -23,7 +23,7 @@ services:
       POSTGRES_USER: paperlab
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paperlab}
       POSTGRES_DB: paperlab
-    ports: ["127.0.0.1:5433:5432"]
+    ports: ["127.0.0.1:${DB_PORT:-5433}:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U paperlab"]
@@ -39,18 +39,20 @@ services:
 
   api:
     <<: *backend
-    # Shell > .env > default. E2E: `LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api`, then
-    # `docker compose up -d api`.
+    # Shell > .env > default. E2E runs on its own stack: scripts/e2e-stack.sh (README).
     environment:
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       DISCOVERY_PROVIDER: ${DISCOVERY_PROVIDER:-live}
+      # The compose project (`paperlab`, or `paperlab-e2e` from scripts/e2e-stack.sh). Fake providers refuse to start
+      # unless it ends in -e2e (D273).
+      PAPERLAB_STACK: ${COMPOSE_PROJECT_NAME}
       # The folder `docker compose up` ran in, for the Connect Claude page (Compose uses its own working directory
       # when the shell exports no PWD).
       PAPERLAB_DIR: ${PWD:-}
       # The built-in search model's folder. E2E's no-search-model run points it at an empty one (README).
       MODELS_DIR: ${MODELS_DIR:-/models}
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
-    ports: ["127.0.0.1:8000:8000"]
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
 
   worker: &worker
     <<: *backend
@@ -62,6 +64,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       # The built-in search model's folder. E2E's no-search-model run points it at an empty one (README).
       MODELS_DIR: ${MODELS_DIR:-/models}
+      PAPERLAB_STACK: ${COMPOSE_PROJECT_NAME}
     # Not `arq --watch`: that restarts the worker in-process and never re-imports changed code.
     command: watchfiles --filter python "arq app.workers.settings.WorkerSettings" app
 
@@ -74,7 +77,7 @@ services:
     build: ./frontend
     environment:
       API_URL: http://api:8000
-    ports: ["127.0.0.1:5180:5173"]
+    ports: ["127.0.0.1:${FRONTEND_PORT:-5180}:5173"]
     volumes:
       - ./frontend:/app
       - /app/node_modules
