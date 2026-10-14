@@ -782,15 +782,25 @@ async def _record_snowball_citation(session: AsyncSession, hit: WorkspaceSearchH
     )
 
 
-async def _ref_prefill(session: AsyncSession, ref: ExternalRef) -> dict:
-    """Everything the ExternalRef knows, locked like discovery.add's (so ingest keeps the title and enrichment can
-    match by DOI). A DOI/OpenAlex id the library already holds under another paper is left out: papers.doi is UNIQUE."""
-    candidate = Candidate(
+def _ref_candidate(ref: ExternalRef) -> Candidate:
+    return Candidate(
         title=ref.title, authors=ref.authors, year=ref.year, venue=ref.venue, doi=ref.doi,
         external_ids=ref.external_ids, cited_by_count=ref.cited_by_count, abstract=ref.abstract,
     )
-    [marked] = await discovery.mark_in_library(session, [candidate])
-    if marked.paper_id is not None:
+
+
+async def _library_paper_id(session: AsyncSession, ref: ExternalRef) -> uuid.UUID | None:
+    """The library paper already holding this reference's DOI / OpenAlex id, if any."""
+    [marked] = await discovery.mark_in_library(session, [_ref_candidate(ref)])
+    return marked.paper_id
+
+
+async def _ref_prefill(session: AsyncSession, ref: ExternalRef) -> dict:
+    """Everything the ExternalRef knows, locked like discovery.add's (so ingest keeps the title and enrichment can
+    match by DOI). A DOI/OpenAlex id the library already holds under another paper is left out: papers.doi is UNIQUE
+    (only reachable from upload_hit_pdf; import_hits reuses that paper instead)."""
+    candidate = _ref_candidate(ref)
+    if await _library_paper_id(session, ref) is not None:
         candidate = Candidate(title=ref.title, authors=ref.authors, year=ref.year, venue=ref.venue, abstract=ref.abstract)
     return discovery.prefill(candidate)
 
@@ -820,12 +830,15 @@ async def import_hits(
             # automatic import) — re-running Import all must never quietly relabel it "imported" (I8).
             continue
         ref = await session.get(ExternalRef, hit.external_ref_id) if hit.external_ref_id else None
-        if ref is not None and ref.imported_as is not None:
-            # Already in the library — an earlier hit in this batch, an earlier run, or the References panel.
-            # Attach the existing paper instead of downloading/creating a duplicate, and don't re-enqueue ingest.
-            await workspaces.add_paper(session, workspace_id, ref.imported_as)
+        existing_id = ref.imported_as or await _library_paper_id(session, ref) if ref is not None else None
+        if existing_id is not None:
+            # Already in the library — an earlier hit in this batch, an earlier run, the References panel, or a paper
+            # holding the same DOI/OpenAlex id. Attach it instead of downloading/creating a duplicate, no re-ingest.
+            await workspaces.add_paper(session, workspace_id, existing_id)
+            if ref.imported_as is None:
+                ref.imported_as = existing_id
             hit.acquisition_status = "imported"
-            hit.paper_id = ref.imported_as
+            hit.paper_id = existing_id
             await _record_snowball_citation(session, hit, ref.id)
             imported += 1
             continue

@@ -1495,3 +1495,32 @@ async def test_import_hits_keeps_the_hits_bibliographic_metadata_and_locks_title
     assert (paper.title, paper.authors, paper.year, paper.venue) == ("Imported Meta Title", ["Ada A", "Bo B"], 2025, "Sci Rep")
     assert (paper.doi, paper.abstract) == (ref.doi.lower(), "An abstract.")
     assert set(paper.manual_fields) == {"title", "doi"}
+
+
+async def test_import_hits_whose_doi_is_already_in_the_library_reuses_that_paper(session, client, discovery_api, arq):
+    from sqlalchemy import func, select
+
+    from app.models import Paper
+    from app.models.references import ExternalRef
+    from app.models.workspace_search import WorkspaceSearchHit
+
+    doi = "10.1038/already-here-%s" % uuid.uuid4().hex[:8]
+    existing = Paper(title="Already In Library", file_path="/tmp/x.pdf", doi=doi)
+    session.add(existing)
+    await session.commit()
+    discovery_api.pdf_host.reply("/dup.pdf", 200, content=b"%PDF-1.4 dup content")
+    hit_id = await _make_importable_hit(session, pdf_urls=["https://pdf.example/dup.pdf"])
+    hit = await session.get(WorkspaceSearchHit, hit_id)
+    ref = await session.get(ExternalRef, hit.external_ref_id)
+    ref.doi = doi.upper()
+    await session.commit()
+
+    resp = await client.post(f"/api/workspaces/{hit.workspace_id}/search/hits/import", json={"hit_ids": [str(hit_id)]})
+
+    assert resp.json() == {"imported": 1, "failed": 0}
+    await session.refresh(hit)
+    await session.refresh(ref)
+    assert hit.paper_id == existing.id and ref.imported_as == existing.id
+    assert hit.acquisition_status == "imported"
+    assert await session.scalar(select(func.count()).select_from(Paper).where(func.lower(Paper.doi) == doi.lower())) == 1
+    assert arq.jobs == []
