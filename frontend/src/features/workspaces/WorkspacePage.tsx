@@ -61,7 +61,7 @@ export function WorkspacePage({ workspaceId, tab, runId }: { workspaceId: string
           {title}
         </h1>
       }
-      actions={workspace.data && <ExportCitationsMenu workspaceId={workspaceId} />}
+      actions={workspace.data && <ExportCitationsMenu workspaceId={workspaceId} paperCount={workspace.data.paper_count} />}
       status={workspace.data && countsLine(workspace.data.paper_count, workspace.data.note_count)}
     >
       {workspace.error && (

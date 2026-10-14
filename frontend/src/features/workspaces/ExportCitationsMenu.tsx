@@ -28,7 +28,23 @@ const DOWNLOADS = [
 ] as const;
 
 /** The workspace header's "Export citations" menu: three downloads, and an APA 7 preview to read and copy. */
-export function ExportCitationsMenu({ workspaceId }: { workspaceId: string }) {
+const NO_PAPERS = "Add papers to this workspace first.";
+
+/** The API's snake_case refusal codes, in words for the reader. */
+function plainError(error: Error): string {
+  return error.message === "no_papers"
+    ? "This workspace has no papers to cite yet."
+    : "Couldn't build the reference list. Try again.";
+}
+
+export function ExportCitationsMenu({
+  workspaceId,
+  paperCount,
+}: {
+  workspaceId: string;
+  paperCount: number;
+}) {
+  const empty = paperCount === 0;
   const [apaOpen, setApaOpen] = useState(false);
   return (
     <>
@@ -43,13 +59,26 @@ export function ExportCitationsMenu({ workspaceId }: { workspaceId: string }) {
           className={cn(glass, "bg-glass-strong ring-glass-border")}
         >
           {DOWNLOADS.map(([label, format]) => (
-            <DropdownMenuItem key={format} asChild>
-              <a href={citationsUrl(workspaceId, format)} download>
-                {label}
-              </a>
+            <DropdownMenuItem
+              key={format}
+              asChild={!empty}
+              disabled={empty}
+              title={empty ? NO_PAPERS : undefined}
+            >
+              {empty ? (
+                label
+              ) : (
+                <a href={citationsUrl(workspaceId, format)} download>
+                  {label}
+                </a>
+              )}
             </DropdownMenuItem>
           ))}
-          <DropdownMenuItem onSelect={() => setApaOpen(true)}>
+          <DropdownMenuItem
+            disabled={empty}
+            title={empty ? NO_PAPERS : undefined}
+            onSelect={() => setApaOpen(true)}
+          >
             APA 7…
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -82,15 +111,21 @@ function ApaDialog({
 
   async function copy() {
     setError(null);
+    let plain: string;
     try {
-      await copyText(await api.citationsText(workspaceId, "apa"));
+      plain = await api.citationsText(workspaceId, "apa");
+    } catch (e) {
+      return setError(plainError(e as Error));
+    }
+    try {
+      await copyText(plain);
       setCopied(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not copy.");
+      setError((e as Error).message);
     }
   }
 
-  const failure = error ?? (preview.error ? preview.error.message : null);
+  const failure = error ?? (preview.error ? plainError(preview.error) : null);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-2xl">
@@ -106,6 +141,11 @@ function ApaDialog({
           </Alert>
         )}
         {/* The backend escapes every field and adds only its own <i> markup, so this HTML is safe to render. */}
+        {preview.isPending && (
+          <p role="status" className="text-sm text-muted-foreground">
+            Loading…
+          </p>
+        )}
         {preview.data !== undefined && (
           <div
             className="max-h-[50vh] overflow-auto text-sm leading-relaxed whitespace-pre-wrap"

@@ -132,3 +132,8 @@ def test_apa_order_ignores_leading_punctuation_and_articles_in_titles():
     out = lines(paper(title="<script>alert(1)</script> zebra"), paper(title="Another study"))
     assert "Another study" in out[0] and "zebra" in out[1]
     assert "2020a" in out[0] and "2020b" in out[1]
+
+
+def test_apa_html_escapes_a_hostile_title():
+    html = render(items_of(paper(title="<img onerror=x>")), "apa-html")
+    assert "&lt;img" in html and "<img" not in html
