@@ -8,7 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ErrorAlert, LoadError } from '@/features/library/ErrorAlert'
 import { useDesktop } from '@/features/settings/desktop'
 import { copyText } from '@/lib/clipboard'
-import { claudeCodeCommand, configFileHint, desktopConfig, detectOs, type SetupOs } from './connectClaude'
+import { claudeCodeCommand, configFileHint, desktopConfig, detectOs, LAUNCHER, type SetupOs } from './connectClaude'
 
 const COPIED_MS = 2000
 const SYSTEMS: { os: SetupOs; label: string }[] = [
@@ -72,7 +72,8 @@ export function ConnectClaudePage() {
   const [os, setOs] = useState<SetupOs>(() => detectOs(platform()))
   const [typed, setTyped] = useState<string | null>(null)
   const folder = typed ?? setup.data?.folder ?? ''
-  const ready = folder.trim() !== ''
+  // Only Windows names the folder: elsewhere Claude runs ~/.local/bin/paperlab-mcp, the same for every user.
+  const ready = os !== 'windows' || folder.trim() !== ''
 
   return (
     <AppShell title="Connect Claude">
@@ -124,6 +125,7 @@ export function ConnectClaudePage() {
         </Tabs>
       </Section>
 
+      {os === 'windows' ? (
       <Section id="paperlab-folder-heading" title="PaperLab folder">
         <div className="grid gap-1.5">
           <Input
@@ -136,13 +138,29 @@ export function ConnectClaudePage() {
           />
           {!ready && (
             <p id="paperlab-folder-help" className="text-xs text-muted-foreground">
-              Paste the full path of your PaperLab folder.{os === 'windows' && ' For example C:\\Users\\you\\PaperLab.'}
-              {os === 'wsl' && ' For example /home/you/PaperLab, the path inside WSL.'}
+              Paste the full path of your PaperLab folder. For example C:\\Users\\you\\PaperLab.
             </p>
           )}
         </div>
         {setup.isError && <LoadError message={setup.error.message} onRetry={() => void setup.refetch()} />}
       </Section>
+      ) : (
+      <Section id="launcher-heading" title="PaperLab's launcher">
+        {desktop !== null && os !== 'wsl' ? (
+          <p className="text-sm">
+            The PaperLab app puts it at <code className={code}>{LAUNCHER}</code> each time it starts.
+          </p>
+        ) : (
+          <>
+            <p className="text-sm">
+              Claude starts PaperLab through <code className={code}>{LAUNCHER}</code>. Put it there once: run this in
+              the PaperLab folder{os === 'wsl' ? ', inside WSL' : ''}.
+            </p>
+            <CopyBlock text="scripts/paperlab-mcp --install" />
+          </>
+        )}
+      </Section>
+      )}
 
       <Section id="claude-desktop-heading" title="Claude Desktop">
         <p className="text-sm">Edit Claude Desktop's config file:</p>
@@ -230,7 +248,10 @@ export function ConnectClaudePage() {
             Linux: if Docker refuses access, add your user to the docker group with{' '}
             <code className={code}>sudo usermod -aG docker $USER</code>, then log out and back in.
           </li>
-          <li>Windows + WSL: use the folder's path inside WSL, like /home/you/PaperLab.</li>
+          <li>
+            If Claude can't find <code className={code}>{LAUNCHER}</code>, run{' '}
+            <code className={code}>scripts/paperlab-mcp --install</code> in the PaperLab folder again.
+          </li>
           <li>
             macOS and Linux: if docker is installed somewhere unusual, add{' '}
             <code className={code}>{'"env": { "PAPERLAB_DOCKER": "/full/path/to/docker" }'}</code> beside{' '}

@@ -2,7 +2,7 @@
  * The launch (spec §5, steps 2–7) as a function of docker and a health probe, and what the window shows for each state
  * (§8). main.ts wires it to Electron; the tests run it over a fake runner and a fake clock.
  */
-import { chmodSync, copyFileSync, mkdirSync, realpathSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { needsBackup, type BackupResult } from './backup'
 import { composeVersionOk, isDockerDesktop, lastLine, type Docker, type Result } from './docker'
@@ -275,11 +275,18 @@ export function viewFor(screen: Screen): View {
   return (VIEWS[screen.kind] as (screen: Screen) => View)(screen)
 }
 
-/** Step 4: the compose file and the MCP launcher, copied from the app on every launch so an update refreshes them. */
-export function writeFiles(dataDir: string, sources: { compose: string; script: string }): void {
+/** Step 4: the compose file and the MCP launcher, copied from the app on every launch so an update refreshes them.
+ * With `binDir` (~/.local/bin, macOS and Linux), also a `paperlab-mcp` there that runs the launcher, the same file
+ * `scripts/paperlab-mcp --install` writes, so Connect Claude's config and command read the same for every user. */
+export function writeFiles(dataDir: string, sources: { compose: string; script: string }, binDir?: string): void {
   mkdirSync(join(dataDir, 'scripts'), { recursive: true })
   copyFileSync(sources.compose, join(dataDir, 'docker-compose.yml'))
   const script = join(dataDir, 'scripts', 'paperlab-mcp')
   copyFileSync(sources.script, script)
   chmodSync(script, 0o755)
+  if (binDir === undefined) return
+  mkdirSync(binDir, { recursive: true })
+  const launcher = join(binDir, 'paperlab-mcp')
+  writeFileSync(launcher, `#!/bin/sh\nexec '${script.replaceAll("'", "'\\''")}' "$@"\n`)
+  chmodSync(launcher, 0o755)
 }

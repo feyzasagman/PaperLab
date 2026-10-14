@@ -135,3 +135,36 @@ def test_docker_desktops_and_rancher_desktops_per_user_docker_are_found_without_
 
     assert result.returncode == 0, result.stderr
     assert log.read_text().splitlines()[0] == f"{ROOT}|compose ps --status running --services"
+
+
+def test_install_writes_a_launcher_in_local_bin_that_runs_this_folders_script(tmp_path):
+    """`--install` puts ~/.local/bin/paperlab-mcp in place, so Claude's config and command are the same for everyone.
+    The folder has a ' and a space in it; the wrapper still runs compose from there."""
+    folder = tmp_path / "Bob's PaperLab"
+    (folder / "scripts").mkdir(parents=True)
+    script = folder / "scripts" / "paperlab-mcp"
+    shutil.copy2(SCRIPT, script)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    installed = subprocess.run(
+        ["sh", str(script), "--install"],
+        cwd=tmp_path,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    launcher = home / ".local" / "bin" / "paperlab-mcp"
+    assert (installed.returncode, installed.stdout) == (0, "")
+    assert installed.stderr == f"paperlab-mcp: installed {launcher}, which runs {script}.\n"
+    assert launcher.stat().st_mode & 0o777 == 0o755
+
+    result, calls = run_script(tmp_path, script=launcher, HOME=str(home), FAKE_PS="api\n")
+
+    assert calls == [
+        f"{folder}|compose ps --status running --services",
+        f"{folder}|compose exec -T api python -m mcp_server",
+    ]
+    assert (result.returncode, result.stdout) == (0, "the server's own output\n")
