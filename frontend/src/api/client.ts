@@ -135,6 +135,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (response.status === 204 ? undefined : await response.json()) as T
 }
 
+export const citationsUrl = (workspaceId: string, format: string) =>
+  `/api/workspaces/${workspaceId}/citations?format=${format}`
+
 const sendJson = (method: string, body: unknown): RequestInit => ({
   method,
   headers: { 'Content-Type': 'application/json' },
@@ -364,6 +367,12 @@ export const api = {
       sendJson('PATCH', body),
     ),
   /** `runs`: a single run id, or `'all'` to combine every run in the workspace. */
+  /** A workspace's citations as text (the apa-html preview and the plain apa to copy). Downloads use the URL directly. */
+  citationsText: async (workspaceId: string, format: string): Promise<string> => {
+    const response = await fetch(citationsUrl(workspaceId, format))
+    if (!response.ok) throw new Error(await errorDetail(response))
+    return response.text()
+  },
   prismaExport: (workspaceId: string, runs: string) =>
     request<PrismaExportOut>(`/api/workspaces/${workspaceId}/search/prisma?runs=${runs}`),
   readingContext: (paperId: string) => request<ReadingContextList>(`/api/papers/${paperId}/reading-context`),

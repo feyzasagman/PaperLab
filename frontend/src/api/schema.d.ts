@@ -483,6 +483,47 @@ export interface paths {
         patch: operations["set_eligibility_api_workspaces__workspace_id__papers__paper_id__eligibility_patch"];
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/citations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Citations
+         * @description The workspace's papers as a download: bibtex, ris, csljson, apa or apa-html. 404 unknown workspace, 422 for an
+         *     unknown format or no papers.
+         */
+        get: operations["export_citations_api_workspaces__workspace_id__citations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/citations/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export Selection
+         * @description The selected papers, in the order given, as a download. 422 for an unknown format, none, or over 1000.
+         */
+        post: operations["export_selection_api_citations_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/search/runs": {
         parameters: {
             query?: never;
@@ -2437,6 +2478,13 @@ export interface components {
             message: string;
             /** Retryable */
             retryable: boolean;
+        };
+        /** ExportIn */
+        ExportIn: {
+            /** Paper Ids */
+            paper_ids: string[];
+            /** Format */
+            format: string;
         };
         /** GenerateIn */
         GenerateIn: {
@@ -5153,6 +5201,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EligibilityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_citations_api_workspaces__workspace_id__citations_get: {
+        parameters: {
+            query: {
+                format: string;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_selection_api_citations_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -14,6 +14,7 @@ import { EvidenceTab } from '../evidence/EvidenceTab'
 import { workspaceHref, type WorkspaceTab } from '@/lib/route'
 import { cn } from '@/lib/utils'
 import { WorkspaceChat } from './WorkspaceChat'
+import { ExportCitationsMenu } from './ExportCitationsMenu'
 import { WorkspaceNotes } from './WorkspaceNotes'
 import { WorkspacePapers } from './WorkspacePapers'
 import { countsLine } from './workspaceMeta'
@@ -60,6 +61,7 @@ export function WorkspacePage({ workspaceId, tab, runId }: { workspaceId: string
           {title}
         </h1>
       }
+      actions={workspace.data && <ExportCitationsMenu workspaceId={workspaceId} />}
       status={workspace.data && countsLine(workspace.data.paper_count, workspace.data.note_count)}
     >
       {workspace.error && (
