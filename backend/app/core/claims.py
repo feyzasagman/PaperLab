@@ -384,7 +384,8 @@ async def verify_claims(
     sentence that only points to another note is `not_a_claim`, neither matched nor checked.
     A citation that matches no paper is `citation_not_found` when the reference list doesn't name it either,
     `paper_not_in_library` (with the list's `doi`) when the list names it, and `paper_not_in_workspace` when the
-    library holds it outside `workspace_id`; several matches are `ambiguous_citation` with the titles; none is guessed. A check that fails for one claim (its error code, or `check_failed` when the
+    library holds it outside `workspace_id`; several matches are `ambiguous_citation` with the titles; none is guessed.
+    A check that fails for one claim (its error code, or `check_failed` when the
     model can't be reached) is that item's error and the rest still run. More than 30 cited claims
     raises InvalidInput("too_many_claims") before any model call. `workspace_id` limits matching to one
     workspace (the caller resolves a name with workspaces.by_name). A citation a year away from the only matching
