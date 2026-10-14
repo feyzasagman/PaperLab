@@ -469,7 +469,7 @@ async def test_a_list_doi_that_is_not_in_the_library_drops_a_candidate_with_anot
     await add(session, "Other doi paper", ["Ann Listdoi"], 1987, doi="10.1000/m46-b")
     note = "It holds in general (Listdoi, 1987).\n\n## References\n\n- Listdoi, A. (1987). T. https://doi.org/10.1000/m46-a\n"
     [item] = await claims.verify_claims(session, note, llm=Scripted())
-    assert (item.error, item.check) == ("citation_not_found", None)
+    assert (item.error, item.check) == ("paper_not_in_library", None)
 
 
 async def test_a_key_two_list_entries_share_is_ambiguous_and_never_checked(session):
@@ -490,3 +490,214 @@ async def test_a_doi_paper_outside_the_workspace_is_not_matched_but_author_year_
     note = "It holds in general (Wsscope, 1987).\n\n## References\n\n- Wsscope, A. (1987). T. https://doi.org/10.1000/m46-ws\n"
     [item] = await claims.verify_claims(session, note, workspace_id=workspace.id, llm=Scripted())
     assert item.check.paper_id == inside.id
+
+
+@pytest.mark.parametrize(
+    "sentence, via",
+    [
+        (
+            "It holds broadly here (Runco & Jaeger, 2012, p. 92, as quoted in Abraham, 2025).",
+            "Runco & Jaeger, 2012, p. 92",
+        ),
+        ("It holds broadly here (Barron, 1955, as cited in Abraham, 2025).", "Barron, 1955"),
+        ("It holds broadly here (Boden, 2004, as summarised in Abraham, 2025).", "Boden, 2004"),
+        ("It holds broadly here (Boden, 2004, as summarized by Abraham, 2025).", "Boden, 2004"),
+    ],
+)
+def test_a_secondary_citation_points_at_the_source_read(sentence, via):
+    [found] = claims.cited_claims(sentence)
+    assert (found.citation.surname, found.citation.year, found.citation.via) == ("Abraham", 2025, via)
+    assert found.claim == "It holds broadly here."
+
+
+def test_a_standalone_quoted_in_supersedes_the_narrative_original():
+    [found] = claims.cited_claims('Stein (1953) wrote: "The creative work is a novel work" (quoted in Abraham, 2025).')
+    assert (found.citation.surname, found.citation.via) == ("Abraham", "Stein (1953)")
+    assert found.claim == 'Stein wrote: "The creative work is a novel work".'
+
+
+def test_a_secondary_source_outside_the_library_is_reported_against_that_source():
+    # never silently checked against the original instead
+    [found] = claims.cited_claims("It holds broadly here (Barron, 1955, as cited in Nobodyxyz, 1999).")
+    assert found.citation.surname == "Nobodyxyz"
+
+
+def test_cited_in_ordinary_prose_is_not_a_secondary_marker():
+    [found] = claims.cited_claims("This result was widely cited in later work (Lee, 2021).")
+    assert (found.citation.surname, found.citation.via) == ("Lee", None)
+
+
+def test_the_pilot_secondary_citations_go_to_abraham():
+    found = pilot("definition.md")
+    assert len(found) == 20
+    to_abraham = [c for c in found if c.citation.via]
+    assert {c.citation.via for c in to_abraham} >= {"Runco & Jaeger, 2012, p. 92", "Barron, 1955", "Boden, 2004"}
+    assert all((c.citation.surname, c.citation.year) == ("Abraham", 2025) for c in to_abraham)
+
+
+@pytest.mark.parametrize(
+    "sentence, surname, year, via",
+    [
+        ("It holds broadly here (Smith, 2020, discussed in detail below).", "Smith", 2020, None),
+        ("It holds broadly here (see Lee, 2019, cited by many).", "Lee", 2019, None),
+        ("It holds broadly here (Lee, 2019, described by Kim, 2020).", "Kim", 2020, "Lee, 2019"),
+    ],
+)
+def test_a_secondary_marker_needs_a_cited_source_with_a_year(sentence, surname, year, via):
+    [found] = claims.cited_claims(sentence)
+    assert (found.citation.surname, found.citation.year, found.citation.via) == (surname, year, via)
+
+
+def test_coauthors_named_in_a_citation():
+    assert citations.find("It holds (Lu, Wang et al., 2025).")[0].coauthors == ("Wang",)
+    assert citations.find("Doshi & Hauser (2024) found it.")[0].coauthors == ("Hauser",)
+    assert citations.find("Smith et al. (2020) found it.")[0].coauthors == ()
+
+
+async def test_a_coauthor_picks_one_of_two_shared_reference_entries(session):
+    wang = await add(session, "Coauth NeoCoder", ["Yao Coauthlu", "Dan Wang"], 1987, doi="10.1000/m48-neo")
+    await add(session, "Coauth Salieri", ["Xi Coauthlu", "Mia Sclar"], 1987, doi="10.1000/m48-sal")
+    refs = (
+        "\n\n## References\n\n- Coauthlu, X., Sclar, M. (1987). Salieri. https://doi.org/10.1000/m48-sal\n"
+        "- Coauthlu, Y., Wang, D. (1987). NeoCoder. https://doi.org/10.1000/m48-neo\n"
+    )
+    note = "Codeforces problems were used here (Coauthlu, Wang et al., 1987)." + refs
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check.paper_id) == (None, wang.id)
+
+
+async def test_a_referenced_paper_missing_from_the_library_is_paper_not_in_library(session):
+    note = (
+        "Corazza proposes a dynamic definition here (Nolibrary, 1987).\n\n## References\n\n"
+        "- Nolibrary, G. E. (1987). Potential originality. https://doi.org/10.1000/m48-absent\n"
+        "- Bookonly, M. A. (1987). *The creative mind*. Routledge.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.doi) == ("paper_not_in_library", "10.1000/m48-absent")
+    swapped = note.replace("(Nolibrary, 1987)", "(Bookonly, 1987)")
+    [book] = await claims.verify_claims(session, swapped, llm=Scripted())
+    assert (book.error, book.doi) == ("paper_not_in_library", None)
+
+
+async def test_a_citation_in_no_reference_list_is_still_citation_not_found(session):
+    [item] = await claims.verify_claims(session, "It holds broadly here (Nolistxyz, 1987).", llm=Scripted())
+    assert (item.error, item.doi) == ("citation_not_found", None)
+
+
+async def test_a_coauthor_matching_no_entry_leaves_a_shared_key_ambiguous(session):
+    await add(session, "Zeta Narrow", ["Ann Zetanarrow"], 1987)
+    note = (
+        "It holds in general (Zetanarrow, Kim et al., 1987).\n\n## References\n\n"
+        "- Zetanarrow, A., Lee, B. (1987). One.\n- Zetanarrow, C., Wang, D. (1987). Two.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check) == ("ambiguous_citation", None)
+
+
+async def test_a_coauthor_is_a_whole_surname_not_a_suffix(session):
+    await add(session, "Lili Paper", ["Ann Lilishared"], 1987)
+    note = (
+        "It holds in general (Lilishared, Li et al., 1987).\n\n## References\n\n"
+        "- Lilishared, A., Lili, B. (1987). One.\n- Lilishared, C., Wang, D. (1987). Two.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check) == ("ambiguous_citation", None)
+
+
+async def test_a_single_entry_with_full_first_names_keeps_its_doi(session):
+    paper = await add(session, "Fullname Paper", ["Jon Fullnamesmith", "Kim Lee"], 1987, doi="10.1000/m48-full")
+    await add(session, "Fullname Decoy", ["Jon Fullnamesmith"], 1987, doi="10.1000/m48-decoy")
+    note = (
+        "It holds in general (Fullnamesmith & Lee, 1987).\n\n## References\n\n"
+        "- Fullnamesmith, Jon, & Lee, Kim (1987). T. https://doi.org/10.1000/m48-full\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check.paper_id) == (None, paper.id)
+
+
+async def test_a_paper_outside_the_workspace_is_paper_not_in_workspace(session):
+    await add(session, "Outside Paper", ["Ann Outsidews"], 1987)
+    workspace = await workspaces.create(session, "m48 empty scope")
+    for note in ("It holds in general (Outsidews, 1987).",
+                 "It holds in general (Outsidews, 1987).\n\n## References\n\n- Outsidews, A. (1987). T.\n"):
+        [item] = await claims.verify_claims(session, note, workspace_id=workspace.id, llm=Scripted())
+        assert item.error == "paper_not_in_workspace"
+    [gone] = await claims.verify_claims(session, "It holds in general (Nowherews, 1987).",
+                                        workspace_id=workspace.id, llm=Scripted())
+    assert gone.error == "citation_not_found"
+
+
+async def test_coauthors_narrow_two_library_candidates(session):
+    wang = await add(session, "Narrow NeoCoder", ["Yao Narrowlu", "Dan Wang"], 1987)
+    await add(session, "Narrow Salieri", ["Xi Narrowlu", "Mia Sclar"], 1987)
+    cite = citations.find("It holds (Narrowlu, Wang et al., 1987).")[0]
+    assert (await citations.match(session, cite)).paper_ids == [wang.id]
+
+
+async def test_a_coauthor_never_drops_a_lone_match(session):
+    only_first = await add(session, "Lone paper", ["Ann Lonefirst"], 1987)  # truncated author list
+    cite = citations.find("It holds (Lonefirst, Nothere et al., 1987).")[0]
+    assert (await citations.match(session, cite)).paper_ids == [only_first.id]
+
+
+async def test_coauthors_that_match_nobody_leave_the_ambiguity(session):
+    await add(session, "Twin one", ["Ann Twincoauth", "Bo Alpha"], 1987)
+    await add(session, "Twin two", ["Ann Twincoauth", "Cy Beta"], 1987)
+    cite = citations.find("It holds (Twincoauth, Gamma et al., 1987).")[0]
+    assert len((await citations.match(session, cite)).paper_ids) == 2
+
+
+async def test_a_coauthor_is_a_whole_surname_never_a_suffix(session):
+    await add(session, "Lili paper", ["Ann Narrowsx", "Ann Lili"], 1987)
+    wei = await add(session, "Wei paper", ["Ann Narrowsx", "Wei Li"], 1987)
+    cite = citations.find("It holds (Narrowsx, Li et al., 1987).")[0]
+    assert (await citations.match(session, cite)).paper_ids == [wei.id]
+
+
+_SCLAR_NOTE = (
+    "Salieri studies a different benchmark entirely (Strictlu, Sclar et al., 1987).\n\n## References\n\n"
+    "- Strictlu, X., Sclar, M., & Choi, Y. (1987). Salieri.{sclar}\n"
+    "- Strictlu, Y., Wang, D., & Khashabi, D. (1987). NeoCoder.{wang}\n"
+)
+
+
+@pytest.mark.parametrize(
+    "sclar, wang, library_doi",
+    [
+        ("", " https://doi.org/10.1000/strict-neo", "10.1000/strict-neo"),
+        (" https://doi.org/10.1000/strict-sal", "", None),
+    ],
+)
+async def test_several_reference_entries_never_check_the_lone_library_paper_lacking_the_coauthor(
+    session, sclar, wang, library_doi
+):
+    await add(session, "Strict NeoCoder", ["Yao Strictlu", "Dan Wang"], 1987, doi=library_doi)
+    [item] = await claims.verify_claims(session, _SCLAR_NOTE.format(sclar=sclar, wang=wang), llm=Scripted())
+    assert (item.error, item.check, item.candidates) == ("ambiguous_citation", None, ["Strict NeoCoder"])
+
+
+async def test_several_reference_entries_and_no_library_paper_is_paper_not_in_library(session):
+    [item] = await claims.verify_claims(session, _SCLAR_NOTE.format(sclar="", wang=""), llm=Scripted())
+    assert (item.error, item.check) == ("paper_not_in_library", None)
+
+
+async def test_two_papers_outside_the_workspace_are_both_named(session):
+    await add(session, "Out A", ["Ann Twooutws"], 1987)
+    await add(session, "Out B", ["Bob Twooutws"], 1987)
+    workspace = await workspaces.create(session, "m48 two outside")
+    note = "It holds in general (Twooutws, 1987).\n\n## References\n\n- Twooutws, A. (1987). T.\n"
+    [item] = await claims.verify_claims(session, note, workspace_id=workspace.id, llm=Scripted())
+    assert (item.error, item.candidates) == ("paper_not_in_workspace", ["Out A", "Out B"])
+
+
+def test_a_discussed_in_marker_keeps_the_narrative_citations():
+    found = citations.find("Lee (2021) showed that creativity declines with age (as discussed in Smith, 2020).")
+    assert [(c.surname, c.superseded) for c in found] == [("Lee", False), ("Smith", False)]
+
+
+@pytest.mark.parametrize(
+    "names, expected",
+    [("A, B & C", ("B", "C")), ("A, B, & C", ("B", "C")), ("A, B, and van Dijk", ("B", "van Dijk"))],
+)
+def test_the_last_coauthor_loses_its_joiner(names, expected):
+    assert citations._coauthors(names) == expected

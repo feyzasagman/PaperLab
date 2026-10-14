@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import citations, claim_text, llm_connections, llm_json, notes, prompts, quotes, retrieval
+from app.core.claim_text import RefEntry
 from app.core.enrichment import normalize_doi
 from app.core.errors import DomainError, InvalidInput, NotFound
 from app.models import Chunk, LLMOutput, Paper, PaperStatus
@@ -72,8 +73,50 @@ async def _paper(session: AsyncSession, paper_id: uuid.UUID | None, doi: str | N
     return paper
 
 
-async def _passages(session, paper: Paper, claim: str, quoted_text: str | None) -> tuple[str, list[dict], list[str]]:
-    """(evidence level, passage descriptions, passage texts): the paper's best chunks, else its abstract."""
+LEAD_CHARS = 300  # how much of a sentence's start, from the chunk before, the verifier is shown
+_SENTENCE_END = re.compile(r"[.!?][\"'”’)\]]*\s+")
+
+
+def _dangles(text: str) -> bool:
+    """True when the text ends mid-sentence: its last character (past closing quotes/brackets) isn't . ! ? :"""
+    return not text.rstrip().rstrip("\"'”’)]").rstrip().endswith((".", "!", "?", ":"))
+
+
+async def _predecessor(session, chunk) -> str:
+    """The text a lower-case-starting chunk continues: the chunk before it if that ends mid-sentence, else the last
+    chunk of the previous page (a sidebar or figure caption can sit between the halves), else nothing."""
+    ordinal = select(Chunk.ordinal).where(Chunk.id == chunk.id).scalar_subquery()
+    queries = (
+        select(Chunk.text).where(Chunk.paper_id == chunk.paper_id, Chunk.ordinal == ordinal - 1),
+        select(Chunk.text)
+        .where(Chunk.paper_id == chunk.paper_id, Chunk.page == chunk.page - 1)
+        .order_by(Chunk.ordinal.desc())
+        .limit(1),
+    )
+    for query in queries:
+        before = await session.scalar(query) or ""
+        if before.strip() and _dangles(before):
+            return before
+    return ""
+
+
+async def _leads(session, found) -> list[str]:
+    """For each passage that starts mid-sentence (its first letter is lower-case), the start of that sentence: the
+    text after the last sentence end of its predecessor chunk. Chunks never cross a page, so a sentence over a page
+    break is split, and its first half can hold the negation ("none of" | "the LLMs … correlate positively", pilot 2
+    N1). Context only: quotes are still taken from the passage itself."""
+    leads = []
+    for chunk in found:
+        before = await _predecessor(session, chunk) if chunk.text.lstrip()[:1].islower() else ""
+        ends = list(_SENTENCE_END.finditer(before))
+        leads.append((before[ends[-1].end() :] if ends else before).strip()[-LEAD_CHARS:])
+    return leads
+
+
+async def _passages(
+    session, paper: Paper, claim: str, quoted_text: str | None
+) -> tuple[str, list[dict], list[str], list[str]]:
+    """(evidence level, passage descriptions, passage texts, sentence starts): the best chunks, else the abstract."""
     has_chunks = paper.status == PaperStatus.READY and await session.scalar(
         select(func.count()).select_from(Chunk).where(Chunk.paper_id == paper.id)
     )
@@ -86,16 +129,22 @@ async def _passages(session, paper: Paper, claim: str, quoted_text: str | None) 
                 "full_text",
                 [{"chunk_id": c.id, "page": c.page, "section": c.section} for c in found],
                 [c.text for c in found],
+                await _leads(session, found),
             )
     if (paper.abstract or "").strip():
-        return "abstract_only", [{"chunk_id": None, "page": None, "section": None}], [paper.abstract]
-    return "metadata_only", [], []
+        return "abstract_only", [{"chunk_id": None, "page": None, "section": None}], [paper.abstract], [""]
+    return "metadata_only", [], [], []
 
 
-def _prompt(claim: str, quoted_text: str | None, texts: list[str], passages: list[dict]) -> str:
+def _prompt(claim: str, quoted_text: str | None, texts: list[str], passages: list[dict], leads: list[str]) -> str:
+    def line(i, p, t, lead):
+        if p["page"] is None:
+            return f"[{i}] (abstract) {t}"
+        cont = f" (continues a sentence that began: \"…{lead}\")" if lead else ""
+        return f"[{i}] (page {p['page']}, section {p['section']}){cont} {t}"
+
     numbered = "\n\n".join(
-        f"[{i}] (page {p['page']}, section {p['section']}) {t}" if p["page"] is not None else f"[{i}] (abstract) {t}"
-        for i, (p, t) in enumerate(zip(passages, texts, strict=True), start=1)
+        line(i, p, t, lead) for i, (p, t, lead) in enumerate(zip(passages, texts, leads, strict=True), start=1)
     )
     quoted = f"\nThe researcher quotes this from the paper: {quoted_text}\n" if quoted_text else ""
     # str.format only parses the template, so braces in the claim or passages are safe.
@@ -155,7 +204,7 @@ async def verify_claim(
     if not claim.strip():
         raise InvalidInput("empty_claim", detail="The claim is empty.")
     paper = await _paper(session, paper_id, doi)
-    level, passages, texts = await _passages(session, paper, claim, quoted_text)
+    level, passages, texts, leads = await _passages(session, paper, claim, quoted_text)
     base = {"claim": claim, "paper_id": paper.id, "paper_title": paper.title, "evidence_level": level}
     if level == "metadata_only":
         if paper.status not in (PaperStatus.READY, PaperStatus.FAILED):  # still ingesting: text may come
@@ -164,7 +213,7 @@ async def verify_claim(
     llm = await _llm(session, llm)
     model = getattr(llm, "model", "unknown")
     connection_name = getattr(llm, "connection_name", None)
-    reply = await llm_json.ask_json(llm, SYSTEM_PROMPT, _prompt(claim, quoted_text, texts, passages), _Reply)
+    reply = await llm_json.ask_json(llm, SYSTEM_PROMPT, _prompt(claim, quoted_text, texts, passages, leads), _Reply)
     if reply is None:
         content = {"verdict": "cannot_verify", "reason": "model_error"}
         output_id = await _write_output(session, paper, claim, content, passages, model, connection_name)
@@ -204,10 +253,11 @@ class ClaimItem:
     claim: str  # the sentence with its citation(s) removed
     citation: citations.Citation
     check: ClaimCheck | None = None
-    error: str | None = None  # citation_not_found | ambiguous_citation | empty_claim | not_a_claim
+    error: str | None = None  # citation_not_found | paper_not_in_library | ambiguous_citation | …
     candidates: list[str] = field(default_factory=list)  # titles when ambiguous
     warning: str | None = None  # year_mismatch: matched a paper the library dates a year away
     library_year: int | None = None
+    doi: str | None = None  # the reference list's DOI for the paper (not the DOI written in the sentence)
 
 
 _WIKILINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
@@ -269,7 +319,7 @@ def _row_claims(block: claim_text.Block) -> list[Cited]:
         claim = ". ".join(part for part in parts if part)
         if cited_cells > 1 and len(claim.split()) < 3:
             claim = ""
-        out += [Cited(f"{claim}." if claim else "", c) for c in found]
+        out += [Cited(f"{claim}." if claim else "", c) for c in found if not c.superseded]
     return out
 
 
@@ -294,7 +344,7 @@ def _block_claims(block: claim_text.Block) -> list[Cited]:
             continue
         bare = _without(sentence, found, keep_names=False)
         if _CROSS_REFERENCE.search(bare):
-            out += [Cited(_prose(_without(sentence, found)), c, "not_a_claim") for c in found]
+            out += [Cited(_prose(_without(sentence, found)), c, "not_a_claim") for c in found if not c.superseded]
             continue
         if i == 0 and block.lead and sentence == block.lead:
             claim = _prose(" ".join(_uncited_run(sentences[1:])))
@@ -304,7 +354,7 @@ def _block_claims(block: claim_text.Block) -> list[Cited]:
             claim = _prose(_without(sentence, found))
         if claim and claim[-1].isalnum():
             claim += "."
-        out += [Cited(claim, c) for c in found]
+        out += [Cited(claim, c) for c in found if not c.superseded]
     return out
 
 
@@ -313,16 +363,27 @@ def cited_claims(body: str) -> list[Cited]:
     return [c for b in claim_text.blocks(body) for c in (_row_claims(b) if b.cells else _block_claims(b))]
 
 
-async def _match(session, citation: citations.Citation, dois: dict, workspace_id) -> citations.Match:
+def _entry_for(entries: dict, citation: citations.Citation) -> tuple[list[RefEntry], RefEntry | None, bool]:
+    """The reference entries for a citation's key, narrowed by the co-authors it names; the one left, if one; and
+    whether the key had several entries (then library candidates must show the co-authors too)."""
+    found = entries.get((citations.fold(citation.surname), citation.year), [])
+    wanted = [citations.fold(c) for c in citation.coauthors]
+    named = [e for e in found if all(any(s == w or s.endswith(" " + w) for s in e.surnames) for w in wanted)]
+    narrowed = named or found  # narrowing narrows, it never empties
+    return narrowed, (narrowed[0] if len(narrowed) == 1 else None), len(found) > 1
+
+
+async def _match(
+    session, citation: citations.Citation, doi: str | None, workspace_id, strict: bool = False
+) -> citations.Match:
     """The note's reference list first: its DOI picks the one paper even when the library holds duplicates or the
     paper has no authors or year. Author–year when the list gives none or the DOI isn't in the library, but then
     never a paper whose own DOI differs from the list's."""
-    doi = dois.get((citations.fold(citation.surname), citation.year)) if citation.kind == "author_year" else None
     if doi:
         by_doi = await citations.match(session, replace(citation, kind="doi", doi=doi), workspace_id)
         if len(by_doi.paper_ids) == 1:
             return by_doi
-    return await citations.match(session, citation, workspace_id, only_doi=doi)
+    return await citations.match(session, citation, workspace_id, only_doi=doi, strict_coauthors=strict)
 
 
 async def verify_claims(
@@ -337,16 +398,17 @@ async def verify_claims(
     table row that carries it (markdown is read as markdown). Send the whole note: a reference list at the end is never
     checked, but its DOIs are used to find the cited papers. A
     sentence that only points to another note is `not_a_claim`, neither matched nor checked.
-    A citation that matches no paper is `citation_not_found`, several is `ambiguous_citation` with the
-    titles; neither is guessed. A check that fails for one claim (its error code, or `check_failed` when the
+    A citation that matches no paper is `citation_not_found` when the reference list doesn't name it either,
+    `paper_not_in_library` (with the list's `doi`) when the list names it, and `paper_not_in_workspace` when the
+    library holds it outside `workspace_id`; several matches are `ambiguous_citation` with the titles; none is guessed.
+    A check that fails for one claim (its error code, or `check_failed` when the
     model can't be reached) is that item's error and the rest still run. More than 30 cited claims
     raises InvalidInput("too_many_claims") before any model call. `workspace_id` limits matching to one
     workspace (the caller resolves a name with workspaces.by_name). A citation a year away from the only matching
     paper still matches, with warning year_mismatch and the library's year.
     """
     body, references = claim_text.split_references(text)
-    dois = claim_text.reference_dois(references)
-    shared = claim_text.shared_keys(references)
+    entries = claim_text.reference_entries(references)
     pending = cited_claims(body)
     if len(pending) > MAX_CLAIMS:
         raise InvalidInput("too_many_claims", detail=f"{len(pending)} cited claims; the limit is {MAX_CLAIMS}.")
@@ -356,14 +418,32 @@ async def verify_claims(
         if cited.error:
             items.append(ClaimItem(claim, citation, error=cited.error))
             continue
-        if citation.kind == "author_year" and (citations.fold(citation.surname), citation.year) in shared:
-            # two reference entries share this key: the citation can't say which paper it means
+        narrowed, entry, several = (
+            _entry_for(entries, citation) if citation.kind == "author_year" else ([], None, False)
+        )
+        if len(narrowed) > 1:
+            # entries still share this key: the citation can't say which paper it means
             candidates = await citations.match(session, citation, workspace_id)
             items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=candidates.titles))
             continue
-        found = await _match(session, citation, dois, workspace_id)
+        found = await _match(session, citation, entry.doi if entry else None, workspace_id, several)
+        if found.unnamed:  # the library's author list may be truncated, so the co-author isn't claimed absent
+            items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=found.unnamed))
+            continue
         extra = {"warning": "year_mismatch", "library_year": found.library_year} if found.library_year else {}
-        if not found.paper_ids:
+        entry_doi = entry.doi if entry else None
+        if not found.paper_ids and workspace_id is not None:
+            elsewhere = await _match(session, citation, entry_doi, None, several)
+            if elsewhere.paper_ids:
+                items.append(
+                    ClaimItem(
+                        claim, citation, error="paper_not_in_workspace", doi=entry_doi, candidates=elsewhere.titles
+                    )
+                )
+                continue
+        if not found.paper_ids and entry:
+            items.append(ClaimItem(claim, citation, error="paper_not_in_library", doi=entry_doi))
+        elif not found.paper_ids:
             items.append(ClaimItem(claim, citation, error="citation_not_found"))
         elif len(found.paper_ids) > 1:
             items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=found.titles))

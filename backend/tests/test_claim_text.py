@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.claim_text import Block, blocks, inline, reference_dois, split_references
+from app.core.claim_text import Block, RefEntry, blocks, inline, reference_dois, reference_entries, split_references
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claims"
 
@@ -108,3 +108,19 @@ def test_the_pilot_notes_reference_lists():
     assert dois[("anderson", 2024)] == "10.1145/3635636.3656204"
     assert ("lu", 2025) not in dois  # two different Lu (2025) papers, only one with a DOI
     assert len(reference_dois(split_references((FIXTURES / "definition.md").read_text())[1])) == 8
+
+
+def test_reference_entries_keep_every_author_surname():
+    refs = (
+        "- Lu, X., Sclar, M., & Choi, Y. (2025). Salieri.\n"
+        "- Lu, Y., Wang, D., & Khashabi, D. (2025). NeoCoder. https://doi.org/10.18653/v1/2025.naacl-long.141\n"
+        "- Boden, M. A. (2004). *The creative mind*. Routledge.\n"
+    )
+    entries = reference_entries(refs)
+    assert [e.surnames for e in entries[("lu", 2025)]] == [("lu", "sclar", "choi"), ("lu", "wang", "khashabi")]
+    assert entries[("boden", 2004)] == [RefEntry(None, ("boden",))]
+
+
+def test_reference_authors_accept_non_ascii_initials():
+    entries = reference_entries("- Durand, É., Lee, K. (1987). T.\n")
+    assert entries[("durand", 1987)][0].surnames == ("durand", "lee")

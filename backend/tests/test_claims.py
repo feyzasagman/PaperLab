@@ -7,7 +7,8 @@ from sqlalchemy import select
 
 from app.core import claims, notes, quotes, retrieval
 from app.core.errors import InvalidInput, NotFound
-from app.models import LLMOutput, Paper, PaperStatus
+from app.core.retrieval import RetrievedChunk
+from app.models import Chunk, LLMOutput, Paper, PaperStatus
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 
@@ -233,3 +234,95 @@ async def test_a_blank_claim_is_empty_claim(session):
     with pytest.raises(InvalidInput) as raised:
         await claims.verify_claim(session, "  ", paper_id=uuid.uuid4(), llm=Scripted())
     assert str(raised.value) == "empty_claim"
+
+
+async def split_sentence_paper(session, first_tail, second_text):
+    paper = await bare_paper(session)
+    first = Chunk(paper_id=paper.id, ordinal=0, page=14, bbox=[[0, 0, 1, 1]],
+                  text=f"Table 9 summarizes it. {first_tail}", embed_model="test", strategy_ver=1)
+    second = Chunk(paper_id=paper.id, ordinal=1, page=15, bbox=[[0, 0, 1, 1]], text=second_text,
+                   embed_model="test", strategy_ver=1)
+    session.add_all([first, second])
+    await session.flush()
+    return paper, second
+
+
+def only(chunk):
+    async def retrieve(session, query, paper_ids=None, k=None, **kwargs):
+        return [RetrievedChunk(id=chunk.id, paper_id=chunk.paper_id, page=chunk.page, section=None,
+                               bbox=[(0, 0, 1, 1)], text=chunk.text)]
+    return retrieve
+
+
+async def test_a_passage_starting_mid_sentence_shows_the_sentence_start_from_the_previous_page(session, monkeypatch):
+    paper, second = await split_sentence_paper(
+        session,
+        "On average, we find that none of",
+        "the LLMs produce assessments that correlate positively with experts.",
+    )
+    monkeypatch.setattr(retrieval, "retrieve", only(second))
+    llm = Scripted(reply("supported", 1, "the LLMs produce assessments that correlate positively"))
+    claim = "No LLM judge correlated positively with experts."
+    check = await claims.verify_claim(session, claim, paper_id=paper.id, llm=llm)
+    assert "On average, we find that none of" in llm.prompts[0]
+    assert llm.prompts[0].index("none of") < llm.prompts[0].index("the LLMs produce")
+    assert check.quote == "the LLMs produce assessments that correlate positively"  # still a quote from its own passage
+
+
+async def test_a_passage_starting_a_sentence_gets_no_context(session, monkeypatch):
+    paper, second = await split_sentence_paper(
+        session, "This sentence ends here.", "The LLMs produce assessments today."
+    )
+    monkeypatch.setattr(retrieval, "retrieve", only(second))
+    llm = Scripted(reply("not_addressed"))
+    await claims.verify_claim(session, "No LLM judge correlated positively.", paper_id=paper.id, llm=llm)
+    assert "This sentence ends here" not in llm.prompts[0]
+
+
+async def test_a_previous_chunk_that_ends_cleanly_adds_no_context(session, monkeypatch):
+    paper, second = await split_sentence_paper(session, "It ends cleanly.", "and then a lower-case start follows here.")
+    monkeypatch.setattr(retrieval, "retrieve", only(second))
+    llm = Scripted(reply("not_addressed"))
+    await claims.verify_claim(session, "Something holds here.", paper_id=paper.id, llm=llm)
+    assert "It ends cleanly" not in llm.prompts[0]
+
+
+async def chunks_on_pages(session, *pages_and_texts):
+    paper = await bare_paper(session)
+    made = [
+        Chunk(paper_id=paper.id, ordinal=i, page=page, bbox=[[0, 0, 1, 1]], text=text, embed_model="test",
+              strategy_ver=1)
+        for i, (page, text) in enumerate(pages_and_texts)
+    ]
+    session.add_all(made)
+    await session.flush()
+    return paper, made[-1]
+
+
+async def test_a_sidebar_between_the_halves_does_not_hide_the_sentence_start(session, monkeypatch):
+    paper, last = await chunks_on_pages(
+        session,
+        (14, "Table 9 summarizes it. On average, we find that none of"),
+        (15, "Sidebar quote one is here."),
+        (15, "It was always very simple."),
+        (15, "the LLMs produce assessments that correlate positively with experts."),
+    )
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    llm = Scripted(reply("not_addressed"))
+    await claims.verify_claim(session, "No LLM judge correlated positively.", paper_id=paper.id, llm=llm)
+    assert "On average, we find that none of" in llm.prompts[0]
+    assert llm.prompts[0].index("none of") < llm.prompts[0].index("the LLMs produce")
+
+
+async def test_a_dangling_chunk_just_before_wins_over_the_previous_page(session, monkeypatch):
+    paper, last = await chunks_on_pages(
+        session,
+        (14, "Table 9 summarizes it. On average, we find that none of"),
+        (15, "Intro done. Results show that most of the models fail and then the"),
+        (15, "models produce assessments that correlate positively with experts."),
+    )
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    llm = Scripted(reply("not_addressed"))
+    await claims.verify_claim(session, "No LLM judge correlated positively.", paper_id=paper.id, llm=llm)
+    assert "Results show that most of the models fail and then the" in llm.prompts[0]
+    assert "On average, we find" not in llm.prompts[0]
