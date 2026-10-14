@@ -1,8 +1,10 @@
-import type { Note } from '@/api/client'
+import { Download } from 'lucide-react'
+import { notesZipUrl, type Note } from '@/api/client'
 import { useWorkspaceNotes, useWorkspacePapers } from '@/api/queries'
 import { glass } from '@/components/glass'
 import { delayedIn, isFresh, slideUpIn } from '@/components/motion'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { ProvenanceBadge } from '@/features/notes/ProvenanceBadge'
 import { noteHref } from '@/lib/route'
@@ -47,6 +49,16 @@ function WorkspaceNote({ note, paperId }: { note: Note; paperId: string }) {
   )
 }
 
+function ExportLink({ workspaceId }: { workspaceId: string }) {
+  return (
+    <Button asChild variant="outline" size="sm" className="self-start">
+      <a href={notesZipUrl(workspaceId)} download>
+        <Download aria-hidden /> Export to Markdown
+      </a>
+    </Button>
+  )
+}
+
 /** The Notes tab: every note on the workspace's papers, grouped by paper. */
 export function WorkspaceNotes({ workspaceId }: { workspaceId: string }) {
   const notes = useWorkspaceNotes(workspaceId)
@@ -64,10 +76,16 @@ export function WorkspaceNotes({ workspaceId }: { workspaceId: string }) {
 
   const groups = notesByPaper(notes.data, papers.data)
   if (groups.length === 0) {
-    return <p className="py-2 text-muted-foreground">No notes yet. Highlight a passage in one of these papers to add one.</p>
+    return (
+      <div className="flex flex-col gap-3 py-2">
+        <p className="text-muted-foreground">No notes yet. Highlight a passage in one of these papers to add one.</p>
+        <ExportLink workspaceId={workspaceId} />
+      </div>
+    )
   }
   return (
     <div className="flex flex-col gap-6 py-2">
+      <ExportLink workspaceId={workspaceId} />
       {groups.map((group) => (
         <section key={group.paper.id} data-paper-id={group.paper.id} className="flex flex-col gap-2">
           <h2 className="truncate font-heading text-xl font-semibold" title={group.paper.title}>
