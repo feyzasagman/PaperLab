@@ -353,7 +353,7 @@ async def test_references_are_stored_under_the_references_lock(library, discover
 
 
 async def test_vectors_are_written_under_the_references_lock(library, embedder, monkeypatch):
-    library.add(ExternalRef(title="Needs a vector"))
+    library.add(ExternalRef(title="Needs a vector", queued_at=func.now()))
     await library.flush()
     embed, locked = embedding.embed_documents, []
 
