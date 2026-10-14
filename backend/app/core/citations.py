@@ -3,7 +3,7 @@ only; a citation never guesses: the caller sees how many papers matched."""
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +91,11 @@ _NARRATIVE = re.compile(
     r"\s+\((?P<year>(?:19|20)\d{2})[a-z]?(?:,\s*(?:pp?\.|ch\.|sec\.)\s*[\w–\-]+)?\)"
 )
 _LEAD = re.compile(r"^(?:(?:see|also|e\.g\.,?|cf\.)\s+)+", re.I)
+# "(X, 2012, as cited in Y, 2025)", "(quoted in Y, 2025)": the source the author read is Y (APA secondary citations).
+_SECONDARY = re.compile(
+    r"^(?P<orig>.*?)[,;]?\s*(?:as\s+)?(?:quoted|cited|summari[sz]ed|reported|discussed|described)\s+(?:in|by)\s+(?P<src>.+)$",
+    re.I,
+)
 _INITIALS = re.compile(r"[a-z]{1,2}\.?|(?:[a-z]\.)+")  # "j", "jk", "j.k." (folded)
 _INITIAL = re.compile(r"^\(?[A-Z]\.$")  # "J." before a surname: not a sentence end
 _FIRST_AUTHOR = re.compile(r",|\s&\s|\sand\s|\set al", re.I)
@@ -105,6 +110,8 @@ class Citation:
     surname: str | None = None
     year: int | None = None
     narrative: bool = False  # "Smith (2020) found": the names are part of the sentence, so a claim keeps them
+    via: str | None = None  # the original work when this cites the source it was read in ("as cited in")
+    superseded: bool = False  # an original the sentence says was read elsewhere: cut from the claim, never checked
 
 
 @dataclass(frozen=True)
@@ -129,6 +136,7 @@ def split_sentences(text: str) -> list[str]:
 def find(sentence: str) -> list[Citation]:
     """DOIs, then author-year forms, in sentence order."""
     found: list[Citation] = []
+    standalone: list[Citation] = []  # a "(quoted in Y, 2025)" with no original of its own
     for m in _DOI.finditer(sentence):
         doi = normalize_doi(m.group(1))
         if doi is None:
@@ -137,12 +145,18 @@ def find(sentence: str) -> list[Citation]:
         found.append(Citation("doi", sentence[m.start() : end], (m.start(), end), doi=doi))
     for group in _PAREN.finditer(sentence):
         for part in group.group(1).split(";"):
-            parsed = _PART.match(_LEAD.sub("", part.strip()))
+            text = _LEAD.sub("", part.strip())
+            secondary = _SECONDARY.match(text)
+            parsed = _PART.match(secondary["src"] if secondary else text)
             if parsed and parsed["names"].strip()[:1].isupper():
                 surname = _FIRST_AUTHOR.split(parsed["names"].strip())[0].strip()
-                found.append(
-                    Citation("author_year", part.strip(), group.span(), surname=surname, year=int(parsed["year"]))
+                via = secondary["orig"].strip(" ,;") or None if secondary else None
+                citation = Citation(
+                    "author_year", part.strip(), group.span(), surname=surname, year=int(parsed["year"]), via=via
                 )
+                found.append(citation)
+                if secondary and via is None:
+                    standalone.append(citation)
     for m in _NARRATIVE.finditer(sentence):
         names, start = m["names"], m.start()
         while len(head := names.split(", ", 1)) == 2 and head[0] in LEAD_WORDS:
@@ -160,6 +174,16 @@ def find(sentence: str) -> list[Citation]:
                 narrative=True,
             )
         )
+    if standalone:  # the narrative citations are the originals the author read through Y
+        originals = [c.text for c in found if c.narrative]
+        found = [
+            replace(c, superseded=True)
+            if c.narrative
+            else replace(c, via="; ".join(originals) or None)
+            if c in standalone
+            else c
+            for c in found
+        ]
     return sorted(found, key=lambda c: c.span)
 
 

@@ -304,7 +304,7 @@ def _row_claims(block: claim_text.Block) -> list[Cited]:
         claim = ". ".join(part for part in parts if part)
         if cited_cells > 1 and len(claim.split()) < 3:
             claim = ""
-        out += [Cited(f"{claim}." if claim else "", c) for c in found]
+        out += [Cited(f"{claim}." if claim else "", c) for c in found if not c.superseded]
     return out
 
 
@@ -329,7 +329,7 @@ def _block_claims(block: claim_text.Block) -> list[Cited]:
             continue
         bare = _without(sentence, found, keep_names=False)
         if _CROSS_REFERENCE.search(bare):
-            out += [Cited(_prose(_without(sentence, found)), c, "not_a_claim") for c in found]
+            out += [Cited(_prose(_without(sentence, found)), c, "not_a_claim") for c in found if not c.superseded]
             continue
         if i == 0 and block.lead and sentence == block.lead:
             claim = _prose(" ".join(_uncited_run(sentences[1:])))
@@ -339,7 +339,7 @@ def _block_claims(block: claim_text.Block) -> list[Cited]:
             claim = _prose(_without(sentence, found))
         if claim and claim[-1].isalnum():
             claim += "."
-        out += [Cited(claim, c) for c in found]
+        out += [Cited(claim, c) for c in found if not c.superseded]
     return out
 
 

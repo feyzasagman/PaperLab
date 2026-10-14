@@ -490,3 +490,46 @@ async def test_a_doi_paper_outside_the_workspace_is_not_matched_but_author_year_
     note = "It holds in general (Wsscope, 1987).\n\n## References\n\n- Wsscope, A. (1987). T. https://doi.org/10.1000/m46-ws\n"
     [item] = await claims.verify_claims(session, note, workspace_id=workspace.id, llm=Scripted())
     assert item.check.paper_id == inside.id
+
+
+@pytest.mark.parametrize(
+    "sentence, via",
+    [
+        (
+            "It holds broadly here (Runco & Jaeger, 2012, p. 92, as quoted in Abraham, 2025).",
+            "Runco & Jaeger, 2012, p. 92",
+        ),
+        ("It holds broadly here (Barron, 1955, as cited in Abraham, 2025).", "Barron, 1955"),
+        ("It holds broadly here (Boden, 2004, as summarised in Abraham, 2025).", "Boden, 2004"),
+        ("It holds broadly here (Boden, 2004, as summarized by Abraham, 2025).", "Boden, 2004"),
+    ],
+)
+def test_a_secondary_citation_points_at_the_source_read(sentence, via):
+    [found] = claims.cited_claims(sentence)
+    assert (found.citation.surname, found.citation.year, found.citation.via) == ("Abraham", 2025, via)
+    assert found.claim == "It holds broadly here."
+
+
+def test_a_standalone_quoted_in_supersedes_the_narrative_original():
+    [found] = claims.cited_claims('Stein (1953) wrote: "The creative work is a novel work" (quoted in Abraham, 2025).')
+    assert (found.citation.surname, found.citation.via) == ("Abraham", "Stein (1953)")
+    assert found.claim == 'Stein wrote: "The creative work is a novel work".'
+
+
+def test_a_secondary_source_outside_the_library_is_reported_against_that_source():
+    # never silently checked against the original instead
+    [found] = claims.cited_claims("It holds broadly here (Barron, 1955, as cited in Nobodyxyz, 1999).")
+    assert found.citation.surname == "Nobodyxyz"
+
+
+def test_cited_in_ordinary_prose_is_not_a_secondary_marker():
+    [found] = claims.cited_claims("This result was widely cited in later work (Lee, 2021).")
+    assert (found.citation.surname, found.citation.via) == ("Lee", None)
+
+
+def test_the_pilot_secondary_citations_go_to_abraham():
+    found = pilot("definition.md")
+    assert len(found) == 20
+    to_abraham = [c for c in found if c.citation.via]
+    assert {c.citation.via for c in to_abraham} >= {"Runco & Jaeger, 2012, p. 92", "Barron, 1955", "Boden, 2004"}
+    assert all((c.citation.surname, c.citation.year) == ("Abraham", 2025) for c in to_abraham)
