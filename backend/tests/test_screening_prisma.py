@@ -1,6 +1,7 @@
 import pytest
 
 from app.core import screening
+from app.models.workspace_search import WorkspaceSearchRun
 from tests.screening_pool import make_pool
 
 pytestmark = pytest.mark.anyio
@@ -49,3 +50,15 @@ async def test_export_states_the_question_and_both_criteria(client, session):
     body = (await client.get(f"/api/workspaces/{workspace.id}/search/prisma")).json()
     assert body["screening_criteria"] == (
         "Research question: Does sleep help?\nInclude when: RCTs\nExclude when: Animal studies")
+
+
+async def test_prisma_notes_identified_is_partial_only_when_a_run_was_cut_short(client, session):  # D266
+    workspace, hits = await make_pool(session, [("x", None)])
+    assert (await _prisma(client, workspace))["notes"] == []
+    run = await session.get(WorkspaceSearchRun, hits[0].run_id)
+    run.stats_json = {"cut_short": True, "unfinished_sources": ["arxiv", "crossref"]}
+    await session.flush()
+    combined = await _prisma(client, workspace)
+    per_run = (await client.get(f"/api/workspaces/{workspace.id}/search/prisma", params={"runs": str(run.id)})).json()
+    for body in (combined, per_run):
+        assert len(body["notes"]) == 1 and "partial" in body["notes"][0] and "arxiv, crossref" in body["notes"][0]

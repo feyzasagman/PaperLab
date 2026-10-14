@@ -29,6 +29,13 @@ afterEach(() => vi.unstubAllGlobals())
 const base = '/api/workspaces/w1/search'
 
 describe('ScreeningAssist', () => {
+  it('says how many hits the auto pre-screen left for a manual Suggest', async () => {
+    stubFetch({ [`GET ${base}/screening`]: () => state({ capped: '200 of 8226', capped_left: 8026 }) })
+    renderWithClient(<ScreeningAssist workspaceId="w1" />)
+    expect(await screen.findByText(/Auto pre-screen scored 200 of 8226 new hits/)).toBeInTheDocument()
+    expect(screen.getByText(/8026 wait for Suggest/)).toBeInTheDocument()
+  })
+
   it('saves the research question and both criteria with one PUT', async () => {
     const fetchMock = stubFetch({ [`GET ${base}/screening`]: () => state({ criteria: null }), [`PUT ${base}/screening`]: () => state() })
     renderWithClient(<ScreeningAssist workspaceId="w1" />)

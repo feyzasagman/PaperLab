@@ -3231,6 +3231,8 @@ export interface components {
              * @default []
              */
             automation: string[];
+            /** Notes */
+            notes?: string[];
             /** Screening Criteria */
             screening_criteria?: string | null;
         };
@@ -3738,6 +3740,10 @@ export interface components {
             suggest_total: number;
             /** Suggest Error */
             suggest_error: string | null;
+            /** Capped */
+            capped?: string | null;
+            /** Capped Left */
+            capped_left?: number | null;
             /** Model Label */
             model_label: string | null;
             /** Model Is Local */

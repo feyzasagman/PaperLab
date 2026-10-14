@@ -117,6 +117,8 @@ class ScreeningStateOut(BaseModel):
     suggest_done: int
     suggest_total: int
     suggest_error: str | None
+    capped: str | None = None  # D265: "200 of 8226" when the last auto pre-screen left hits for a manual Suggest
+    capped_left: int | None = None
     model_label: str | None
     model_is_local: bool | None
     model_host: str | None
@@ -246,4 +248,5 @@ class PrismaExportOut(BaseModel):
     included: int
     runs: list[dict]
     automation: list[str] = []
+    notes: list[str] = []
     screening_criteria: str | None = None

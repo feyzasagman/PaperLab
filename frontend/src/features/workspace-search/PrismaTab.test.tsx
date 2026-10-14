@@ -179,3 +179,14 @@ test('shows no methods notes when there is nothing to report', () => {
   expect(screen.getByText('Identified')).toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Methods notes' })).toBeNull()
 })
+
+test('says plainly that identified is partial when a run was cut short (D266)', () => {
+  vi.spyOn(queries, 'usePrismaExport').mockReturnValue(
+    { data: { ...combinedData, notes: ['The identified count is partial: 1 search run(s) stopped at their time limit.'] } } as ReturnType<
+      typeof queries.usePrismaExport
+    >,
+  )
+  render(<PrismaTab workspaceId="ws-1" />)
+  const notes = screen.getByRole('region', { name: 'Methods notes' })
+  expect(within(notes).getByText(/identified count is partial/)).toBeInTheDocument()
+})

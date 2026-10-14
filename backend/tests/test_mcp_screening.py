@@ -432,3 +432,16 @@ async def test_accept_suggestions_refuses_more_than_5000_ids(session):
     workspace, _ = await _pool(session)
     out = await call("accept_suggestions", workspace=workspace.name, hit_ids=[str(uuid.uuid4()) for _ in range(5001)])
     assert out.is_error and out.structured_content["error"] == "too_many_hits"
+
+
+async def test_get_search_run_and_get_prisma_carry_a_cut_short_run(session, jobs):  # D266
+    await new_workspace(session, "Cut short")
+    started = result(await call("start_search_run", workspace=f"Cut short {RUN}", query="q", sources=["arxiv"]))
+    run = await session.get(workspace_search.WorkspaceSearchRun, uuid.UUID(started["id"]))
+    run.status, run.stats_json = "exhausted", {"cut_short": True, "unfinished_sources": ["arxiv"]}
+    await session.commit()
+
+    seen = result(await call("get_search_run", run_id=started["id"]))
+    assert seen["stats_json"]["cut_short"] is True and seen["stats_json"]["unfinished_sources"] == ["arxiv"]
+    prisma = result(await call("get_prisma", workspace=f"Cut short {RUN}"))
+    assert len(prisma["notes"]) == 1 and "partial" in prisma["notes"][0]

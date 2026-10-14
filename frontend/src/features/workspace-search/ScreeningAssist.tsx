@@ -139,6 +139,11 @@ export function ScreeningAssist({ workspaceId }: { workspaceId: string }) {
           <span className="text-xs text-muted-foreground">Add a research question or inclusion criteria first.</span>
         )}
       </div>
+      {data.capped && (
+        <p className="text-xs text-muted-foreground">
+          Auto pre-screen scored {data.capped} new hits, best first; {data.capped_left} wait for Suggest.
+        </p>
+      )}
       {running && (
         <div className="flex flex-col gap-1.5">
           <Progress aria-label="Suggesting" value={percent} />
