@@ -72,8 +72,37 @@ async def _paper(session: AsyncSession, paper_id: uuid.UUID | None, doi: str | N
     return paper
 
 
-async def _passages(session, paper: Paper, claim: str, quoted_text: str | None) -> tuple[str, list[dict], list[str]]:
-    """(evidence level, passage descriptions, passage texts): the paper's best chunks, else its abstract."""
+LEAD_CHARS = 300  # how much of a sentence's start, from the chunk before, the verifier is shown
+_SENTENCE_END = re.compile(r"[.!?][\"'”’)\]]*\s+")
+
+
+async def _leads(session, found) -> list[str]:
+    """For each passage that starts mid-sentence (its first letter is lower-case), the start of that sentence: the
+    text after the last sentence end of the chunk before it. Chunks never cross a page, so a sentence over a page break
+    is split, and its first half can hold the negation ("none of" | "the LLMs … correlate positively", pilot 2 N1).
+    Context only: quotes are still taken from the passage itself."""
+    leads = []
+    for chunk in found:
+        if not chunk.text.lstrip()[:1].islower():
+            leads.append("")
+            continue
+        ordinal = select(Chunk.ordinal).where(Chunk.id == chunk.id).scalar_subquery()
+        before = (
+            await session.scalar(
+                select(Chunk.text).where(Chunk.paper_id == chunk.paper_id, Chunk.ordinal == ordinal - 1)
+            )
+            or ""
+        )
+        ends = list(_SENTENCE_END.finditer(before))
+        tail = (before[ends[-1].end() :] if ends else before).strip()
+        leads.append(tail[-LEAD_CHARS:] if tail and not tail.endswith((".", "!", "?")) else "")
+    return leads
+
+
+async def _passages(
+    session, paper: Paper, claim: str, quoted_text: str | None
+) -> tuple[str, list[dict], list[str], list[str]]:
+    """(evidence level, passage descriptions, passage texts, sentence starts): the best chunks, else the abstract."""
     has_chunks = paper.status == PaperStatus.READY and await session.scalar(
         select(func.count()).select_from(Chunk).where(Chunk.paper_id == paper.id)
     )
@@ -86,16 +115,22 @@ async def _passages(session, paper: Paper, claim: str, quoted_text: str | None) 
                 "full_text",
                 [{"chunk_id": c.id, "page": c.page, "section": c.section} for c in found],
                 [c.text for c in found],
+                await _leads(session, found),
             )
     if (paper.abstract or "").strip():
-        return "abstract_only", [{"chunk_id": None, "page": None, "section": None}], [paper.abstract]
-    return "metadata_only", [], []
+        return "abstract_only", [{"chunk_id": None, "page": None, "section": None}], [paper.abstract], [""]
+    return "metadata_only", [], [], []
 
 
-def _prompt(claim: str, quoted_text: str | None, texts: list[str], passages: list[dict]) -> str:
+def _prompt(claim: str, quoted_text: str | None, texts: list[str], passages: list[dict], leads: list[str]) -> str:
+    def line(i, p, t, lead):
+        if p["page"] is None:
+            return f"[{i}] (abstract) {t}"
+        cont = f" (continues a sentence that began: \"…{lead}\")" if lead else ""
+        return f"[{i}] (page {p['page']}, section {p['section']}){cont} {t}"
+
     numbered = "\n\n".join(
-        f"[{i}] (page {p['page']}, section {p['section']}) {t}" if p["page"] is not None else f"[{i}] (abstract) {t}"
-        for i, (p, t) in enumerate(zip(passages, texts, strict=True), start=1)
+        line(i, p, t, lead) for i, (p, t, lead) in enumerate(zip(passages, texts, leads, strict=True), start=1)
     )
     quoted = f"\nThe researcher quotes this from the paper: {quoted_text}\n" if quoted_text else ""
     # str.format only parses the template, so braces in the claim or passages are safe.
@@ -155,7 +190,7 @@ async def verify_claim(
     if not claim.strip():
         raise InvalidInput("empty_claim", detail="The claim is empty.")
     paper = await _paper(session, paper_id, doi)
-    level, passages, texts = await _passages(session, paper, claim, quoted_text)
+    level, passages, texts, leads = await _passages(session, paper, claim, quoted_text)
     base = {"claim": claim, "paper_id": paper.id, "paper_title": paper.title, "evidence_level": level}
     if level == "metadata_only":
         if paper.status not in (PaperStatus.READY, PaperStatus.FAILED):  # still ingesting: text may come
@@ -164,7 +199,7 @@ async def verify_claim(
     llm = await _llm(session, llm)
     model = getattr(llm, "model", "unknown")
     connection_name = getattr(llm, "connection_name", None)
-    reply = await llm_json.ask_json(llm, SYSTEM_PROMPT, _prompt(claim, quoted_text, texts, passages), _Reply)
+    reply = await llm_json.ask_json(llm, SYSTEM_PROMPT, _prompt(claim, quoted_text, texts, passages, leads), _Reply)
     if reply is None:
         content = {"verdict": "cannot_verify", "reason": "model_error"}
         output_id = await _write_output(session, paper, claim, content, passages, model, connection_name)
