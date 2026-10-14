@@ -56,7 +56,7 @@ def test_a_preprint_has_genre_and_the_server_as_publisher():
     item = csl_item(paper(source_type="preprint", peer_reviewed="false", doi="10.48550/arXiv.2401.00001", venue=None))
     assert (item["type"], item["genre"], item["publisher"]) == ("article", "Preprint", "arXiv")
     assert "container-title" not in item
-    assert "not peer-reviewed" in item["note"]
+    assert "Not peer-reviewed" in item["note"]
     assert csl_item(paper(source_type="preprint", doi=None, venue="bioRxiv"))["publisher"] == "bioRxiv"
 
 

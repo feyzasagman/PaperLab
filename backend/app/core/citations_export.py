@@ -1,5 +1,6 @@
 """Citation export (M39 F7, D253-D255): one CSL-JSON item per paper is the hub; every format is rendered from it."""
 
+import html
 import json
 import re
 import unicodedata
@@ -35,6 +36,10 @@ ORG_WORDS = {
     "laboratory", "department", "commission", "network", "company", "inc", "ltd",
 }  # fmt: skip
 PARTICLES = {"van", "von", "de", "der", "den", "del", "della", "di", "da", "la", "le", "du", "bin", "al", "ter", "ten"}
+SUFFIX = re.compile(r"[,\s]+(Jr\.?|Sr\.?|II|III|IV)$", re.IGNORECASE)
+INITIALS = re.compile(r"[A-Z]{1,2}|(?:[A-Z]\.){1,3}")
+TRANSLITERATE = str.maketrans({"ø": "o", "ß": "ss", "æ": "ae", "œ": "oe", "ł": "l", "đ": "d", "þ": "th"})
+ARTICLES = ("a ", "an ", "the ")
 STOP_WORDS = {"a", "an", "the", "on", "of", "in", "for", "and", "to", "with", "from", "by", "at", "as", "is", "are"}
 ACCESS_NOTE = {
     "full_text": "full text in PaperLab",
@@ -46,28 +51,39 @@ PEER_NOTE = {"true": "peer-reviewed", "false": "not peer-reviewed"}
 
 def _person(name: str) -> dict:
     name = " ".join(name.split())
+    suffix = None
+    if (m := SUFFIX.search(name)) and " " in name[: m.start()].strip():
+        name, suffix = name[: m.start()].strip(), m.group(1)
     words = re.findall(r"\w+", name.lower())
     # ponytail: an organisation is a single token or one with an organisation word; the byline has no other marker.
     if " " not in name and "," not in name or ORG_WORDS & set(words):
         return {"literal": name}
     if "," in name:
         family, _, given = name.partition(",")
-        return {"family": family.strip(), "given": given.strip()}
-    tokens = name.split(" ")
-    cut = len(tokens) - 1
-    while cut > 1 and tokens[cut - 1].lower() in PARTICLES:
-        cut -= 1
-    return {"family": " ".join(tokens[cut:]), "given": " ".join(tokens[:cut])}
+        person = {"family": family.strip(), "given": given.strip()}
+    else:
+        tokens = name.split(" ")
+        cut = len(tokens) - 1
+        if INITIALS.fullmatch(tokens[-1]) and len(tokens) > 1:
+            # "Smith J.A.": the trailing initials are the given name
+            person = {"family": " ".join(tokens[:cut]), "given": tokens[-1]}
+        else:
+            while cut > 1 and tokens[cut - 1].lower() in PARTICLES:
+                cut -= 1
+            person = {"family": " ".join(tokens[cut:]), "given": " ".join(tokens[:cut])}
+    return {**person, "suffix": suffix} if suffix else person
 
 
 def _note(paper) -> str | None:
     label = (paper.source_type or "").replace("_", " ")
+    preprint = paper.source_type == "preprint"  # the genre is already "Preprint"; don't say it twice
     parts = [
-        f"Source: {label}" if label else None,
+        f"Source: {label}" if label and not preprint else None,
         PEER_NOTE.get(paper.peer_reviewed),
         ACCESS_NOTE.get(paper.evidence_access),
     ]
-    return " · ".join(p for p in parts if p) or None
+    note = " · ".join(p for p in parts if p)
+    return note[:1].upper() + note[1:] if preprint and note else note or None
 
 
 def csl_item(paper) -> dict:
@@ -103,7 +119,7 @@ def csl_item(paper) -> dict:
 
 
 def _ascii(text: str) -> str:
-    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    folded = unicodedata.normalize("NFKD", text.lower().translate(TRANSLITERATE)).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]", "", folded.lower())
 
 
@@ -113,7 +129,8 @@ def _base_key(item: dict) -> str:
     year = item.get("issued", {}).get("date-parts", [[None]])[0][0]
     words = [_ascii(w) for w in item["title"].split()]
     word = next((w for w in words if w and w not in STOP_WORDS), "") or next((w for w in words if w), "")
-    return f"{_ascii(name)}{year or 'nd'}{word}"
+    # ponytail: a name or title with no Latin letters (CJK, Cyrillic) falls back to "anon" / "untitled".
+    return f"{_ascii(name) or 'anon'}{year or 'nd'}{word or 'untitled'}"
 
 
 def bibtex_keys(items: list[dict]) -> dict[str, str]:
@@ -203,7 +220,7 @@ def _bibtex_fields(item: dict) -> dict[str, str]:
         "year": str(item.get("issued", {}).get("date-parts", [[""]])[0][0]),
         "volume": item.get("volume"),
         "number": item.get("issue"),
-        "pages": (item.get("page") or "").replace("-", "--").replace("----", "--") or None,
+        "pages": re.sub(r"^(\d+)\s*[-–]+\s*(\d+)$", r"\1--\2", item.get("page") or "") or None,
         "note": ". ".join(p for p in (item.get("genre"), item.get("note")) if p),
     }
     escaped = {k: v if k in ("author", "editor") else _tex(v) for k, v in fields.items()}
@@ -226,7 +243,8 @@ def _ris_names(people: list[dict]) -> list[str]:
 
 
 def _ris_entry(item: dict) -> dict:
-    first, _, last = (item.get("page") or "").partition("-")
+    m = re.fullmatch(r"(\d+)\s*[-–]+\s*(\d+)", item.get("page") or "")
+    first, last = m.groups() if m else (item.get("page"), None)
     entry = {
         "type_of_reference": RIS_TYPES.get(item["type"], "GEN"),
         "title": item["title"],
@@ -238,7 +256,7 @@ def _ris_entry(item: dict) -> dict:
         "volume": item.get("volume"),
         "number": item.get("issue"),
         "start_page": first or None,
-        "end_page": last.lstrip("-") or None,
+        "end_page": last,
         "doi": item.get("DOI"),
         "urls": [item["URL"]] if item.get("URL") else None,
         "notes": [". ".join(p for p in (item.get("genre"), item.get("note")) if p)],
@@ -250,23 +268,60 @@ def _ris(items: list[dict]) -> str:
     return rispy.dumps([_ris_entry(item) for item in items])
 
 
+def _initials(given: str) -> str:
+    return "".join(w[0] for w in re.findall(r"\w+", given.lower()))
+
+
+def _title_key(title: str) -> str:
+    lowered = title.lower().strip()
+    return next((lowered[len(a) :] for a in ARTICLES if lowered.startswith(a)), lowered)
+
+
+def _apa_names(item: dict) -> tuple:
+    people = item.get("author") or [{"literal": _title_key(item["title"])}]
+    fold = lambda t: unicodedata.normalize("NFKD", t).lower()  # noqa: E731
+    return tuple((fold(p.get("family") or p.get("literal") or ""), _initials(p.get("given", ""))) for p in people)
+
+
 def _apa_order(item: dict) -> tuple:
-    # citeproc-py's own bibliography.sort() leaves the order unchanged with this style, so order by author, year, title.
-    first = (item.get("author") or [{}])[0]
-    name = first.get("family") or first.get("literal") or ""
+    # citeproc-py's own bibliography.sort() leaves the order unchanged with this style, so order by authors (a shorter
+    # list first), year, title.
     year = item.get("issued", {}).get("date-parts", [[0]])[0][0]
-    return (unicodedata.normalize("NFKD", name).lower(), year, item["title"].lower(), item["id"])
+    return (_apa_names(item), year, _title_key(item["title"]), item["id"])
+
+
+def _escaped(value):
+    if isinstance(value, str):
+        return html.escape(value, quote=False)
+    if isinstance(value, list):
+        return [_escaped(v) for v in value]
+    if isinstance(value, dict):
+        return {k: v if k in ("id", "type") else _escaped(v) for k, v in value.items()}
+    return value
+
+
+def _with_year_suffixes(ordered: list[dict]) -> list[dict]:
+    """citeproc-py doesn't compute year suffixes: same authors and year get a, b, ... in the final order."""
+    groups: dict[tuple, list[dict]] = {}
+    for item in ordered:
+        if item.get("issued"):
+            groups.setdefault((_apa_names(item), _apa_order(item)[1]), []).append(item)
+    suffixes = {i["id"]: _suffix(n) for g in groups.values() if len(g) > 1 for n, i in enumerate(g)}
+    return [{**i, "year-suffix": suffixes[i["id"]]} if i["id"] in suffixes else i for i in ordered]
 
 
 def _apa(items: list[dict], *, html: bool) -> str:
+    ordered = _with_year_suffixes(sorted(items, key=_apa_order))
+    if html:
+        ordered = [_escaped(i) for i in ordered]  # citeproc's html formatter leaves field values raw
     # ponytail: the style is parsed on every call (~0.3 s); cache it if exports get hot.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # citeproc-py warns about CSL fields it doesn't know
         style = CitationStylesStyle(str(APA_STYLE), validate=False)
         bibliography = CitationStylesBibliography(
-            style, CiteProcJSON(items), formatter.html if html else formatter.plain
+            style, CiteProcJSON(ordered), formatter.html if html else formatter.plain
         )
-        for item in sorted(items, key=_apa_order):
+        for item in ordered:
             bibliography.register(Citation([CitationItem(item["id"])]))
         return "\n".join(str(entry) for entry in bibliography.bibliography()) + "\n"
 
