@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { expect, openReader, test } from './fixtures'
 
-// The repository root, where `docker compose` finds the stack, and the stdio client that runs inside the api container.
+// The repository root, where `docker compose -p paperlab-e2e` finds the test stack, and the stdio client that runs inside the api container.
+const E2E_PROJECT = process.env.E2E_COMPOSE_PROJECT ?? 'paperlab-e2e'
 const REPO = fileURLToPath(new URL('../..', import.meta.url))
 const MCP_CALL = readFileSync(fileURLToPath(new URL('./mcp_call.py', import.meta.url)), 'utf8')
 /** In the fixture paper's first paragraph, from the end of line 2 into line 3: two line rects, not the paragraph. */
@@ -14,7 +15,7 @@ type McpNote = { id: string; provenance: string; anchors: { page: number; bbox: 
 
 /** Calls a tool through the real MCP server over stdio, inside the api container, as Claude Desktop launches it (D89). */
 function callTool<T>(tool: string, args: Record<string, unknown>): { is_error: boolean; result: T } {
-  const out = execFileSync('docker', ['compose', 'exec', '-T', 'api', 'python', '-', tool, JSON.stringify(args)], {
+  const out = execFileSync('docker', ['compose', '-p', E2E_PROJECT, 'exec', '-T', 'api', 'python', '-', tool, JSON.stringify(args)], {
     cwd: REPO,
     input: MCP_CALL,
     encoding: 'utf8',

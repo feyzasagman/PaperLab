@@ -1,7 +1,7 @@
 import { expect, openReader, pickChatModel, saveNoteOn, test } from './fixtures'
 
 // Needs the stack started with no search model, and runs as its own project (README, End-to-end tests):
-//   MODELS_DIR=/models/none LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker ingest-worker
+//   scripts/e2e-stack.sh up --no-search-model
 //   npx playwright test --project=no-search-model --no-deps
 // On a stack that has the model it skips itself, so a plain `npm run e2e` stays green there. The download itself is
 // never run: POST /api/embedding/model is answered by the test (spec §8.7).

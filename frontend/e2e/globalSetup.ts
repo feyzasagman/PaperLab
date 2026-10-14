@@ -1,12 +1,13 @@
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { assertTestStack } from './stackGuard'
 
 /** The label every connection an E2E run makes starts with, so its litter is recognisable afterwards. */
 export const E2E_CONNECTION_PREFIX = 'E2E connection '
 
 /** The dev server proxies /api to the API, so one base URL covers both. */
-const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:5180'
+const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:5280'
 
 /**
  * Where the owner's default model id waits for the teardown below. A fixed path, not a per-run one: a run that
@@ -61,6 +62,29 @@ export async function sweepE2EConnections() {
   }
 }
 
+/**
+ * A fresh test stack has no model, and the AI specs (pre-screening, evidence cards...) expect a default one, as the
+ * owner's library has. Seeds one and makes it the default, not E2E-prefixed so the sweep leaves it.
+ */
+async function ensureDefaultModel() {
+  if ((await get<Model[]>('/api/llm/models')).some((model) => model.is_default)) return
+  const json = { 'Content-Type': 'application/json' }
+  const created = await fetch(`${BASE}/api/llm/connections`, {
+    method: 'POST',
+    headers: json,
+    body: JSON.stringify({ kind: 'openai_compatible', label: 'Test stack model', base_url: 'http://fake-provider.test/v1' }),
+  })
+  if (created.status !== 201) throw new Error(`POST /api/llm/connections answered ${created.status}`)
+  const { id } = (await created.json()) as Connection
+  const model = await fetch(`${BASE}/api/llm/connections/${id}/models`, {
+    method: 'POST',
+    headers: json,
+    body: JSON.stringify({ name: 'test-stack-model' }),
+  })
+  if (model.status !== 201) throw new Error(`POST /api/llm/connections/${id}/models answered ${model.status}`)
+  await restoreOwnersDefault(((await model.json()) as { id: string }).id)
+}
+
 /** No spec meets the first-run setup by surprise: it is done for the whole run. first-run.spec.ts moves the flag and
  * puts it back itself. */
 async function markSetupDone() {
@@ -77,6 +101,9 @@ async function markSetupDone() {
  * database, so every run has to hand it back exactly as it found it.
  */
 export default async function globalSetup() {
+  // First, before anything touches the stack: a run pointed at the owner's library stops here.
+  assertTestStack((await get<{ stack?: unknown }>('/api/health')).stack, BASE)
+  await ensureDefaultModel()
   const left = await readOwnersDefault()
   // A record already here means an earlier run died before its teardown: its id, not whatever the default is
   // now (that run's own last pick), is the owner's. Putting it back first also keeps this run from recording
