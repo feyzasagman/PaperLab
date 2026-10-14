@@ -12,7 +12,7 @@ export default defineConfig({
     proxy: { '/api': process.env.API_URL ?? 'http://localhost:8000' },
   },
   test: {
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/**/*.test.{ts,tsx}', 'e2e/**/*.vitest.ts'],
     setupFiles: ['./src/test/setup.ts'],
   },
 })

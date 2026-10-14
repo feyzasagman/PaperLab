@@ -43,4 +43,6 @@ async def health(session: SessionDep) -> dict:
         # pgvector stores float32, so compare with tolerance.
         "orm_roundtrip": max(abs(float(a) - b) for a, b in zip(orm_vector, vector)) < 1e-6,
         "raw_sql_nearest_is_self": nearest.id == chunk.id and nearest.distance < 1e-6,
+        # Which compose project answered (D273): the E2E suite refuses any stack whose name doesn't end in -e2e.
+        "stack": settings.paperlab_stack,
     }

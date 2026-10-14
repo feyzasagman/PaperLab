@@ -2,7 +2,7 @@
 with the initialize handshake. Prints {"is_error": …, "result": …} as one JSON line. For E2E specs only.
 
 Run inside the api container, which has the server and its database (D89):
-  docker compose exec -T api python - <tool> '<arguments as JSON>' < frontend/e2e/mcp_call.py
+  scripts/e2e-stack.sh exec api python - <tool> '<arguments as JSON>' < frontend/e2e/mcp_call.py
 """
 
 import asyncio

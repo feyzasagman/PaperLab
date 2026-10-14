@@ -438,14 +438,14 @@ Settings live in an optional `.env` beside `docker-compose.yml`: every one has a
 
 | Variable                                                    | Default                             | What it does                                                                                                                        |
 | ----------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `LLM_PROVIDER`                                              | `ollama`                            | Seeds the first model connection: `ollama` or `anthropic`. `fake` answers every model with fixed text (for tests) and seeds nothing |
+| `LLM_PROVIDER`                                              | `ollama`                            | Seeds the first model connection: `ollama` or `anthropic`. `fake` answers every model with fixed text (for tests) and seeds nothing; it runs only on a test stack (`scripts/e2e-stack.sh`) |
 | `LLM_MODEL`                                                 | `qwen3:8b`                          | The first connection's default model                                                                                                |
 | `OLLAMA_URL`                                                | `http://host.docker.internal:11434` | Seeds the first Ollama connection's address (the host, not Compose); change it in Settings afterwards                               |
 | `ANTHROPIC_API_KEY`                                         | none                                | Seeds an Anthropic connection when `LLM_PROVIDER=anthropic`; add keys in Settings afterwards                                        |
 | `ANTHROPIC_MAX_TOKENS`                                      | `64000`                             | The longest answer an Anthropic model may write                                                                                     |
 | `OPENALEX_MAILTO`                                           | empty (off)                         | Seeds Settings → Paper sources once, on first start: your contact email, with OpenAlex ticked. Change it in Settings afterwards     |
 | `SEMANTIC_SCHOLAR_API_KEY`                                  | empty                               | Seeds the Semantic Scholar key in Settings → Paper sources once, on first start. Change it in Settings afterwards                   |
-| `DISCOVERY_PROVIDER`                                        | `live`                              | `fake` answers Find papers and Similar with three fixed papers and no network (for tests)                                           |
+| `DISCOVERY_PROVIDER`                                        | `live`                              | `fake` answers Find papers and Similar with three fixed papers and no network (for tests); only on a test stack (`scripts/e2e-stack.sh`)                                           |
 | `POSTGRES_PASSWORD`, `DATABASE_URL`, `REDIS_URL`, `PDF_DIR` | see `.env.example`                  | Database, queue and PDF storage                                                                                                     |
 
 Ollama listens on IPv4 only by default. If you type `localhost` into a connection's base URL, some systems resolve
@@ -498,28 +498,31 @@ cd backend && uv run pytest && uv run ruff check .       # needs the compose db
 cd frontend && npm run gen:api                           # regenerate API types (api running)
 cd frontend && npx tsc -b && npm test                    # types + unit tests
 cd frontend && npx playwright install chromium            # once
-cd frontend && npm run typecheck:e2e && npm run e2e      # end-to-end against the running stack
+cd frontend && npm run typecheck:e2e && npm run e2e      # end-to-end against the test stack (`scripts/e2e-stack.sh up` first)
 cd desktop && npm ci && npm test && npm run typecheck    # the desktop app: unit tests and types
 cd desktop && npm run e2e -- --project=stub              # its window against a stub docker
 docker compose exec api python -m evals.answer_check --paper "<title prefix>" --workspace "<name>"  # manual, real LLM
 ```
 
-- **End-to-end tests** run against the real stack, with no mocked backend. They expect the fake model, which always
-gives the same answer, and the search model downloaded: start the API and the worker with
-`LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker ingest-worker`, run the tests, then go back with
-`docker compose up -d api worker ingest-worker`. The specs tagged `@no-search-model` need a stack with no search model and skip
-themselves otherwise: start it with
-`MODELS_DIR=/models/none LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose up -d api worker ingest-worker`, then run
-`npx playwright test --project=no-search-model --no-deps`, then `docker compose up -d api worker ingest-worker` again to bring the
-models folder back.
+- **End-to-end tests** run against the real stack, with no mocked backend, on their own compose project
+(`paperlab-e2e`, with its own database and ports), so your library is never touched. They expect the fake model, which
+always gives the same answer, and the search model, which the script copies from your `paperlab_models` volume. Run
+`scripts/e2e-stack.sh up`, then `npm run e2e` in `frontend/` (it targets :5280 and refuses any other stack), then
+`scripts/e2e-stack.sh down`. Your own stack is never restarted for tests, but the test stack shares Docker's memory with it: run
+`scripts/e2e-stack.sh down` as soon as the run ends, then check that your own worker is still running (`docker top
+paperlab-worker-1` shows an `arq` process). The specs tagged `@no-search-model` need a
+stack with no search model and skip themselves otherwise: run `scripts/e2e-stack.sh up --no-search-model`, then
+`npx playwright test --project=no-search-model --no-deps`, then `scripts/e2e-stack.sh down` (`up` again before the next
+normal run, to bring the models folder back). To call an MCP tool against that stack, run
+`scripts/e2e-stack.sh exec api python - <tool> '<json>' < frontend/e2e/mcp_call.py`.
 - **The release stack** is what the desktop app and the two-command install run. Build it with
 `docker build -t ghcr.io/khannoussi-malek/paperlab:dev -t ghcr.io/khannoussi-malek/paperlab:<desktop/package.json's version> .`,
-then start it with `LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake docker compose -f desktop/docker-compose.yml up -d`. It
-serves the built app on :5190 with its own volumes. In `frontend/`,
-`E2E_RELEASE=1 E2E_BASE_URL=http://127.0.0.1:5190 npx playwright test --project=release` runs what a fresh install must
-pass. In `desktop/`, `npm run build && E2E_RELEASE=1 npx playwright test --project=release-stack` drives the app over
-it: upgrade backup, close and quit. `docker compose -f desktop/docker-compose.yml down -v` deletes that library, which
-is also the desktop app's.
+then start it with `LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake PAPERLAB_PORT=5290 docker compose -p paperlab-release-e2e -f desktop/docker-compose.yml up -d`. It
+serves the built app on :5290 with its own volumes, apart from your library and the desktop app's. In `frontend/`,
+`E2E_RELEASE=1 E2E_BASE_URL=http://127.0.0.1:5290 npx playwright test --project=release` runs what a fresh install must
+pass. In `desktop/`, `npm run build && E2E_RELEASE=1 npx playwright test --project=release-stack` drives the app: upgrade backup, close and quit. That
+step does not use the release stack: it drives the desktop app's own library (project `paperlab-app`, :5190), so run it only
+where that library holds nothing you need. `docker compose -p paperlab-release-e2e -f desktop/docker-compose.yml down -v` deletes that test library.
 - **Retrieval eval:** `docker compose exec api python -m evals.run` prints recall@k for the questions in
 `backend/evals/questions.yaml`, asking with the search model PaperLab ships; `--variant full` or `--variant int8` asks
 with the other one once it is downloaded. Run it twice after a re-ingest before comparing results.

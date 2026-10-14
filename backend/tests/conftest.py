@@ -374,7 +374,7 @@ async def discovery_fakes(fake_openalex):
 
 @pytest.fixture(autouse=True)
 def _real_providers(monkeypatch):
-    # A shell that exported LLM_PROVIDER=fake for the E2E stack must not turn provider tests into fake ones.
+    # Provider tests use the real code paths whatever the environment sets (fake is refused off a test stack).
     monkeypatch.setattr(settings, "llm_provider", "ollama")
 
 

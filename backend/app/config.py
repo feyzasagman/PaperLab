@@ -1,9 +1,13 @@
 from pathlib import Path
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 from app.providers.search_model import SHIPPED
+
+# A compose project whose name ends in this is a test stack (scripts/e2e-stack.sh): the only place fakes run (D273).
+TEST_STACK_SUFFIX = "-e2e"
 
 
 class Settings(BaseSettings):
@@ -37,6 +41,22 @@ class Settings(BaseSettings):
     # The built frontend's folder (the release image sets /app/web). Empty: the API serves no page, as in development,
     # where Vite serves the frontend on :5180.
     frontend_dist: str = ""
+    # The compose project this process belongs to, from `PAPERLAB_STACK: ${COMPOSE_PROJECT_NAME}` in the compose
+    # files. Fake providers run only on a test stack, whose name ends in -e2e (D273): the owner's library lives in
+    # `paperlab` (or `paperlab-app`) and must never hold a fake model's rows.
+    paperlab_stack: str = ""
+
+    @model_validator(mode="after")
+    def _fake_only_on_a_test_stack(self):
+        fake = "fake" in (self.llm_provider, self.discovery_provider)
+        if fake and not self.paperlab_stack.endswith(TEST_STACK_SUFFIX):
+            raise ValueError(
+                "Fake providers run only on a test stack, and this is "
+                f"{self.paperlab_stack or 'not a compose stack'!r}. "
+                "Start the test stack with scripts/e2e-stack.sh up. If your shell or .env sets "
+                "LLM_PROVIDER or DISCOVERY_PROVIDER to fake, unset it."
+            )
+        return self
 
 
 settings = Settings()
