@@ -21,6 +21,14 @@ async function waitForRunToFinish(request: APIRequestContext, workspaceId: strin
     .toBe('exhausted')
 }
 
+// The upload creates a library paper and marks the hit's global external_ref imported; remove it even when the test
+// fails, or the next run's import attaches that paper and shows no upload control.
+let uploadedPaperId: string | undefined
+test.afterEach(async ({ request }) => {
+  if (uploadedPaperId) await removePaperAndNotes(request, uploadedPaperId)
+  uploadedPaperId = undefined
+})
+
 test('search, screen, import a hit, then upload its PDF manually', async ({ page, request, workspaceId }) => {
   await page.goto(`/#/workspaces/${workspaceId}?tab=search`)
   await page.getByLabel('Search query').fill('paperlab pagination fixture')
@@ -69,7 +77,7 @@ test('search, screen, import a hit, then upload its PDF manually', async ({ page
     uploadInput.setInputFiles(FIXTURE_FILE),
   ])
   const uploaded = await uploadResponse.json()
+  uploadedPaperId = uploaded.paper_id
 
   await expect(activeTab.getByLabel(`Upload PDF for ${title}`)).toHaveCount(0)
-  await removePaperAndNotes(request, uploaded.paper_id)
 })

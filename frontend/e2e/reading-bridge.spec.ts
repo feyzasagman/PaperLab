@@ -17,6 +17,14 @@ async function waitUntilReady(request: APIRequestContext, paperId: string) {
     .toBe('ready')
 }
 
+// The upload creates a library paper and marks the hit's global external_ref imported; remove it even when the test
+// fails, or the next run's import attaches that paper and shows no upload control.
+let uploadedPaperId: string | undefined
+test.afterEach(async ({ request }) => {
+  if (uploadedPaperId) await removePaperAndNotes(request, uploadedPaperId)
+  uploadedPaperId = undefined
+})
+
 test('shows why a paper is here, its reading queue, and never a not-yet-imported hit', async ({
   page,
   request,
@@ -65,6 +73,7 @@ test('shows why a paper is here, its reading queue, and never a not-yet-imported
     uploadInput.setInputFiles(FIXTURE_FILE),
   ])
   const seedHit: { id: string; paper_id: string } = await uploadResponse.json()
+  uploadedPaperId = seedHit.paper_id
   await expect(preview.getByLabel(`Upload PDF for ${title}`)).toHaveCount(0)
 
   // 2. Priority and note are stage-1 fields with a real PATCH endpoint (HitReviewUpdate) — set directly rather
@@ -128,6 +137,4 @@ test('shows why a paper is here, its reading queue, and never a not-yet-imported
   await page.goto(`/#/workspaces/${workspaceId}?tab=reading&run=${runId}`)
   await expect(queueRow.locator('.reading-chip')).toHaveText('Pass 1')
   await expect(page.locator('.reading-queue li')).toHaveCount(1)
-
-  await removePaperAndNotes(request, seedHit.paper_id)
 })
