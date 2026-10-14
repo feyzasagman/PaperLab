@@ -9,6 +9,7 @@ from mcp_fixtures import call, result
 
 from app.core import claims, screening, workspaces
 from app.models import Paper, PaperStatus
+from mcp_server import server
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 RUN = uuid.uuid4().hex[:8]
@@ -44,8 +45,11 @@ def _model(monkeypatch, local: bool):
     monkeypatch.setattr(screening, "_default_model", default)
 
 
-async def paper(session, doi=None, abstract=ABSTRACT, title="Homogenized writing"):
-    row = Paper(title=title, file_path="x.pdf", status=PaperStatus.READY, abstract=abstract, doi=doi)
+async def paper(session, doi=None, abstract=ABSTRACT, title="Homogenized writing", authors=None, year=None):
+    row = Paper(
+        title=title, file_path="x.pdf", status=PaperStatus.READY, abstract=abstract, doi=doi,
+        authors=authors or [], year=year,
+    )
     session.add(row)
     await session.flush()
     return row
@@ -94,6 +98,15 @@ async def test_verify_claims_checks_each_citation_and_reports_unmatched_ones(ses
     items = result(await call("verify_claims", text=text))
     assert [i["error"] for i in items] == [None, "citation_not_found"]
     assert items[0]["check"]["verdict"] == "not_addressed"
+
+
+async def test_verify_claims_returns_not_a_claim_and_year_mismatch(session, llm, monkeypatch):
+    _model(monkeypatch, True)
+    await paper(session, title=f"Mcp off by one {RUN}", authors=["Ann Mcpoffbyone"], year=1987)
+    text = "It rose for every group (Mcpoffbyone, 1988). Lee & Kim (1987) is covered in [[x]]."
+    items = result(await call("verify_claims", text=text))
+    assert [(i["warning"], i["error"]) for i in items] == [("year_mismatch", None), (None, "not_a_claim")]
+    assert "not_a_claim" in server.verify_claims.__doc__ and "reference list" in server.verify_claims.__doc__
 
 
 async def test_verify_claims_workspace_remote_and_limits(session, llm, monkeypatch):
