@@ -53,7 +53,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Fake providers run only on a test stack, and this is "
                 f"{self.paperlab_stack or 'not a compose stack'!r}. "
-                "Start the test stack with scripts/e2e-stack.sh up."
+                "Start the test stack with scripts/e2e-stack.sh up. If your shell or .env sets "
+                "LLM_PROVIDER or DISCOVERY_PROVIDER to fake, unset it."
             )
         return self
 

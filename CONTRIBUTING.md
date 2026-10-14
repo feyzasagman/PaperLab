@@ -86,6 +86,8 @@ Two things that will waste your afternoon if nobody tells you:
 
 - The E2E suite drives a real browser against `:5280`. Wait for that proxy to be serving before you start, and run
   it with nothing else heavy on the machine — a loaded laptop produces timeouts that look like real failures.
+- The test stack shares Docker's memory with your own stack. Run `scripts/e2e-stack.sh down` as soon as the run ends,
+  then check your own worker is still running (`docker top paperlab-worker-1` shows an `arq` process).
 - Restarting the API kills a running eval. `docker compose exec api python -m evals.answers` takes a long time on a
   local model; leave the stack alone until it finishes.
 

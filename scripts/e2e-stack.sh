@@ -34,6 +34,7 @@ up() {
     sleep 2
   done
   echo "E2E stack ready on http://localhost:$FRONTEND_PORT"
+  echo "Stop it with scripts/e2e-stack.sh down when the run ends."
 }
 
 case "${1:-}" in

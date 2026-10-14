@@ -64,4 +64,6 @@ def test_a_test_stack_may_run_fake_providers(monkeypatch, stack):
 
 def test_real_providers_run_on_any_stack(monkeypatch):
     monkeypatch.setenv("PAPERLAB_STACK", "paperlab")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("DISCOVERY_PROVIDER", raising=False)
     assert Settings().llm_provider == "ollama"

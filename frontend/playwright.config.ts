@@ -15,8 +15,8 @@ const MOVES_DEFAULT = /@moves-default|@moves-paper-sources|@moves-setup/
 // runs only as its own project, on that stack, and skips itself on a stack that has the model.
 const NO_SEARCH_MODEL = /@no-search-model/
 
-// The release stack (desktop/docker-compose.yml on :5190: the release image, no search model), run as its own project
-// with E2E_RELEASE=1 and E2E_BASE_URL=http://127.0.0.1:5190 (README, Development). These files show that the base
+// The release stack (desktop/docker-compose.yml as project paperlab-release-e2e on :5290: the release image, no search model), run as its own project
+// with E2E_RELEASE=1 and E2E_BASE_URL=http://127.0.0.1:5290 (README, Development). These files show that the base
 // download is enough to read, take notes and chat with short papers, and that the first-run setup works there.
 const RELEASE_SPECS = /\/(first-run|library|reader-render|highlight-to-note|note-actions|chat|settings-connections)\.spec\.ts$/
 

@@ -16,13 +16,21 @@ const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:5280'
  */
 export const OWNERS_DEFAULT_FILE = join(tmpdir(), 'paperlab-e2e-owners-default-model')
 
+/** The restore answered 404: the recorded model no longer exists. */
+export class StaleModel extends Error {}
+
 type Model = { id: string; is_default: boolean }
 type Connection = { id: string; label: string }
 
-async function get<T>(path: string): Promise<T> {
+export async function get<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE}${path}`)
   if (!response.ok) throw new Error(`GET ${path} answered ${response.status}: bring the stack up before the E2E run`)
   return (await response.json()) as T
+}
+
+/** Throws unless the stack at BASE is a test stack. Setup and teardown both start with it: teardown runs even when setup threw. */
+export async function assertHealthyTestStack() {
+  assertTestStack((await get<{ stack?: unknown }>('/api/health')).stack, BASE)
 }
 
 /** The recorded id, or '' when there is no record. */
@@ -46,7 +54,7 @@ export async function restoreOwnersDefault(modelId: string) {
     body: JSON.stringify({ model_id: modelId }),
   })
   if (response.status !== 200) {
-    throw new Error(
+    throw new (response.status === 404 ? StaleModel : Error)(
       `Could not put the default model back: PUT /api/llm/default answered ${response.status} for ${modelId}. ` +
         `The id is in ${OWNERS_DEFAULT_FILE}; set that model as the default in Settings, then delete the file.`,
     )
@@ -106,14 +114,16 @@ async function markSetupDone() {
  */
 export default async function globalSetup() {
   // First, before anything touches the stack: a run pointed at the owner's library stops here.
-  assertTestStack((await get<{ stack?: unknown }>('/api/health')).stack, BASE)
+  await assertHealthyTestStack()
   await ensureDefaultModel()
   const left = await readOwnersDefault()
   // A record already here means an earlier run died before its teardown: its id, not whatever the default is
   // now (that run's own last pick), is the owner's. Putting it back first also keeps this run from recording
   // the wrong one. A leftover connection can hold the current default, so restore before sweeping.
-  if (left !== '') await restoreOwnersDefault(left)
-  const ownersDefault = left !== '' ? left : await defaultModelId()
+  // A 404 means the model is gone (a record from before the test stack existed): drop the stale record and go on.
+  const stale = left !== '' && (await restoreOwnersDefault(left).then(() => false, (error: unknown) => (error instanceof StaleModel ? true : Promise.reject(error))))
+  if (stale) await rm(OWNERS_DEFAULT_FILE, { force: true })
+  const ownersDefault = left !== '' && !stale ? left : await defaultModelId()
   if (ownersDefault === null) {
     await rm(OWNERS_DEFAULT_FILE, { force: true })
     console.warn('No default model to put back afterwards: this run leaves whichever one it sets.')

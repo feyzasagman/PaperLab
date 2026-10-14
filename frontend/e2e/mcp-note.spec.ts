@@ -5,6 +5,7 @@ import { expect, openReader, test } from './fixtures'
 
 // The repository root, where `docker compose -p paperlab-e2e` finds the test stack, and the stdio client that runs inside the api container.
 const E2E_PROJECT = process.env.E2E_COMPOSE_PROJECT ?? 'paperlab-e2e'
+if (!E2E_PROJECT.endsWith('-e2e')) throw new Error(`E2E_COMPOSE_PROJECT is ${E2E_PROJECT}: this spec writes notes, so it runs only on a test stack (name ending in -e2e).`)
 const REPO = fileURLToPath(new URL('../..', import.meta.url))
 const MCP_CALL = readFileSync(fileURLToPath(new URL('./mcp_call.py', import.meta.url)), 'utf8')
 /** In the fixture paper's first paragraph, from the end of line 2 into line 3: two line rects, not the paragraph. */
