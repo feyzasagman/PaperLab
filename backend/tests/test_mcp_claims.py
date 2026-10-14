@@ -119,6 +119,23 @@ async def test_verify_claims_reports_paper_not_in_library_and_secondary_sources(
     assert "paper_not_in_library" in doc and "paper_not_in_workspace" in doc and "as cited in" in doc
 
 
+async def test_verify_claims_checks_a_secondary_citation_against_its_source(session, llm, monkeypatch):
+    _model(monkeypatch, True)
+    await paper(session, title="Srcxyz source", authors=["Ann Srcxyz"], year=1987)
+    text = "It holds broadly here (Origxyz, 1960, as cited in Srcxyz, 1987)."
+    [item] = result(await call("verify_claims", text=text))
+    assert item["error"] is None
+    assert (item["citation"]["surname"], item["citation"]["via"]) == ("Srcxyz", "Origxyz, 1960")
+
+
+async def test_verify_claims_reports_a_paper_outside_the_workspace(session, llm, monkeypatch):
+    _model(monkeypatch, True)
+    await paper(session, title="Wsxyz outside", authors=["Ann Wsxyz"], year=1987)
+    await workspaces.create(session, f"WsOut {RUN}")
+    [item] = result(await call("verify_claims", text="It holds broadly here (Wsxyz, 1987).", workspace=f"WsOut {RUN}"))
+    assert item["error"] == "paper_not_in_workspace"
+
+
 async def test_verify_claims_workspace_remote_and_limits(session, llm, monkeypatch):
     _model(monkeypatch, False)
     await workspaces.create(session, f"Claims {RUN}")
