@@ -10,6 +10,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } f
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 import { backUp } from './backup'
 import { findDocker, makeDocker, spawnRunner, staleTags, usable, type Docker } from './docker'
+import { linkIn, readerHash } from './deepLink'
 import { fileLog } from './log'
 import { navigationFor, startupAction, type StartupAction } from './navigation'
 import { readSettings, settingsFile, updateSettings, type Settings } from './settings'
@@ -104,7 +105,7 @@ async function start() {
   const controller = new AbortController()
   launching = controller
   await win.loadFile(STARTUP_FILE).catch((error: unknown) => log(`startup page: ${String(error)}`))
-  if (DEV_URL !== null) return void win?.loadURL(DEV_URL)
+  if (DEV_URL !== null) return void win?.loadURL(DEV_URL).then(openPendingLink)
   const bin = locateDocker()
   const docker = bin === null ? null : dockerAt(bin, controller.signal)
   const screen = await launch(launchDeps(docker, bin, controller.signal), show).catch((error: unknown): Screen => {
@@ -117,6 +118,7 @@ async function start() {
   launching = null
   if (screen.kind !== 'ready' || win === null) return
   await win.loadURL(screen.url).catch((error: unknown) => log(`loading PaperLab: ${String(error)}`))
+  openPendingLink()
   if (docker !== null) void afterReady(docker)
 }
 
@@ -211,6 +213,32 @@ function showWindow() {
   win.focus()
 }
 
+/** A paperlab:// link waits here until PaperLab's own page is showing, then the window moves to its reader route. */
+let pendingHash: string | null = null
+
+function openPendingLink() {
+  if (pendingHash === null || win === null) return
+  let origin = ''
+  try {
+    origin = new URL(win.webContents.getURL()).origin
+  } catch {
+    return
+  }
+  if (origin !== APP_ORIGIN) return
+  const hash = pendingHash
+  pendingHash = null
+  void win.loadURL(`${APP_ORIGIN}/${hash}`).catch((error: unknown) => log(`opening a link: ${String(error)}`))
+}
+
+function openLink(url: string | undefined) {
+  if (url === undefined) return
+  const hash = readerHash(url)
+  if (hash === null) return log('ignored a paperlab:// link that is not a paper link')
+  pendingHash = hash
+  showWindow()
+  openPendingLink()
+}
+
 type Switch = 'keepRunning' | 'updatesEnabled'
 const isSwitch = (name: unknown): name is Switch => name === 'keepRunning' || name === 'updatesEnabled'
 
@@ -287,7 +315,16 @@ if (!app.requestSingleInstanceLock()) {
   // A second launch: the first instance shows its window (second-instance below). Exit without stopping anything.
   app.exit(0)
 } else {
-  app.on('second-instance', showWindow)
+  app.setAsDefaultProtocolClient('paperlab')
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    openLink(url)
+  })
+  app.on('second-instance', (_event, argv) => {
+    if (linkIn(argv) === undefined) showWindow()
+    else openLink(linkIn(argv))
+  })
+  pendingHash = readerHash(linkIn(process.argv) ?? '') // Windows/Linux: the first launch came from a link
   app.on('activate', showWindow)
   app.on('before-quit', (event) => {
     if (quitting) return
