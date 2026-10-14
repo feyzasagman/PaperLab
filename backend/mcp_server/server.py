@@ -37,7 +37,9 @@ mcp = MCPServer(
         "Notes: list_notes reads them, create_note saves one on a passage it quotes exactly. "
         "AI pre-screening: run_prescreen starts it, get_screening_suggestions reads the results and accept_suggestions "
         "accepts some. Claims: verify_claim and verify_claims check a claim against the papers it cites, with a "
-        "quote as evidence. An AI suggestion on a hit is a suggestion, never a decision; only review_hits and "
+        "quote as evidence. Evidence cards: generate_evidence_card starts one (about a minute per paper), "
+        "get_evidence_card reads it, list_evidence_cards shows a workspace's cards. "
+        "An AI suggestion on a hit is a suggestion, never a decision; only review_hits and "
         "accept_suggestions record one, so ask the owner first."
     ),
 )
@@ -374,3 +376,39 @@ async def verify_claims(
     you pass allow_remote=true."""
     async with sessions() as session:
         return await pipeline.verify_claims(session, text, workspace, save, allow_remote)
+
+
+@mcp.tool()
+@recoverable
+async def generate_evidence_card(
+    paper_id: uuid.UUID, regenerate: bool = False, confirm: bool = False, allow_remote: bool = False
+) -> pipeline.evidence_cards.CardSummary:
+    """Use to build an evidence card for a library paper: research question, design, sample, findings, effect sizes
+    and the limitations its authors state. It starts the job and returns at once with status generating; generation
+    takes about a minute per paper, so poll get_evidence_card until the status is ready or failed. The paper needs
+    its full text. regenerate=true replaces a ready card; an edited card also needs confirm=true, so ask the owner
+    first. A remote default model is refused unless the owner agreed and you pass allow_remote=true."""
+    async with sessions() as session:
+        return await pipeline.generate_evidence_card(session, paper_id, regenerate, confirm, allow_remote)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def get_evidence_card(paper_id: uuid.UUID) -> pipeline.evidence_cards.CardSummary:
+    """Use to read a paper's evidence card, or to poll one that is generating (status generating, ready or failed).
+    Every value is backed by a quote from the paper with its page, and items the paper's text could not back are left
+    out: left_out counts them per field, so never fill them in. provenance llm_edited means the owner changed some
+    values:
+    items flagged edited hold the owner's values, not the model's. Answers card_not_found when no card was started."""
+    async with sessions() as session:
+        return await pipeline.get_evidence_card(session, paper_id)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def list_evidence_cards(workspace: str) -> list[pipeline.EvidenceRow]:
+    """Use to compare a workspace's papers: one row per paper (title, year, first author) with its evidence card, or
+    no card yet. Every value is backed by a quote with its page, and unsupported items are left out (counted in
+    left_out). Values flagged edited are the owner's, not the model's."""
+    async with sessions() as session:
+        return await pipeline.list_evidence_cards(session, workspace)

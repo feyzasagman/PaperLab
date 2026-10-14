@@ -105,13 +105,8 @@ def _pick_quote(reply: _Reply, texts: list[str]) -> tuple[str | None, int | None
     (a number outside the passages counts as none), then every passage; the quote's passage wins over the named one."""
     if not reply.quote.strip():
         return None, None, False
-    named = reply.passage - 1 if reply.passage is not None and 1 <= reply.passage <= len(texts) else None
-    if named is not None:
-        kept, _ = quotes.check_quotes([reply.quote], [texts[named]], 1)
-        if kept:
-            return kept[0][0], named, False
-    kept, _ = quotes.check_quotes([reply.quote], texts, 1)
-    return (kept[0][0], kept[0][1], False) if kept else (None, None, True)
+    found = quotes.locate(reply.quote, reply.passage, texts)
+    return (found[0], found[1], False) if found else (None, None, True)
 
 
 async def _write_output(session, paper, claim, content: dict, passages, model, connection_name) -> uuid.UUID:

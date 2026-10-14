@@ -42,6 +42,7 @@ import { ReaderContextMenu, type ContextMenuState } from './ReaderContextMenu'
 import { ReaderToolbar } from './ReaderToolbar'
 import { ReadingContextBanner } from './ReadingContextBanner'
 import { RetractionBanner } from './RetractionBanner'
+import { EvidencePanel } from '../evidence/EvidencePanel'
 import { RightPanel } from './RightPanel'
 import { readSelection, type SelectionAnchor } from './selection'
 import { useCitations } from './useCitations'
@@ -590,6 +591,7 @@ export function ReaderPage({ paperId, tab, target }: Props) {
         data={<DataPanel paperId={paperId} onShowRegion={flashChunk} />}
         similar={<SimilarTab paperId={paperId} active={tab === 'similar'} />}
         references={<ReferencesTab paperId={paperId} active={tab === 'references'} />}
+        evidence={<EvidencePanel paperId={paperId} onShowRegion={flashChunk} />}
       />
 
       {numberDraft && (

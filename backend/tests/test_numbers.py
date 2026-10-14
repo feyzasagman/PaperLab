@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.numbers import NumberCandidate, find_numbers, parse_number
+from app.core.numbers import NumberCandidate, all_in, find_numbers, parse_number, tokens
 
 
 @pytest.mark.parametrize(
@@ -74,3 +74,41 @@ def test_a_unit_after_a_number_is_a_hint_not_a_thousand_multiplier():
         NumberCandidate(raw="310", value=310.0, error=None, unit_hint="K"),
         NumberCandidate(raw="2", value=2.0, error=None, unit_hint="h"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("d = 0.45, 95% CI [0.21, 0.69], p < .001", ["0.45", "95", "0.21", "0.69", "0.001"]),
+        ("0.21, 0.69", ["0.21", "0.69"]),
+        ("[0.21,0.69]", ["0.21", "0.69"]),
+        ("1,234 people", ["1234"]),
+        ("1,234,567.5", ["1234567.5"]),
+        ("1,2345", ["1", "2345"]),
+        ("12 345 and 7 890", ["12345", "7890"]),
+        ("r = −0.3 and –0.4", ["-0.3", "-0.4"]),
+        ("-.05 and +.5", ["-0.05", "+0.5"]),
+        ("2019-2020", ["2019", "2020"]),
+        ("5%", ["5"]),
+        ("no numbers here", []),
+    ],
+)
+def test_tokens(text, expected):
+    assert tokens(text) == expected
+
+
+def test_all_in_normalises_both_sides():
+    assert all_in("p = 0.05", "p < .05")
+    assert all_in("-0.3", "r = −0.3")
+    assert all_in("1234", "N = 1,234")
+    assert all_in("5", "5% of them")
+
+
+def test_all_in_rejects_a_missing_or_changed_number():
+    assert not all_in("0.54", "d = 0.45")
+    assert not all_in("0.3", "r = −0.3")  # the sign matters
+    assert not all_in("d = 0.45, p = .01", "d = 0.45, p = .001")
+
+
+def test_a_value_without_numbers_passes():
+    assert all_in("Cohen's d", "anything")

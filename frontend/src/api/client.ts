@@ -3,6 +3,9 @@ import type { components } from './schema'
 export type Paper = components['schemas']['PaperOut']
 export type PaperUpdate = components['schemas']['PaperUpdate']
 export type ReadingIn = components['schemas']['ReadingIn']
+export type EvidenceCard = components['schemas']['CardOut']
+export type EvidenceCardRow = components['schemas']['CardRowOut']
+export type EvidenceChange = components['schemas']['EditIn']['changes'][number]
 export type Chunk = components['schemas']['ChunkOut']
 export type Note = components['schemas']['NoteOut']
 export type NoteCreate = components['schemas']['NoteCreate']
@@ -302,6 +305,16 @@ export const api = {
     request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs`, sendJson('POST', body)),
   stopSearchRun: (workspaceId: string, runId: string) =>
     request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs/${runId}/stop`, { method: 'POST' }),
+  getEvidenceCard: (paperId: string) => request<EvidenceCard>(`/api/papers/${paperId}/evidence-card`),
+  generateEvidenceCard: (paperId: string, regenerate: boolean, confirm: boolean) =>
+    request<EvidenceCard[]>(`/api/papers/${paperId}/evidence-card`, sendJson('POST', { regenerate, confirm })),
+  editEvidenceCard: (paperId: string, changes: EvidenceChange[]) =>
+    request<EvidenceCard>(`/api/papers/${paperId}/evidence-card`, sendJson('PATCH', { changes })),
+  listEvidenceCards: (workspaceId: string) =>
+    request<EvidenceCardRow[]>(`/api/workspaces/${workspaceId}/evidence-cards`),
+  generateEvidenceCards: (workspaceId: string) =>
+    request<EvidenceCard[]>(`/api/workspaces/${workspaceId}/evidence-cards`, sendJson('POST', {})),
+  evidenceCardsCsvUrl: (workspaceId: string) => `/api/workspaces/${workspaceId}/evidence-cards.csv`,
   listSavedSearches: (workspaceId: string) =>
     request<SavedSearch[]>(`/api/workspaces/${workspaceId}/saved-searches`),
   createSavedSearch: (workspaceId: string, body: SavedSearchCreate) =>

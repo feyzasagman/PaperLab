@@ -1,0 +1,69 @@
+# Gate for evidence cards on papers already in the owner's library (run: python -m evals.evidence_cards_eval).
+# paper: a case-insensitive title prefix that must match exactly one paper.
+# n: the sample size the paper states (null when it states none). effect_sizes: 1-3 values as the paper prints them;
+# a card hits when a kept effect size carries the same numbers. research_question / design / limitation: key words
+# in my own words; a field hits when at least half of them appear in the card's kept text. No limitation: not scored.
+gates:
+  field_hit_min: 0.6
+  n_exact_min: 0.6
+cases:
+  - paper: Naming unrelated words
+    n: 8914
+    effect_sizes: ["r = 0.51", "r = 0.35"]
+    research_question: [semantic distance, creativity, divergent]
+    design: [participants, words, correlation]
+    limitation: [strategies, measures]
+  - paper: Thin slices of creativity
+    n: 193
+    effect_sizes: ["β = .50"]
+    research_question: [creative, single-word]
+    design: [verb, noun, semantic distance]
+    limitation: [single, order]
+  - paper: Default and Executive Network Coupling
+    n: 25
+    effect_sizes: ["r = .44"]
+    research_question: [default, executive, creative]
+    design: [fMRI, divergent thinking]
+    limitation: []
+  - paper: Best humans still outperform
+    n: 256
+    effect_sizes: ["t(283) = -6.6649"]
+    research_question: [humans, chatbots, creativity]
+    design: [alternate uses, semantic distance]
+    limitation: [observations, chatbot]
+  - paper: Generative AI enhances individual creativity
+    n: 293
+    effect_sizes: ["b = 0.453"]
+    research_question: [GenAI, creativity, stories]
+    design: [online, experiment, writers]
+    limitation: [typical, representativeness]
+  - paper: Human Creativity in the Age of LLMs
+    n: 1100
+    effect_sizes: ["H(2) = 9.95"]
+    research_question: [LLM, creativity, unassisted]
+    design: [randomized, experiments]
+    limitation: [five, objects]
+  - paper: Putting GPT-3's Creativity
+    n: 42
+    effect_sizes: ["r = .04"]
+    research_question: [GPT-3, creativity, alternative uses]
+    design: [students, semantic distance]
+    limitation: [small, students]
+  - paper: The Relationship between Intelligence and Divergent Thinking
+    n: 34610
+    effect_sizes: ["r = .25"]
+    research_question: [intelligence, divergent thinking]
+    design: [meta-analysis, correlation]
+    limitation: [coded, intelligence tests]
+  - paper: Creativity enhancement methods for adults
+    n: 4557
+    effect_sizes: ["g = 0.53"]
+    research_question: [enhance, creativity, methods]
+    design: [meta-analysis, effect sizes]
+    limitation: []
+  - paper: Kaufman Domains of Creativity Scale
+    n: 1011
+    effect_sizes: ["r = .38", "r = .24"]
+    research_question: [Russian, psychometric, K-DOCS]
+    design: [factor analyses, adults]
+    limitation: [occupation, type]

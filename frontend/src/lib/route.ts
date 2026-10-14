@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import { withViewTransition } from '@/components/motion'
 
-export type ReaderTab = 'notes' | 'chat' | 'data' | 'similar' | 'references'
-export type WorkspaceTab = 'papers' | 'notes' | 'chat' | 'search' | 'acquisition' | 'screening' | 'prisma' | 'reading'
+export type ReaderTab = 'notes' | 'chat' | 'data' | 'similar' | 'references' | 'evidence'
+export type WorkspaceTab = 'papers' | 'notes' | 'chat' | 'search' | 'acquisition' | 'screening' | 'prisma' | 'reading' | 'evidence'
 /** Settings is one page per section, so a section can be linked to, reloaded and kept in the window's history. */
 export type SettingsSection = 'models' | 'sources' | 'search' | 'desktop' | 'claude'
 export type Rect = [number, number, number, number]
@@ -123,13 +123,14 @@ export function parseRoute(hash: string): Route {
         tab === 'acquisition' ||
         tab === 'screening' ||
         tab === 'prisma' ||
-        tab === 'reading'
+        tab === 'reading' ||
+        tab === 'evidence'
           ? tab
           : 'papers',
       runId: UUID.test(run) ? run : null,
     }
   }
-  const readerTab = tab === 'chat' || tab === 'data' || tab === 'similar' || tab === 'references' ? tab : 'notes'
+  const readerTab = tab === 'chat' || tab === 'data' || tab === 'similar' || tab === 'references' || tab === 'evidence' ? tab : 'notes'
   return { name: 'reader', paperId: match[2], tab: readerTab, target: readerTarget(params) }
 }
 

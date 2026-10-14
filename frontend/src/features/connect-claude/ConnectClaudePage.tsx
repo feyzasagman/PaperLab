@@ -200,7 +200,7 @@ export function ConnectClaudePage() {
         {check.data?.ok && (
           <p role="status" className="flex items-center gap-1.5 text-sm">
             <CircleCheck aria-hidden className="size-4 shrink-0 text-primary" />
-            The server answers with all 28 of its tools.
+            The server answers with all 31 of its tools.
           </p>
         )}
         {check.data?.detail && <ErrorAlert message={check.data.detail} />}

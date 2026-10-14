@@ -536,3 +536,22 @@ async def test_fake_llm_answers_the_v2_screening_prompt_with_json_whose_quote_is
     assert all(r.quotes == ["A controlled study"] for r in results.values() if r.verdict != "unsure")
     assert all(r.confidence == "high" for r in results.values() if r.verdict != "unsure")
     assert all(r.reason == "wrong_topic" for r in results.values() if r.verdict == "exclude")
+
+
+async def test_fake_llm_answers_the_evidence_card_prompt_by_quoting_the_first_passage():
+    import json
+
+    from app.core import evidence_cards as e
+
+    texts = [
+        "Sleep improved recall by 12 percent in the trained group, a large effect. More words follow here.",
+        "Other.",
+    ]
+    passages = [{"page": 3, "section": None}, {"page": 4, "section": "Methods"}]
+    fake = llm.FakeLLM()
+    reply = "".join([t async for t in fake.stream(e.SYSTEM_PROMPT, e._prompt(passages, texts))])
+    card = json.loads(reply)
+    quote = "Sleep improved recall by 12 percent in the trained group,"
+    assert card["research_question"] == {"value": quote, "passage": 1, "quote": quote}
+    assert card["design"]["quote"] == quote and card["findings"][0]["quote"] == quote
+    assert quote in texts[0]

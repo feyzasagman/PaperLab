@@ -47,6 +47,7 @@ EXPECTED_TOOLS = {
     "create_saved_search": None, "list_saved_searches": True, "set_saved_search_enabled": None,
     "run_prescreen": None, "get_screening_suggestions": True, "accept_suggestions": None,
     "verify_claim": None, "verify_claims": None,
+    "generate_evidence_card": None, "get_evidence_card": True, "list_evidence_cards": True,
 }
 
 

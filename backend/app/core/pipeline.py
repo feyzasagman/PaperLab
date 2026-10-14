@@ -18,6 +18,7 @@ from app.config import settings
 from app.core import (
     claims,
     discovery,
+    evidence_cards,
     notes,
     paper_sources,
     papers,
@@ -404,3 +405,34 @@ async def verify_claims(
     ws = await workspace_id(session, workspace) if workspace is not None else None
     await _refuse_remote(session, allow_remote)
     return await claims.verify_claims(session, text, workspace_id=ws, save=save)
+
+
+@dataclass(frozen=True)
+class EvidenceRow:
+    paper_id: uuid.UUID
+    title: str
+    year: int | None
+    first_author: str | None
+    card: evidence_cards.CardSummary | None
+
+
+async def generate_evidence_card(
+    session: AsyncSession, paper_id: uuid.UUID, regenerate: bool = False, confirm: bool = False,
+    allow_remote: bool = False,
+) -> evidence_cards.CardSummary:
+    """Starts the background job and returns the card at once (`generating`); the caller polls get_evidence_card."""
+    await _refuse_remote(session, allow_remote)
+    [view] = await evidence_cards.request_cards(session, paper_ids=[paper_id], regenerate=regenerate, confirm=confirm)
+    return evidence_cards.summarize(view)
+
+
+async def get_evidence_card(session: AsyncSession, paper_id: uuid.UUID) -> evidence_cards.CardSummary:
+    return evidence_cards.summarize(await evidence_cards.get_card(session, paper_id))
+
+
+async def list_evidence_cards(session: AsyncSession, workspace: str) -> list[EvidenceRow]:
+    rows = await evidence_cards.workspace_cards(session, await workspace_id(session, workspace))
+    return [
+        EvidenceRow(r.paper_id, r.title, r.year, r.first_author, r.card and evidence_cards.summarize(r.card))
+        for r in rows
+    ]
