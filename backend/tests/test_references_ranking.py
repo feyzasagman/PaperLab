@@ -103,7 +103,9 @@ async def test_a_fetch_the_worker_never_finished_is_listed_as_failed_without_wri
 
 async def test_only_missing_or_stale_vectors_are_embedded(library, embedder):
     reader = await add_paper(library, doi=READER_DOI)
-    library.add_all([ExternalRef(title="Needs a vector"), Note(body="a note about attention", provenance="human")])
+    library.add_all(
+        [ExternalRef(title="Needs a vector", queued_at=func.now()), Note(body="a note about attention", provenance="human")]
+    )
     await library.flush()
 
     await references.embed_new(library, embedder)
@@ -119,12 +121,34 @@ async def test_only_missing_or_stale_vectors_are_embedded(library, embedder):
     assert reader.id  # the paper itself is untouched
 
 
+async def test_only_the_references_a_listing_ranks_are_embedded_in_bounded_batches(library, embedder, monkeypatch):
+    """Harvests insert thousands of references no paper cites; embedding them all under the lock stalled every fetch."""
+    monkeypatch.setattr(references, "EMBED_BATCH", 2)
+    reader = await add_paper(library, doi=READER_DOI)
+    linked = [ExternalRef(title=f"Cited {i}") for i in range(5)]
+    queued = ExternalRef(title="Queued", queued_at=func.now())
+    harvested = ExternalRef(title="Harvested, nobody cites it")
+    library.add_all([*linked, queued, harvested])
+    await library.flush()
+    for position, ref in enumerate(linked):
+        await library.execute(
+            paper_references.insert().values(paper_id=reader.id, ref_id=ref.id, direction="cites", position=position)
+        )
+
+    await references.embed_new(library, embedder)
+
+    sizes = [len(texts) for texts, _ in embedder.calls]
+    assert sizes == [2, 2, 2] and sum(sizes) == 6
+    embedded = {r for r in await library.scalars(select(ExternalRef.title).where(ExternalRef.title_embedding.is_not(None)))}
+    assert harvested.title not in embedded and len(embedded) == 6
+
+
 async def test_a_cloud_source_embeds_notes_and_titles_as_a_local_one_does_under_its_own_name(library):
     """P3 = A (owner, D161): every search source, cloud or not, embeds notes and reference titles for the ranking.
     Their vectors record the source's name, so a switch embeds them again like the papers."""
     name = "openai/text-embedding-3-small@768"
     cloud = FakeEmbedder(name=name, label="OpenAI", is_local=False)
-    ref = ExternalRef(title="Needs a vector")
+    ref = ExternalRef(title="Needs a vector", queued_at=func.now())
     note = Note(body="a note about attention", provenance="human")
     library.add_all([ref, note])
     await library.flush()
@@ -141,7 +165,9 @@ async def test_a_cloud_source_embeds_notes_and_titles_as_a_local_one_does_under_
 
 async def test_with_no_search_model_nothing_is_embedded(library):
     """D136: the references tab still ranks, by co-citation, PDFs and citations; note similarity is simply absent."""
-    library.add_all([ExternalRef(title="Needs a vector"), Note(body="a note about attention", provenance="human")])
+    library.add_all(
+        [ExternalRef(title="Needs a vector", queued_at=func.now()), Note(body="a note about attention", provenance="human")]
+    )
     await library.flush()
 
     await references.embed_new(library, None)
