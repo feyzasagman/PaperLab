@@ -1,10 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 
 from app.api.citations import download
 from app.api.deps import SessionDep
-from app.core import pipeline, workspace_search, workspaces
+from app.core import notes_markdown, pipeline, workspace_search, workspaces
+from app.core.citations_export import filename_slug
 from app.schemas.notes import NoteOut
 from app.schemas.papers import PaperOut
 from app.schemas.workspace_search import EligibilityOut, EligibilityUpdate
@@ -71,3 +72,14 @@ async def export_citations(workspace_id: uuid.UUID, format: str, session: Sessio
     unknown format or no papers."""
     text, _ = await pipeline.export_citations(session, workspace_id=workspace_id, fmt=format)
     return download(text, format, (await workspaces.get(session, workspace_id)).name)
+
+
+@router.get("/{workspace_id}/notes.zip")
+async def export_notes(workspace_id: uuid.UUID, request: Request, session: SessionDep) -> Response:
+    """The workspace's notes as markdown files, one per paper, zipped for Obsidian. 404 unknown workspace."""
+    origin = str(request.base_url).rstrip("/")
+    data = await notes_markdown.export_workspace(session, workspace_id, origin)
+    slug = filename_slug((await workspaces.get(session, workspace_id)).name)
+    return Response(
+        data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{slug}-notes.zip"'}
+    )
