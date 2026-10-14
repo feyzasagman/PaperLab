@@ -289,7 +289,10 @@ def test_a_cross_reference_is_not_a_claim():
     found = pilot("ai-creativity-benchmarks.md")
     first_four = found[:4]
     assert [(c.citation.surname, c.error) for c in first_four] == [
-        ("Koivisto", "not_a_claim"), ("Hubert", "not_a_claim"), ("Doshi", "not_a_claim"), ("Anderson", "not_a_claim")
+        ("Koivisto", "not_a_claim"),
+        ("Hubert", "not_a_claim"),
+        ("Doshi", "not_a_claim"),
+        ("Anderson", "not_a_claim"),
     ]
     assert first_four[0].claim.endswith("Hubert et al. and Doshi & Hauser are in computational creativity.")
     assert found[-1].error == "not_a_claim"  # "- [[llm-homogenization]]: the full treatment of Anderson, …"
@@ -305,7 +308,9 @@ def test_three_citations_in_one_sentence_share_that_sentence_only():
         "Earlier text (Zed, 2001). Several studies found it (Ann, 2020; Bo & Cy, 2021; Di et al., 2022). Later text."
     )
     assert [(c.citation.surname, c.claim) for c in found[1:]] == [
-        ("Ann", "Several studies found it."), ("Bo", "Several studies found it."), ("Di", "Several studies found it.")
+        ("Ann", "Several studies found it."),
+        ("Bo", "Several studies found it."),
+        ("Di", "Several studies found it."),
     ]
 
 
@@ -334,14 +339,16 @@ def test_a_label_that_is_not_first_in_its_block_gets_no_claim_from_other_sentenc
 def test_a_first_sentence_label_stops_before_the_next_cited_sentence():
     found = claims.cited_claims("- **Smith (2020).** Finding one holds. Finding two holds (Lee, 2019).")
     assert [(c.citation.surname, c.claim) for c in found] == [
-        ("Smith", "Finding one holds."), ("Lee", "Finding two holds.")
+        ("Smith", "Finding one holds."),
+        ("Lee", "Finding two holds."),
     ]
 
 
 def test_a_table_rows_claim_leaves_out_other_cells_that_cite_papers():
     found = claims.cited_claims("| A | B | C |\n|---|---|---|\n| Smith (2020) | Lee (2019) | Finding holds broadly |")
     assert [(c.citation.surname, c.claim) for c in found] == [
-        ("Smith", "Finding holds broadly."), ("Lee", "Finding holds broadly.")
+        ("Smith", "Finding holds broadly."),
+        ("Lee", "Finding holds broadly."),
     ]
 
 
@@ -355,3 +362,34 @@ def test_a_near_miss_cross_reference_is_still_a_claim():
     for text in texts:
         [cited] = claims.cited_claims(text)
         assert cited.error is None, text
+
+
+@pytest.mark.parametrize("written", ["Gómez-Rodríguez", "Gomez-Rodriguez", "Gómez–Rodríguez", "GÓMEZ-RODRÍGUEZ"])
+def test_any_dash_and_accent_folds(written):
+    assert citations._first_author_is(["Carlos Gómez‐Rodríguez"], written)
+
+
+async def test_a_year_off_by_one_matches_the_only_candidate_and_says_so(session):
+    paper = await add(session, "Offbyone paper", ["Anil R. Offbyone"], 1987, doi="10.1000/m46-offbyone")
+    cite = citations.Citation("author_year", "", (0, 0), surname="Offbyone", year=1988)
+    found = await citations.match(session, cite)
+    assert (found.paper_ids, found.library_year) == ([paper.id], 1987)
+    [item] = await claims.verify_claims(
+        session, "Individual creativity rose a lot (Offbyone & Hauser, 1988).", llm=Scripted()
+    )
+    assert (item.error, item.warning, item.library_year, item.check.paper_id) == (None, "year_mismatch", 1987, paper.id)
+
+
+async def test_the_cited_year_wins_over_a_neighbouring_one(session):
+    exact = await add(session, "Exact year", ["Ann Yearwinner"], 1988)
+    await add(session, "Year before", ["Ann Yearwinner"], 1987)
+    cite = citations.Citation("author_year", "", (0, 0), surname="Yearwinner", year=1988)
+    found = await citations.match(session, cite)
+    assert (found.paper_ids, found.library_year) == ([exact.id], None)
+
+
+async def test_two_neighbouring_years_are_ambiguous(session):
+    await add(session, "Before", ["Ann Twoyears"], 1987)
+    await add(session, "After", ["Ann Twoyears"], 1989)
+    [item] = await claims.verify_claims(session, "Something holds broadly (Twoyears, 1988).", llm=Scripted())
+    assert item.error == "ambiguous_citation" and sorted(item.candidates) == ["After", "Before"]

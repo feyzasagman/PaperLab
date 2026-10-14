@@ -111,6 +111,7 @@ class Citation:
 class Match:
     paper_ids: list
     titles: list[str]
+    library_year: int | None = None  # the paper's year when it matched only as the neighbouring one (M2)
 
 
 def split_sentences(text: str) -> list[str]:
@@ -162,9 +163,14 @@ def find(sentence: str) -> list[Citation]:
     return sorted(found, key=lambda c: c.span)
 
 
+# Every dash a library or a note may use for a hyphenated name (Gómez‐Rodríguez with U+2010) compares as "-" (M3).
+_DASHES = str.maketrans(dict.fromkeys("‐‑‒–—―−﹘﹣－", "-"))
+
+
 def fold(text: str) -> str:
-    """Case- and accent-insensitive form (Müller == muller)."""
-    return "".join(c for c in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(c))
+    """Case-, accent- and dash-insensitive form (Müller == muller, Gómez‐Rodríguez == Gomez-Rodriguez)."""
+    text = unicodedata.normalize("NFKD", text.translate(_DASHES).casefold())
+    return "".join(c for c in text if not unicodedata.combining(c))
 
 
 def _first_author_is(authors: list[str], surname: str) -> bool:
@@ -183,7 +189,7 @@ def _first_author_is(authors: list[str], surname: str) -> bool:
 async def match(session: AsyncSession, citation: Citation, workspace_id=None) -> Match:
     """Library papers a citation points at: by DOI, or by first-author surname and year (inside a workspace if
     given). Zero or several matches are returned as they are, never resolved."""
-    query = select(Paper.id, Paper.title, Paper.authors)
+    query = select(Paper.id, Paper.title, Paper.authors, Paper.year)
     if workspace_id is not None:
         query = query.join(workspace_papers, workspace_papers.c.paper_id == Paper.id).where(
             workspace_papers.c.workspace_id == workspace_id
@@ -191,8 +197,15 @@ async def match(session: AsyncSession, citation: Citation, workspace_id=None) ->
     if citation.kind == "doi":
         query = query.where(func.lower(Paper.doi) == citation.doi.lower())
     else:
-        query = query.where(Paper.year == citation.year)
+        query = query.where(Paper.year.between(citation.year - 1, citation.year + 1))
     rows = (await session.execute(query.order_by(Paper.title))).all()
     if citation.kind == "author_year":
         rows = [r for r in rows if _first_author_is(r.authors, citation.surname)]
+        exact = [r for r in rows if r.year == citation.year]
+        # A preprint or online-first year often differs from the issue year by one (D279): the cited year wins, and a
+        # lone neighbour matches with a warning; two neighbours are left ambiguous.
+        if exact or len(rows) != 1:
+            rows = exact or rows
+        else:
+            return Match([rows[0].id], [rows[0].title], library_year=rows[0].year)
     return Match([r.id for r in rows], [r.title for r in rows])

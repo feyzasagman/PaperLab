@@ -23,8 +23,10 @@ PASSAGES = 6
 SYSTEM_PROMPT, PROMPT_TEMPLATE = prompts.load("claim_check", CLAIM_PROMPT_VERSION).split("\n<!-- prompt -->\n")
 OUTPUT_KIND = "claim_check"
 VERDICT_WORDS = {
-    "supported": "Supported", "partially_supported": "Partly supported",
-    "not_supported": "Not supported", "not_addressed": "Not addressed",
+    "supported": "Supported",
+    "partially_supported": "Partly supported",
+    "not_supported": "Not supported",
+    "not_addressed": "Not addressed",
 }
 CHECKED = ("supported", "partially_supported")  # verdicts that must rest on a kept quote
 
@@ -111,9 +113,14 @@ def _pick_quote(reply: _Reply, texts: list[str]) -> tuple[str | None, int | None
 
 async def _write_output(session, paper, claim, content: dict, passages, model, connection_name) -> uuid.UUID:
     output = LLMOutput(
-        paper_id=paper.id, kind=OUTPUT_KIND, question=claim, content=json.dumps(content),
+        paper_id=paper.id,
+        kind=OUTPUT_KIND,
+        question=claim,
+        content=json.dumps(content),
         source_chunks=[p["chunk_id"] for p in passages if p["chunk_id"] is not None],
-        model=model, connection_name=connection_name, prompt_version=CLAIM_PROMPT_VERSION,
+        model=model,
+        connection_name=connection_name,
+        prompt_version=CLAIM_PROMPT_VERSION,
     )
     session.add(output)
     await session.commit()
@@ -128,8 +135,14 @@ async def _llm(session: AsyncSession, llm):
 
 
 async def verify_claim(
-    session: AsyncSession, claim: str, *, paper_id: uuid.UUID | None = None, doi: str | None = None,
-    quoted_text: str | None = None, llm=None, save: bool = False,
+    session: AsyncSession,
+    claim: str,
+    *,
+    paper_id: uuid.UUID | None = None,
+    doi: str | None = None,
+    quoted_text: str | None = None,
+    llm=None,
+    save: bool = False,
 ) -> ClaimCheck:
     """Checks `claim` against one library paper (by id or by DOI, exactly one) and returns the verdict.
 
@@ -162,9 +175,16 @@ async def verify_claim(
     chosen = passages[index] if index is not None else {}
     low = dropped or (reply.verdict in CHECKED and quote is None)
     check = ClaimCheck(
-        **base, verdict=reply.verdict, reason=reply.reason.strip(), quote=quote,
-        quote_page=chosen.get("page"), quote_section=chosen.get("section"), quote_chunk_id=chosen.get("chunk_id"),
-        passages=passages, confidence="low" if low else "high", model=model,
+        **base,
+        verdict=reply.verdict,
+        reason=reply.reason.strip(),
+        quote=quote,
+        quote_page=chosen.get("page"),
+        quote_section=chosen.get("section"),
+        quote_chunk_id=chosen.get("chunk_id"),
+        passages=passages,
+        confidence="low" if low else "high",
+        model=model,
     )
     content = {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in asdict(check).items() if k != "passages"}
     output_id = await _write_output(session, paper, claim, content, passages, model, connection_name)
@@ -186,6 +206,8 @@ class ClaimItem:
     check: ClaimCheck | None = None
     error: str | None = None  # citation_not_found | ambiguous_citation | empty_claim | not_a_claim
     candidates: list[str] = field(default_factory=list)  # titles when ambiguous
+    warning: str | None = None  # year_mismatch: matched a paper the library dates a year away
+    library_year: int | None = None
 
 
 _WIKILINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
@@ -291,7 +313,8 @@ async def verify_claims(
     titles; neither is guessed. A check that fails for one claim (its error code, or `check_failed` when the
     model can't be reached) is that item's error and the rest still run. More than 30 cited claims
     raises InvalidInput("too_many_claims") before any model call. `workspace_id` limits matching to one
-    workspace (the caller resolves a name with workspaces.by_name).
+    workspace (the caller resolves a name with workspaces.by_name). A citation a year away from the only matching
+    paper still matches, with warning year_mismatch and the library's year.
     """
     body, _references = claim_text.split_references(text)
     pending = cited_claims(body)
@@ -304,20 +327,21 @@ async def verify_claims(
             items.append(ClaimItem(claim, citation, error=cited.error))
             continue
         found = await citations.match(session, citation, workspace_id)
+        extra = {"warning": "year_mismatch", "library_year": found.library_year} if found.library_year else {}
         if not found.paper_ids:
             items.append(ClaimItem(claim, citation, error="citation_not_found"))
         elif len(found.paper_ids) > 1:
             items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=found.titles))
         elif len(claim.split()) < 3:
-            items.append(ClaimItem(claim, citation, error="empty_claim"))
+            items.append(ClaimItem(claim, citation, error="empty_claim", **extra))
         else:
             llm = await _llm(session, llm)  # no default model fails the whole batch, once, before any check
             try:
                 check = await verify_claim(session, claim, paper_id=found.paper_ids[0], llm=llm, save=save)
             except DomainError as exc:
-                items.append(ClaimItem(claim, citation, error=str(exc) or "check_failed"))
+                items.append(ClaimItem(claim, citation, error=str(exc) or "check_failed", **extra))
             except (LLMError, LLMUnavailable):
-                items.append(ClaimItem(claim, citation, error="check_failed"))
+                items.append(ClaimItem(claim, citation, error="check_failed", **extra))
             else:
-                items.append(ClaimItem(claim, citation, check=check))
+                items.append(ClaimItem(claim, citation, check=check, **extra))
     return items
