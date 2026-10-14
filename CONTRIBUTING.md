@@ -37,6 +37,8 @@ docker compose up -d --build          # db (:5433), redis, api (:8000), worker, 
 open http://localhost:5180
 ```
 
+The stack runs the code in this folder but doesn't restart when you save. A restart cancels whatever the worker is doing, which matters if your own library runs here. To have the api and workers reload on every save, start it with `DEV_RELOAD=1 docker compose up -d`.
+
 The first upload is slow: the worker downloads the embedding model once and caches it.
 
 ## The desktop app
