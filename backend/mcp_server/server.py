@@ -244,8 +244,8 @@ async def set_screening_criteria(
     exclusion_criteria: Annotated[str | None, Field(max_length=4000)] = None,
 ) -> pipeline.ScreeningStateOut:
     """Use to save a workspace's research question, inclusion or exclusion criteria (up to 4000 characters each);
-    only the fields given change and an empty string clears one. Any change clears every stored AI suggestion, so
-    run_prescreen again afterwards; refused (suggestions_running) while suggestions are being made.
+    only the fields given change and an empty or blank string clears one. Any change clears every stored AI
+    suggestion, so run_prescreen again afterwards; refused (suggestions_running) while suggestions are being made.
     Ask the owner before calling."""
     async with sessions() as session:
         return await pipeline.set_screening_criteria(

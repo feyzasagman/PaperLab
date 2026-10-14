@@ -483,6 +483,16 @@ async def test_setting_the_same_values_keeps_the_suggestions(session):
     assert hit.suggestion == "include"
 
 
+async def test_an_empty_string_clears_a_criterion_over_mcp(session):
+    workspace, hit = await _criteria_pool(session)
+    assert workspace.exclusion_criteria == "Out"
+    state = result(await call("set_screening_criteria", workspace=workspace.name, exclusion_criteria=""))
+    assert state["exclusion_criteria"] is None
+    assert _criteria(state)[:2] == ("RQ", "In")
+    await session.refresh(hit)
+    assert hit.suggestion is None
+
+
 async def test_set_is_refused_while_suggestions_run(session):
     workspace, _ = await _criteria_pool(session)
     workspace.suggest_status = "running"
