@@ -231,10 +231,22 @@ def _row_claims(block: claim_text.Block) -> list[Cited]:
     """A table row's citation is checked against the row's other cells, as prose."""
     out = []
     for i, cell in enumerate(block.cells):
-        others = [_prose(other).rstrip(".") for j, other in enumerate(block.cells) if j != i]
+        others = [  # a cell that cites a paper is that paper's cell, not evidence for this one
+            _prose(other).rstrip(".") for j, other in enumerate(block.cells) if j != i and not citations.find(other)
+        ]
         claim = ". ".join(other for other in others if other)
         out += [Cited(f"{claim}." if claim else "", c) for c in citations.find(cell)]
     return out
+
+
+def _uncited_run(sentences: list[str]) -> list[str]:
+    """The sentences up to the first one that carries its own citation."""
+    run = []
+    for sentence in sentences:
+        if citations.find(sentence):
+            break
+        run.append(sentence)
+    return run
 
 
 def _block_claims(block: claim_text.Block) -> list[Cited]:
@@ -249,18 +261,19 @@ def _block_claims(block: claim_text.Block) -> list[Cited]:
         if _CROSS_REFERENCE.search(bare):
             out += [Cited(_prose(_without(sentence, found)), c, "not_a_claim") for c in found]
             continue
-        if len(_prose(bare).split()) < 3:
-            claim = _prose(" ".join(sentences[:i] + sentences[i + 1 :]))
+        if len(_prose(bare).split()) < 3:  # a label: only a block's first sentence takes what follows it
+            claim = _prose(" ".join(_uncited_run(sentences[i + 1 :]))) if i == 0 else ""
         else:
             claim = _prose(_without(sentence, found))
+        if claim and claim[-1].isalnum():
+            claim += "."
         out += [Cited(claim, c) for c in found]
     return out
 
 
 def cited_claims(body: str) -> list[Cited]:
     """Every citation in a note's body (markdown or plain text) with the claim it supports, in order (D276)."""
-    handler = lambda block: _row_claims(block) if block.cells else _block_claims(block)  # noqa: E731
-    return [cited for block in claim_text.blocks(body) for cited in handler(block)]
+    return [c for b in claim_text.blocks(body) for c in (_row_claims(b) if b.cells else _block_claims(b))]
 
 
 async def verify_claims(

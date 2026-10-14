@@ -322,3 +322,36 @@ async def test_verify_claims_reports_a_cross_reference_without_matching_it(sessi
 
     [item] = await claims.verify_claims(session, "Smith & Lee (1987) is covered in [[some-note]].", llm=Never())
     assert (item.error, item.check) == ("not_a_claim", None)
+
+
+def test_a_label_that_is_not_first_in_its_block_gets_no_claim_from_other_sentences():
+    found = claims.cited_claims(
+        "Other finding about novelty was large here. Smith (2020) agrees. More about other people (Lee, 2019)."
+    )
+    assert [(c.citation.surname, c.claim) for c in found] == [("Smith", ""), ("Lee", "More about other people.")]
+
+
+def test_a_first_sentence_label_stops_before_the_next_cited_sentence():
+    found = claims.cited_claims("- **Smith (2020).** Finding one holds. Finding two holds (Lee, 2019).")
+    assert [(c.citation.surname, c.claim) for c in found] == [
+        ("Smith", "Finding one holds."), ("Lee", "Finding two holds.")
+    ]
+
+
+def test_a_table_rows_claim_leaves_out_other_cells_that_cite_papers():
+    found = claims.cited_claims("| A | B | C |\n|---|---|---|\n| Smith (2020) | Lee (2019) | Finding holds broadly |")
+    assert [(c.citation.surname, c.claim) for c in found] == [
+        ("Smith", "Finding holds broadly."), ("Lee", "Finding holds broadly.")
+    ]
+
+
+def test_a_citation_without_a_final_period_stays_inside_its_block():
+    found = claims.cited_claims("- Point has no final period (Lee, 2021)\n\n## Heading\n\nNext text.")
+    assert [c.claim for c in found] == ["Point has no final period."]
+
+
+def test_a_near_miss_cross_reference_is_still_a_claim():
+    texts = ("Effects are in line with [[theory]] (Lee, 2021).", "Scores are higher in [[x]]-style tasks (Lee, 2021).")
+    for text in texts:
+        [cited] = claims.cited_claims(text)
+        assert cited.error is None, text
