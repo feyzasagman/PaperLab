@@ -407,7 +407,7 @@ Systematic search and screening:
 
 Checking claims:
 - `verify_claim`: whether a library paper supports a claim, with a quote from the paper;
-- `verify_claims`: the same for every citation in a pasted note or paragraph (DOI or author-year), up to 30.
+- `verify_claims`: the same for every citation in a pasted note or paragraph (DOI or author-year), up to 30. Papers missing from the library are reported with their reference-list DOI, and a secondary citation ("as cited in") is checked against the source read.
 
 Evidence cards:
 - `generate_evidence_card`: builds a paper's card in the background (about a minute); ask again with `get_evidence_card` until it is ready;
