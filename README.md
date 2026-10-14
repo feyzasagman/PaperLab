@@ -498,7 +498,7 @@ cd backend && uv run pytest && uv run ruff check .       # needs the compose db
 cd frontend && npm run gen:api                           # regenerate API types (api running)
 cd frontend && npx tsc -b && npm test                    # types + unit tests
 cd frontend && npx playwright install chromium            # once
-cd frontend && npm run typecheck:e2e && npm run e2e      # end-to-end against the running stack
+cd frontend && npm run typecheck:e2e && npm run e2e      # end-to-end against the test stack (`scripts/e2e-stack.sh up` first)
 cd desktop && npm ci && npm test && npm run typecheck    # the desktop app: unit tests and types
 cd desktop && npm run e2e -- --project=stub              # its window against a stub docker
 docker compose exec api python -m evals.answer_check --paper "<title prefix>" --workspace "<name>"  # manual, real LLM

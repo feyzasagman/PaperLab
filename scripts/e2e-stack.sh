@@ -42,5 +42,5 @@ case "${1:-}" in
   reset) docker compose -p "$PROJECT" down -v ;;
   status) docker compose -p "$PROJECT" ps ;;
   exec) shift; docker compose -p "$PROJECT" exec -T "$@" ;;
-  *) sed -n '2,7p' "$0"; exit 2 ;;
+  *) sed -n '2,6p' "$0"; exit 2 ;;
 esac
