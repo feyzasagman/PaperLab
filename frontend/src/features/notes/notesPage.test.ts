@@ -28,3 +28,22 @@ describe('the Notes page filter', () => {
     expect(emptyNotesText('p1')).toBe('No notes on this paper yet.')
   })
 })
+
+import { importSummary } from './notesPage'
+
+describe('importSummary', () => {
+  it('says what was added, linked and left without a match', () => {
+    expect(importSummary({ created: 3, linked_papers: 2, unmatched_files: 1, skipped_duplicates: 0 })).toBe(
+      '3 notes added, 2 linked to papers, 1 without a match.',
+    )
+    expect(importSummary({ created: 1, linked_papers: 1, unmatched_files: 0, skipped_duplicates: 0 })).toBe(
+      '1 note added, 1 linked to papers.',
+    )
+  })
+
+  it('mentions files already in the notes, and says so when nothing is new', () => {
+    expect(importSummary({ created: 0, linked_papers: 0, unmatched_files: 0, skipped_duplicates: 2 })).toBe(
+      'No new notes. 2 files were already in your notes.',
+    )
+  })
+})

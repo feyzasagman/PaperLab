@@ -857,6 +857,15 @@ export function useNoteMutations() {
   }
 }
 
+/** Imports Markdown files as notes: every notes list (and the graph's noted papers) can change. */
+export function useImportNotes() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (files: File[]) => api.importNotes(files),
+    onSuccess: () => Promise.all([refreshNotes(client), client.invalidateQueries({ queryKey: keys.graph })]),
+  })
+}
+
 /** Replaces a note's papers. Every notes list can change (a paper's, a workspace's, the Notes page), and the graph's
  * noted papers and "noted together" links with them. Resolves once the lists shown have refetched. */
 export function useSetNotePapers() {

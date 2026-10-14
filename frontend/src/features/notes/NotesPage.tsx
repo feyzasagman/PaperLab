@@ -9,6 +9,7 @@ import { plural } from '@/features/charts/chartMeta'
 import { ErrorAlert, LoadError } from '@/features/library/ErrorAlert'
 import { notesHref } from '@/lib/route'
 import { cn } from '@/lib/utils'
+import { ImportMarkdownButton } from './ImportMarkdownButton'
 import { NoteCard } from './NoteCard'
 import { emptyNotesText, filterOptions, filterValue, routeFilter } from './notesPage'
 
@@ -65,6 +66,7 @@ export function NotesPage({ paper }: { paper: string | null }) {
       status={notes.data && plural(notes.data.length, 'note')}
     >
       <div className="flex max-w-5xl flex-col gap-4">
+        <ImportMarkdownButton />
         {error && <ErrorAlert message={error} />}
         {notes.data === undefined ? (
           notes.isError ? (

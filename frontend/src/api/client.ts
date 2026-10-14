@@ -138,6 +138,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const citationsUrl = (workspaceId: string, format: string) =>
   `/api/workspaces/${encodeURIComponent(workspaceId)}/citations?format=${format}`
 
+export const notesZipUrl = (workspaceId: string) => `/api/workspaces/${encodeURIComponent(workspaceId)}/notes.zip`
+
+export type NotesImportResult = {
+  created: number
+  linked_papers: number
+  unmatched_files: number
+  skipped_duplicates: number
+}
+
 const sendJson = (method: string, body: unknown): RequestInit => ({
   method,
   headers: { 'Content-Type': 'application/json' },
@@ -153,6 +162,12 @@ export const api = {
     form.append('file', file)
     if (workspaceId) form.append('workspace_id', workspaceId)
     return request<Paper>('/api/papers', { method: 'POST', body: form })
+  },
+  /** Markdown files as unanchored notes, linked to library papers by the DOIs they contain. */
+  importNotes: (files: File[]) => {
+    const form = new FormData()
+    for (const file of files) form.append('files', file)
+    return request<NotesImportResult>('/api/notes/import', { method: 'POST', body: form })
   },
   updatePaper: (id: string, update: PaperUpdate) => request<Paper>(`/api/papers/${id}`, sendJson('PATCH', update)),
   /** The reader's own record (D118, D119): passes finished, keep/later/drop, or both. A field left out keeps its

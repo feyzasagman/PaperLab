@@ -277,6 +277,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/notes/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Notes
+         * @description Markdown files as unanchored notes linked to library papers by the DOIs they contain. 422: over 50 files, over
+         *     1 MB, not .md, not UTF-8, or empty.
+         */
+        post: operations["import_notes_api_notes_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/notes/promote": {
         parameters: {
             query?: never;
@@ -496,6 +517,26 @@ export interface paths {
          *     unknown format or no papers.
          */
         get: operations["export_citations_api_workspaces__workspace_id__citations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/notes.zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Notes
+         * @description The workspace's notes as markdown files, one per paper, zipped for Obsidian. 404 unknown workspace.
+         */
+        get: operations["export_notes_api_workspaces__workspace_id__notes_zip_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1773,6 +1814,11 @@ export interface components {
             file: string;
             /** Name */
             name?: string | null;
+        };
+        /** Body_import_notes_api_notes_import_post */
+        Body_import_notes_api_notes_import_post: {
+            /** Files */
+            files: string[];
         };
         /** Body_upload_hit_pdf_api_workspaces__workspace_id__search_hits__hit_id__upload_post */
         Body_upload_hit_pdf_api_workspaces__workspace_id__search_hits__hit_id__upload_post: {
@@ -4673,6 +4719,41 @@ export interface operations {
             };
         };
     };
+    import_notes_api_notes_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_notes_api_notes_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     promote_note_api_notes_promote_post: {
         parameters: {
             query?: never;
@@ -5219,6 +5300,37 @@ export interface operations {
             query: {
                 format: string;
             };
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_notes_api_workspaces__workspace_id__notes_zip_get: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 workspace_id: string;
