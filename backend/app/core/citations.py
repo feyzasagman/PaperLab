@@ -224,6 +224,12 @@ def _has_surname(author: str, surname: str) -> bool:
     return name == surname or name.endswith(f" {surname}") or name.split(",")[0].strip() == surname
 
 
+def _unsure(rows) -> list[str]:
+    """Titles of candidates lacking a named co-author that might only have a truncated author list: a list of two
+    or more names is complete enough to rule the candidate out."""
+    return [r.title for r in rows if len(r.authors or []) < 2]
+
+
 async def match(
     session: AsyncSession,
     citation: Citation,
@@ -261,12 +267,12 @@ async def match(
             rows = exact or rows
         else:
             if strict_coauthors and not named_in(rows):
-                return Match([], [], unnamed=[rows[0].title])
+                return Match([], [], unnamed=_unsure(rows))
             return Match([rows[0].id], [rows[0].title], library_year=rows[0].year)
         if strict_coauthors and rows:
             named = named_in(rows)  # the reference list had several entries: a lone candidate must still fit
             if not named:
-                return Match([], [], unnamed=[r.title for r in rows])
+                return Match([], [], unnamed=_unsure(rows))
             rows = named
         elif len(rows) > 1 and citation.coauthors:
             rows = named_in(rows) or rows  # narrows an ambiguity, never loses a match

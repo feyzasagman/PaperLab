@@ -671,9 +671,46 @@ _SCLAR_NOTE = (
 async def test_several_reference_entries_never_check_the_lone_library_paper_lacking_the_coauthor(
     session, sclar, wang, library_doi
 ):
-    await add(session, "Strict NeoCoder", ["Yao Strictlu", "Dan Wang"], 1987, doi=library_doi)
+    await add(session, "Strict NeoCoder", ["Yao Strictlu"], 1987, doi=library_doi)  # truncated list
     [item] = await claims.verify_claims(session, _SCLAR_NOTE.format(sclar=sclar, wang=wang), llm=Scripted())
     assert (item.error, item.check, item.candidates) == ("ambiguous_citation", None, ["Strict NeoCoder"])
+
+
+_NSIX_REFS = (
+    "\n\n## References\n\n- Nsixlu, X., Sclar, M. (1987). Salieri.\n"
+    "- Nsixlu, Y., Wang, D. (1987). NeoCoder. https://doi.org/10.1000/nsix-neo\n"
+)
+
+
+async def test_nsix_a_library_paper_with_other_named_authors_is_ruled_out(session):
+    await add(session, "Nsix NeoCoder", ["Yao Nsixlu", "Dan Wang", "Li Tian"], 1987, doi="10.1000/nsix-neo")
+    note = "Salieri differs (Nsixlu, Sclar et al., 1987)." + _NSIX_REFS
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check) == ("paper_not_in_library", None)
+
+
+async def test_nsix_a_truncated_author_list_stays_ambiguous(session):
+    await add(session, "Nsix Truncated", ["Yao Nsixlu"], 1987, doi="10.1000/nsix-neo")
+    note = "Salieri differs (Nsixlu, Sclar et al., 1987)." + _NSIX_REFS
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check, item.candidates) == ("ambiguous_citation", None, ["Nsix Truncated"])
+
+
+async def test_nsix_only_the_unsure_candidates_are_named(session):
+    await add(session, "Nsix Ruled Out", ["Yao Nsixmix", "Dan Wang"], 1987)
+    await add(session, "Nsix Unsure", ["Xi Nsixmix"], 1987)
+    note = (
+        "Salieri differs (Nsixmix, Sclar et al., 1987).\n\n## References\n\n"
+        "- Nsixmix, X., Sclar, M. (1987). Salieri.\n- Nsixmix, Y., Wang, D. (1987). NeoCoder.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check, item.candidates) == ("ambiguous_citation", None, ["Nsix Unsure"])
+
+
+async def test_nsix_without_strict_a_paper_lacking_the_coauthor_still_matches(session):
+    paper = await add(session, "Nsix Lenient", ["Yao Nsixlen", "Dan Wang"], 1987)
+    cite = citations.find("It holds (Nsixlen, Sclar et al., 1987).")[0]
+    assert (await citations.match(session, cite)).paper_ids == [paper.id]
 
 
 async def test_several_reference_entries_and_no_library_paper_is_paper_not_in_library(session):
