@@ -3137,6 +3137,8 @@ export interface components {
              * @default []
              */
             automation: string[];
+            /** Notes */
+            notes?: string[];
             /** Screening Criteria */
             screening_criteria?: string | null;
         };

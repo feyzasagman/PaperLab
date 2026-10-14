@@ -124,7 +124,7 @@ export function PrismaTab({ workspaceId }: { workspaceId: string }) {
           ))}
         </div>
       )}
-      {data && (data.automation.length > 0 || data.screening_criteria) && (
+      {data && (data.automation.length > 0 || (data.notes ?? []).length > 0 || data.screening_criteria) && (
         <section aria-label="Methods notes" className="flex flex-col gap-2 rounded-lg border p-3 text-sm">
           <h3 className="flex items-center gap-1.5 font-medium">
             <ClipboardList aria-hidden className="size-4" />
@@ -136,7 +136,7 @@ export function PrismaTab({ workspaceId }: { workspaceId: string }) {
               <p className="whitespace-pre-wrap">{data.screening_criteria}</p>
             </div>
           )}
-          {data.automation.map((line) => (
+          {[...data.automation, ...(data.notes ?? [])].map((line) => (
             <p key={line} className="text-muted-foreground">
               {line}
             </p>

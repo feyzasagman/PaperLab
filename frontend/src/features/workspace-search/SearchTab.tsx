@@ -47,6 +47,12 @@ export function SearchTab({
           />
           {run.data.status} · {(run.data.stats_json?.last_batch_new_hits as number | undefined) ?? 0} new in last
           batch
+          {run.data.stats_json?.cut_short === true && run.data.stopped_at && (
+            <span className="ml-2">
+              Stopped early after {Math.round((Date.parse(run.data.stopped_at) - Date.parse(run.data.started_at)) / 60000)} min —{' '}
+              {((run.data.stats_json.unfinished_sources as string[] | undefined) ?? []).length} sources not finished
+            </span>
+          )}
         </div>
       )}
       <HitTable workspaceId={workspaceId} run={run.data} />

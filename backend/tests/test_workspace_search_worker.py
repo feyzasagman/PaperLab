@@ -456,3 +456,51 @@ async def test_a_stopped_run_does_not_prescreen(session, worker, enqueued):
     await session.commit()
     await worker_module._mark_exhausted_unless_stopped(session, run)
     assert enqueued == [] and workspace.suggest_status == "idle"
+
+
+# --- D266: a run stopped by its backstop says so -----------------------------------------------------------
+
+
+async def test_a_run_hitting_the_wall_clock_deadline_is_cut_short_and_names_unfinished_sources(
+    session, worker, monkeypatch
+):
+    fake_clock = itertools.chain([0.0], itertools.repeat(10_000.0))
+    monkeypatch.setattr(worker_module, "_now", lambda: next(fake_clock))
+    run = await _new_run(session, "running", ["arxiv", "crossref"])
+    session.add(WorkspaceSearchCursor(run_id=run.id, source="arxiv", cursor_json={"value": 0}))
+    session.add(WorkspaceSearchCursor(run_id=run.id, source="crossref", cursor_json={}, exhausted=True))
+    await session.commit()
+
+    await worker_module.run_workspace_search(worker, str(run.id))
+
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert reloaded.status == "exhausted"  # kept for compatibility
+    assert reloaded.stats_json["cut_short"] is True
+    assert reloaded.stats_json["unfinished_sources"] == ["arxiv"]
+
+
+async def test_a_run_hitting_the_iteration_cap_is_cut_short_too(session, worker, monkeypatch):
+    from app.core import workspace_search as core_module  # noqa: PLC0415
+
+    monkeypatch.setattr(worker_module, "MAX_BATCH_ITERATIONS", 2)
+
+    async def never_ending_page(client, query, page_size, cursor):
+        return [], cursor + page_size
+
+    monkeypatch.setitem(core_module._PAGE_FUNCS, "arxiv", never_ending_page)
+    run = await _new_run(session, "running")
+    session.add(WorkspaceSearchCursor(run_id=run.id, source="arxiv", cursor_json={"value": 0}))
+    await session.commit()
+    await worker_module.run_workspace_search(worker, str(run.id))
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert (reloaded.stats_json["cut_short"], reloaded.stats_json["unfinished_sources"]) == (True, ["arxiv"])
+
+
+async def test_a_run_that_exhausts_every_source_is_not_cut_short(session, worker):
+    run = await _new_run(session, "running")
+    session.add(WorkspaceSearchCursor(run_id=run.id, source="arxiv", cursor_json={"value": 0}))
+    await session.commit()
+    await worker_module.run_workspace_search(worker, str(run.id))
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert reloaded.status == "exhausted" and not reloaded.stats_json.get("cut_short")
+    assert "unfinished_sources" not in reloaded.stats_json

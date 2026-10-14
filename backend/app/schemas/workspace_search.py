@@ -248,4 +248,5 @@ class PrismaExportOut(BaseModel):
     included: int
     runs: list[dict]
     automation: list[str] = []
+    notes: list[str] = []
     screening_criteria: str | None = None

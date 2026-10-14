@@ -149,3 +149,14 @@ test('a refused start shows its reason as a readable sentence', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Start' }))
   await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/first year must not be after/))
 })
+
+test('a run stopped by its time limit says so and how many sources were not finished (D266)', async () => {
+  const cutRun = {
+    id: 'run-2', workspace_id: 'ws-1', query_text: 'q', filters_json: {}, sources_json: ['arxiv'],
+    status: 'exhausted', started_at: '2026-09-24T00:00:00Z', stopped_at: '2026-09-24T00:29:00Z',
+    stats_json: { cut_short: true, unfinished_sources: ['arxiv', 'crossref', 'openalex', 'core'] },
+  } as never
+  vi.mocked(api.getSearchRun).mockResolvedValue(cutRun)
+  renderWithClient(<SearchTab workspaceId="ws-1" runId="run-2" onRunIdChange={vi.fn()} />)
+  await waitFor(() => expect(screen.getByText('Stopped early after 29 min — 4 sources not finished')).toBeInTheDocument())
+})

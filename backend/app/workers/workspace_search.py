@@ -62,12 +62,22 @@ async def _try_lock(session, run_id: uuid.UUID) -> bool:
     return bool(await session.scalar(_TRY_LOCK, {"key": _lock_key(run_id)}))
 
 
-async def _mark_exhausted_unless_stopped(session, run: WorkspaceSearchRun) -> None:
+async def _mark_exhausted_unless_stopped(session, run: WorkspaceSearchRun, cut_short: bool = False) -> None:
     """The loop's shared terminal-state write for both the natural (all-cursors) exit and the bounded-backstop
     (iteration-cap or wall-clock deadline) exit. Re-checks status fresh first: a concurrent Stop landing during
     the last batch already set a status that must not be clobbered back to "exhausted" (bundled minor)."""
     await session.refresh(run)
     if run.status == "running":
+        if cut_short:
+            # D266: the wall-clock or iteration backstop ended the run, not every source running dry: say so, and
+            # name the sources still paging, because PRISMA "identified" is then a partial count. Status stays
+            # "exhausted" for compatibility; the fields are additive.
+            unfinished = (await session.scalars(
+                select(WorkspaceSearchCursor.source).where(
+                    WorkspaceSearchCursor.run_id == run.id, WorkspaceSearchCursor.exhausted.is_(False)
+                ).order_by(WorkspaceSearchCursor.source)
+            )).all()
+            run.stats_json = {**run.stats_json, "cut_short": True, "unfinished_sources": list(unfinished)}
         run.status = "exhausted"
         run.stopped_at = datetime.now(timezone.utc)
         await session.commit()
@@ -150,7 +160,7 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
                         return
                 # Reached by running out of iterations or hitting the wall-clock deadline without every source
                 # naturally exhausting — still a valid terminal state (C2 part 3), not a failure.
-                await _mark_exhausted_unless_stopped(session, run)
+                await _mark_exhausted_unless_stopped(session, run, cut_short=True)
             finally:
                 await providers.aclose()
         except Exception:
