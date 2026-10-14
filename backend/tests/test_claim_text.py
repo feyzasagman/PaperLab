@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.core.claim_text import Block, blocks, inline, split_references
+from app.core.claim_text import Block, blocks, inline, reference_dois, split_references
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claims"
 
@@ -48,3 +48,25 @@ def test_no_pilot_block_keeps_markdown_syntax():
         for block in blocks(body):
             assert not any(mark in block.text for mark in ("**", "## ", "|---")), (name, block.text)
             assert not block.text.startswith(("#", "- ", "* ")), (name, block.text)
+
+
+def test_reference_dois_by_first_author_and_year_skipping_shared_keys():
+    refs = (
+        "- Lu, X., & Ho, Y. (2025). One, with no DOI.\n"
+        "- Lu, Q. (2025). Two. https://doi.org/10.1/two\n"
+        "- Doshi, A. R., & Hauser, O. P. (2024). Gen AI. *Sci. Adv.*"
+        " https://doi.org/10.1126/sciadv.adn5290 — verified\n"
+        "- Gómez-Rodríguez, C., & Williams, P. (2023). A confederacy. https://doi.org/10.18653/v1/2023.findings-emnlp.966\n"
+        "- Boden, M. A. (2004). *The creative mind*. Routledge. ISBN 978-0-415-31452-7\n"
+    )
+    assert reference_dois(refs) == {
+        ("doshi", 2024): "10.1126/sciadv.adn5290",
+        ("gomez-rodriguez", 2023): "10.18653/v1/2023.findings-emnlp.966",
+    }
+
+
+def test_the_pilot_notes_reference_lists():
+    dois = reference_dois(split_references((FIXTURES / "ai-creativity-benchmarks.md").read_text())[1])
+    assert dois[("anderson", 2024)] == "10.1145/3635636.3656204"
+    assert ("lu", 2025) not in dois  # two different Lu (2025) papers, only one with a DOI
+    assert len(reference_dois(split_references((FIXTURES / "definition.md").read_text())[1])) == 8

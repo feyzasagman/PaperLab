@@ -5,6 +5,9 @@ claims.py judges cross-references by them, then turns them into words."""
 import re
 from dataclasses import dataclass
 
+from app.core import citations
+from app.core.enrichment import normalize_doi
+
 _REFERENCES = re.compile(
     r"^\s{0,3}#{1,6}\s*(?:references|bibliography|works cited|reference list)\s*#*\s*$", re.I | re.M
 )
@@ -83,3 +86,20 @@ def blocks(body: str) -> list[Block]:
             paragraph.append(line.strip())
     flush()
     return out
+
+
+# "- Surname, I., … (2024). Title…": the first author's surname and the year of a reference-list entry.
+_ENTRY = re.compile(r"^\s*(?:[-*+]|\d+[.)])?\s*(?P<surname>[^,(]+?),.*?\((?P<year>(?:19|20)\d{2})[a-z]?[,)]")
+
+
+def reference_dois(references: str) -> dict[tuple[str, int], str]:
+    """(folded first-author surname, year) → DOI for each entry that gives one (D279). A key two entries share is left
+    out even when only one of them has a DOI: the citation can't say which paper it means (the benchmarks note cites
+    two Lu (2025) papers, one without a DOI)."""
+    entries: dict[tuple[str, int], list[str | None]] = {}
+    for line in references.split("\n"):
+        if entry := _ENTRY.match(line):
+            doi = citations._DOI.search(line)
+            key = (citations.fold(entry["surname"].strip()), int(entry["year"]))
+            entries.setdefault(key, []).append(normalize_doi(doi.group(1)) if doi else None)
+    return {key: dois[0] for key, dois in entries.items() if len(dois) == 1 and dois[0]}

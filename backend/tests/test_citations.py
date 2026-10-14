@@ -393,3 +393,28 @@ async def test_two_neighbouring_years_are_ambiguous(session):
     await add(session, "After", ["Ann Twoyears"], 1989)
     [item] = await claims.verify_claims(session, "Something holds broadly (Twoyears, 1988).", llm=Scripted())
     assert item.error == "ambiguous_citation" and sorted(item.candidates) == ["After", "Before"]
+
+
+async def test_the_reference_list_doi_beats_duplicates_and_missing_metadata(session):
+    with_doi = await add(session, "Homogenization (DOI only)", [], None, doi="10.1000/m46-homog")
+    await add(session, "Homogenization copy A", ["Barrett R. Refdoi"], 1987)
+    await add(session, "Homogenization copy B", ["Barrett R. Refdoi"], 1987)
+    body = "Different users produced less distinct ideas (Refdoi, Shah & Kreminski, 1987)."
+    refs = (
+        "\n\n## References\n\n"
+        "- Refdoi, B. R., Shah, J. H., & Kreminski, M. (1987). H. https://doi.org/10.1000/m46-homog\n"
+    )
+    [item] = await claims.verify_claims(session, body + refs, llm=Scripted())
+    assert (item.error, item.check.paper_id) == (None, with_doi.id)
+    [item] = await claims.verify_claims(session, body, llm=Scripted())
+    assert item.error == "ambiguous_citation"
+
+
+async def test_a_reference_doi_missing_from_the_library_falls_back_to_author_year(session):
+    paper = await add(session, "Fallback paper", ["Ann Fallbackname"], 1987)
+    note = (
+        "It holds in general (Fallbackname, 1987).\n\n## References\n\n"
+        "- Fallbackname, A. (1987). F. https://doi.org/10.1000/not-here\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert item.check.paper_id == paper.id

@@ -4,7 +4,7 @@ passages, a verbatim quote that is checked against them, and an llm_outputs row 
 import json
 import re
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Literal
 
 from pydantic import BaseModel
@@ -298,6 +298,17 @@ def cited_claims(body: str) -> list[Cited]:
     return [c for b in claim_text.blocks(body) for c in (_row_claims(b) if b.cells else _block_claims(b))]
 
 
+async def _match(session, citation: citations.Citation, dois: dict, workspace_id) -> citations.Match:
+    """The note's reference list first: its DOI picks the one paper even when the library holds duplicates or the
+    paper has no authors or year. Author–year when the list gives none or the DOI isn't in the library."""
+    doi = dois.get((citations.fold(citation.surname), citation.year)) if citation.kind == "author_year" else None
+    if doi:
+        by_doi = await citations.match(session, replace(citation, kind="doi", doi=doi), workspace_id)
+        if len(by_doi.paper_ids) == 1:
+            return by_doi
+    return await citations.match(session, citation, workspace_id)
+
+
 async def verify_claims(
     session: AsyncSession,
     text: str,
@@ -307,7 +318,8 @@ async def verify_claims(
     save: bool = False,
 ) -> list[ClaimItem]:
     """Checks every cited claim in `text`, in order: one item per citation, its claim the sentence, list item or
-    table row that carries it (markdown is read as markdown, and a reference list at the end is never a claim). A
+    table row that carries it (markdown is read as markdown). Send the whole note: a reference list at the end is never
+    checked, but its DOIs are used to find the cited papers. A
     sentence that only points to another note is `not_a_claim`, neither matched nor checked.
     A citation that matches no paper is `citation_not_found`, several is `ambiguous_citation` with the
     titles; neither is guessed. A check that fails for one claim (its error code, or `check_failed` when the
@@ -316,7 +328,8 @@ async def verify_claims(
     workspace (the caller resolves a name with workspaces.by_name). A citation a year away from the only matching
     paper still matches, with warning year_mismatch and the library's year.
     """
-    body, _references = claim_text.split_references(text)
+    body, references = claim_text.split_references(text)
+    dois = claim_text.reference_dois(references)
     pending = cited_claims(body)
     if len(pending) > MAX_CLAIMS:
         raise InvalidInput("too_many_claims", detail=f"{len(pending)} cited claims; the limit is {MAX_CLAIMS}.")
@@ -326,7 +339,7 @@ async def verify_claims(
         if cited.error:
             items.append(ClaimItem(claim, citation, error=cited.error))
             continue
-        found = await citations.match(session, citation, workspace_id)
+        found = await _match(session, citation, dois, workspace_id)
         extra = {"warning": "year_mismatch", "library_year": found.library_year} if found.library_year else {}
         if not found.paper_ids:
             items.append(ClaimItem(claim, citation, error="citation_not_found"))
