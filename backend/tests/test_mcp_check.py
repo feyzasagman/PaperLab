@@ -71,3 +71,9 @@ async def test_a_server_that_cant_read_the_library_says_so(monkeypatch):
     assert result == mcp_check.McpCheck(
         ok=False, tools=ALL_TOOLS, detail="The MCP server started but couldn't read the library."
     )
+
+
+async def test_a_server_with_more_tools_than_the_check_knows_still_passes(monkeypatch):
+    monkeypatch.setattr(mcp_check, "TOOLS", ["get_paper"])  # a newer server: extra tools are not a fault
+    result = await mcp_check.check_server()
+    assert result.ok and result.detail is None and "get_paper" in result.tools

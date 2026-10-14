@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api import charts, chat, datasets, discovery, embedding, graph, health, links, llm, notes, papers, workspaces
+from app.api import citations as citations_api
 from app.api import evidence_cards as evidence_cards_api
 from app.api import mcp as mcp_api
 from app.api import paper_sources as paper_sources_api
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(notes.router)
     app.include_router(chat.router)
     app.include_router(workspaces.router)
+    app.include_router(citations_api.router)
     app.include_router(workspace_search_api.router)
     app.include_router(saved_searches_api.router)
     app.include_router(evidence_cards_api.router)

@@ -11,6 +11,14 @@ async function waitForRunToFinish(request: APIRequestContext, workspaceId: strin
     .toBe('exhausted')
 }
 
+// The upload creates a library paper and marks the hit's global external_ref imported; remove it even when the test
+// fails, or the next run's import attaches that paper and shows no upload control.
+let uploadedPaperId: string | undefined
+test.afterEach(async ({ request }) => {
+  if (uploadedPaperId) await removePaperAndNotes(request, uploadedPaperId)
+  uploadedPaperId = undefined
+})
+
 test('snowball from an imported paper, screen it stage-2, see it in the PRISMA export', async ({ page, request, workspaceId }) => {
   // 1. Get a hit to 'manual' acquisition status with a linked paper record: the seed for both screening and
   //    snowball. ScreeningTab only lists hits whose acquisition_status is 'imported' or 'manual' (see its own
@@ -72,6 +80,7 @@ test('snowball from an imported paper, screen it stage-2, see it in the PRISMA e
     uploadInput.setInputFiles(FIXTURE_FILE),
   ])
   const seedHit = await uploadResponse.json()
+  uploadedPaperId = seedHit.paper_id
   await expect(preview.getByLabel(`Upload PDF for ${title}`)).toHaveCount(0)
 
   // On a shared dev DB every source's fake can already have put the snowball target in the pool; then a clean hop
@@ -117,5 +126,4 @@ test('snowball from an imported paper, screen it stage-2, see it in the PRISMA e
   // 7. Clean up what this test created — the workspace fixture's own teardown removes the workspace (and,
   //    through cascading FKs, its search runs, hits and eligibility rows), but papers and notes survive that, so
   //    the seed paper needs its own cleanup, same as workspace-search.spec.ts's sibling flow.
-  await removePaperAndNotes(request, seedHit.paper_id)
 })

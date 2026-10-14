@@ -39,6 +39,7 @@ mcp = MCPServer(
         "accepts some. Claims: verify_claim and verify_claims check a claim against the papers it cites, with a "
         "quote as evidence. Evidence cards: generate_evidence_card starts one (about a minute per paper), "
         "get_evidence_card reads it, list_evidence_cards shows a workspace's cards. "
+        "Citations: export_citations gives a workspace's papers as BibTeX, RIS, CSL-JSON or APA 7. "
         "An AI suggestion on a hit is a suggestion, never a decision; only review_hits and "
         "accept_suggestions record one, so ask the owner first."
     ),
@@ -416,3 +417,12 @@ async def list_evidence_cards(workspace: str) -> list[pipeline.EvidenceRow]:
     left_out). Values flagged edited are the owner's, not the model's."""
     async with sessions() as session:
         return await pipeline.list_evidence_cards(session, workspace)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def export_citations(workspace: str, format: str = "bibtex") -> pipeline.CitationExport:
+    """Use to cite a workspace's papers in a manuscript: format is bibtex, ris, csljson, apa (plain text) or apa-html
+    (APA 7 with italics). Returns {"format", "count", "text"}; text is ready to paste or save to a file."""
+    async with sessions() as session:
+        return await pipeline.export_citations_as(session, workspace, format)
