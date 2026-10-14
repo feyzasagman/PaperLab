@@ -272,15 +272,19 @@ def _initials(given: str) -> str:
     return "".join(w[0] for w in re.findall(r"\w+", given.lower()))
 
 
+def _fold(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text.lower().translate(TRANSLITERATE))
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
 def _title_key(title: str) -> str:
-    lowered = title.lower().strip()
+    lowered = _fold(re.sub(r"^[\W_]+", "", title.strip()))
     return next((lowered[len(a) :] for a in ARTICLES if lowered.startswith(a)), lowered)
 
 
 def _apa_names(item: dict) -> tuple:
     people = item.get("author") or [{"literal": _title_key(item["title"])}]
-    fold = lambda t: unicodedata.normalize("NFKD", t).lower()  # noqa: E731
-    return tuple((fold(p.get("family") or p.get("literal") or ""), _initials(p.get("given", ""))) for p in people)
+    return tuple((_fold(p.get("family") or p.get("literal") or ""), _initials(p.get("given", ""))) for p in people)
 
 
 def _apa_order(item: dict) -> tuple:

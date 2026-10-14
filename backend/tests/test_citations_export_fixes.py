@@ -120,3 +120,15 @@ def test_a_preprint_note_does_not_repeat_the_genre():
 
 def test_bibtex_caret_is_escaped():
     assert r"a \textasciicircum{} b" in render(items_of(paper(title="a ^ b")), "bibtex")
+
+
+def test_apa_order_folds_diacritics_like_the_keys():
+    out = lines(paper(authors=["Å. Øberg"], title="One"), paper(authors=["J. Smith"], title="Two"),
+                paper(authors=["Zoë Zed"], title="Three"))  # fmt: skip
+    assert [ln.split(",")[0] for ln in out] == ["Øberg", "Smith", "Zed"]
+
+
+def test_apa_order_ignores_leading_punctuation_and_articles_in_titles():
+    out = lines(paper(title="<script>alert(1)</script> zebra"), paper(title="Another study"))
+    assert "Another study" in out[0] and "zebra" in out[1]
+    assert "2020a" in out[0] and "2020b" in out[1]
