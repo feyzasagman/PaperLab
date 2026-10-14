@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import citations, llm_connections, llm_json, notes, prompts, quotes, retrieval
+from app.core import citations, claim_text, llm_connections, llm_json, notes, prompts, quotes, retrieval
 from app.core.enrichment import normalize_doi
 from app.core.errors import DomainError, InvalidInput, NotFound
 from app.models import Chunk, LLMOutput, Paper, PaperStatus
@@ -184,22 +184,83 @@ class ClaimItem:
     claim: str  # the sentence with its citation(s) removed
     citation: citations.Citation
     check: ClaimCheck | None = None
-    error: str | None = None  # citation_not_found | ambiguous_citation | empty_claim
+    error: str | None = None  # citation_not_found | ambiguous_citation | empty_claim | not_a_claim
     candidates: list[str] = field(default_factory=list)  # titles when ambiguous
 
 
-def _without(sentence: str, found: list[citations.Citation]) -> str:
-    """The sentence with every citation span cut out and the spacing tidied."""
-    merged: list[list[int]] = []
-    for start, end in sorted({c.span for c in found}):  # overlapping spans (a DOI inside a parenthesis) become one
-        if merged and start <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], end)
+_WIKILINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
+_SEE = re.compile(r"\(?\b[Ss]ee(?:\s+also)?\s+(?:the\s+)?\[\[[^\]]+\]\](?:\s*(?:,|and|or)\s*\[\[[^\]]+\]\])*\)?\.?")
+# "… are in [[note]]." or a "[[note]]: …" list item: it says where something is covered, not what a paper found (D278).
+_CROSS_REFERENCE = re.compile(r"\b(?:is|are)\s+(?:\w+\s+){0,2}in\s+\[\[[^\]]+\]\]\s*\.?$|^\[\[[^\]]+\]\]\s*[:—–-]")
+
+
+@dataclass(frozen=True)
+class Cited:
+    claim: str  # what the paper is checked against, plain text
+    citation: citations.Citation
+    error: str | None = None  # not_a_claim
+
+
+def _kept_name(c: citations.Citation) -> str:
+    return c.text[: c.text.rindex("(")].rstrip()
+
+
+def _without(sentence: str, found: list[citations.Citation], keep_names: bool = True) -> str:
+    """The sentence with its citations cut out. A narrative citation ("Boden (2009) notes") leaves its names, so the
+    sentence still reads as written (D277); a parenthesis goes whole. Overlapping spans become one cut."""
+    spans = {(*c.span, _kept_name(c) if keep_names and c.narrative else "") for c in found}
+    cuts: list[tuple[int, int, str]] = []
+    for start, end, keep in sorted(spans):
+        if cuts and start < cuts[-1][1]:
+            cuts[-1] = (cuts[-1][0], max(cuts[-1][1], end), "")
         else:
-            merged.append([start, end])
-    for start, end in reversed(merged):
-        sentence = sentence[:start] + sentence[end:]
-    sentence = " ".join(sentence.split())
-    return re.sub(r"\s+([.,;:!?])", r"\1", sentence).strip()
+            cuts.append((start, end, keep))
+    for start, end, keep in reversed(cuts):
+        sentence = sentence[:start] + keep + sentence[end:]
+    return re.sub(r"\s+([.,;:!?])", r"\1", " ".join(sentence.split())).strip()
+
+
+def _prose(text: str) -> str:
+    """Drops "See [[note]]" pointers and turns other wikilinks into words."""
+    text = _WIKILINK.sub(lambda m: m.group(2) or m.group(1).replace("-", " "), _SEE.sub("", text))
+    text = re.sub(r"(?<!\.)\.\.(?!\.)", ".", " ".join(text.split()))  # "et al." ending a sentence
+    return re.sub(r"\s+([.,;:!?])", r"\1", text).strip()
+
+
+def _row_claims(block: claim_text.Block) -> list[Cited]:
+    """A table row's citation is checked against the row's other cells, as prose."""
+    out = []
+    for i, cell in enumerate(block.cells):
+        others = [_prose(other).rstrip(".") for j, other in enumerate(block.cells) if j != i]
+        claim = ". ".join(other for other in others if other)
+        out += [Cited(f"{claim}." if claim else "", c) for c in citations.find(cell)]
+    return out
+
+
+def _block_claims(block: claim_text.Block) -> list[Cited]:
+    """Each citation is checked against its own sentence (D277). A sentence that is only a label ("Smith (2020).")
+    hands its citation the rest of the block; a cross-reference is not_a_claim."""
+    sentences = citations.split_sentences(block.text)
+    out = []
+    for i, sentence in enumerate(sentences):
+        if not (found := citations.find(sentence)):
+            continue
+        bare = _without(sentence, found, keep_names=False)
+        if _CROSS_REFERENCE.search(bare):
+            out += [Cited(_prose(_without(sentence, found)), c, "not_a_claim") for c in found]
+            continue
+        if len(_prose(bare).split()) < 3:
+            claim = _prose(" ".join(sentences[:i] + sentences[i + 1 :]))
+        else:
+            claim = _prose(_without(sentence, found))
+        out += [Cited(claim, c) for c in found]
+    return out
+
+
+def cited_claims(body: str) -> list[Cited]:
+    """Every citation in a note's body (markdown or plain text) with the claim it supports, in order (D276)."""
+    handler = lambda block: _row_claims(block) if block.cells else _block_claims(block)  # noqa: E731
+    return [cited for block in claim_text.blocks(body) for cited in handler(block)]
 
 
 async def verify_claims(
@@ -210,20 +271,25 @@ async def verify_claims(
     llm=None,
     save: bool = False,
 ) -> list[ClaimItem]:
-    """Checks every cited claim in `text`, in order: one item per citation (a sentence citing two papers is two
-    claims). A citation that matches no paper is `citation_not_found`, several is `ambiguous_citation` with the
+    """Checks every cited claim in `text`, in order: one item per citation, its claim the sentence, list item or
+    table row that carries it (markdown is read as markdown, and a reference list at the end is never a claim). A
+    sentence that only points to another note is `not_a_claim`, neither matched nor checked.
+    A citation that matches no paper is `citation_not_found`, several is `ambiguous_citation` with the
     titles; neither is guessed. A check that fails for one claim (its error code, or `check_failed` when the
     model can't be reached) is that item's error and the rest still run. More than 30 cited claims
     raises InvalidInput("too_many_claims") before any model call. `workspace_id` limits matching to one
     workspace (the caller resolves a name with workspaces.by_name).
     """
-    pending = [
-        (_without(s, found), c) for s in citations.split_sentences(text) if (found := citations.find(s)) for c in found
-    ]
+    body, _references = claim_text.split_references(text)
+    pending = cited_claims(body)
     if len(pending) > MAX_CLAIMS:
         raise InvalidInput("too_many_claims", detail=f"{len(pending)} cited claims; the limit is {MAX_CLAIMS}.")
     items = []
-    for claim, citation in pending:
+    for cited in pending:
+        claim, citation = cited.claim, cited.citation
+        if cited.error:
+            items.append(ClaimItem(claim, citation, error=cited.error))
+            continue
         found = await citations.match(session, citation, workspace_id)
         if not found.paper_ids:
             items.append(ClaimItem(claim, citation, error="citation_not_found"))

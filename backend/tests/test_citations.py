@@ -1,8 +1,10 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from app.core import citations, claims, workspaces
+from app.core.claim_text import split_references
 from app.core.errors import InvalidInput
 from app.models import Paper, PaperStatus
 
@@ -108,7 +110,7 @@ async def test_verify_claims_checks_in_order_with_the_citation_removed(session):
     second = await add(session, "Second paper", ["Bo Ordering2"], 1988)
     text = "Models flatten style (Ordering, 1987). Readers notice Ordering2 (1988) said so. No citation here."
     items = await claims.verify_claims(session, text, llm=Scripted())
-    assert [i.claim for i in items] == ["Models flatten style.", "Readers notice said so."]
+    assert [i.claim for i in items] == ["Models flatten style.", "Readers notice Ordering2 said so."]
     assert [i.check.paper_id for i in items] == [first.id, second.id]
     assert all(i.error is None for i in items)
 
@@ -242,3 +244,81 @@ def test_name_lists_keep_the_first_author(sentence, surname, year, text):
     [found] = citations.find(sentence)
     assert (found.surname, found.year, found.text) == (surname, year, text)
     assert found.narrative == (not sentence.startswith("It holds"))  # only "(Anderson, Shah, & Kreminski, 2024)" isn't
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "claims"
+
+
+def pilot(name: str) -> list:
+    return claims.cited_claims(split_references((FIXTURES / name).read_text())[0])
+
+
+def by(found, surname, year):
+    return [c for c in found if (c.citation.surname, c.citation.year) == (surname, year)]
+
+
+def test_boden_2009_is_judged_on_his_own_sentence_not_abrahams():
+    found = pilot("definition.md")
+    assert len(found) == 20
+    [boden] = by(found, "Boden", 2009)
+    assert boden.claim == (
+        'Boden notes that "valuable" can mean interesting, useful, beautiful, simple, richly complex and more.'
+    )
+    abraham = [c.claim for c in by(found, "Abraham", 2025)]
+    assert 'Abraham proposes that a creative idea is one that is "both novel and satisfying".' in abraham
+
+
+def test_no_pilot_claim_holds_markdown():
+    for name in ("definition.md", "ai-creativity-benchmarks.md"):
+        for cited in pilot(name):
+            assert not any(mark in cited.claim for mark in ("|", "##", "**", "[[", "]]")), cited.claim
+            assert not cited.claim.startswith(("#", "- ")), cited.claim
+
+
+def test_a_table_row_citation_is_judged_on_the_rows_other_cells():
+    found = pilot("ai-creativity-benchmarks.md")
+    assert len(found) == 46
+    row = [c for c in by(found, "Anderson", 2024) if c.error is None][0]
+    assert row.claim == (
+        "C&C '24. 36-participant ideation study, ChatGPT vs an alternative creativity support tool. "
+        "Different users produced less semantically distinct ideas with ChatGPT."
+    )
+
+
+def test_a_cross_reference_is_not_a_claim():
+    found = pilot("ai-creativity-benchmarks.md")
+    first_four = found[:4]
+    assert [(c.citation.surname, c.error) for c in first_four] == [
+        ("Koivisto", "not_a_claim"), ("Hubert", "not_a_claim"), ("Doshi", "not_a_claim"), ("Anderson", "not_a_claim")
+    ]
+    assert first_four[0].claim.endswith("Hubert et al. and Doshi & Hauser are in computational creativity.")
+    assert found[-1].error == "not_a_claim"  # "- [[llm-homogenization]]: the full treatment of Anderson, …"
+
+
+def test_a_label_citation_takes_the_rest_of_its_bullet():
+    [gomez] = by(pilot("ai-creativity-benchmarks.md"), "Gómez-Rodríguez", 2023)[:1]
+    assert gomez.claim.startswith("The prompt is deliberately unusual: Ignatius J. Reilly from A Confederacy of Dunces")
+
+
+def test_three_citations_in_one_sentence_share_that_sentence_only():
+    found = claims.cited_claims(
+        "Earlier text (Zed, 2001). Several studies found it (Ann, 2020; Bo & Cy, 2021; Di et al., 2022). Later text."
+    )
+    assert [(c.citation.surname, c.claim) for c in found[1:]] == [
+        ("Ann", "Several studies found it."), ("Bo", "Several studies found it."), ("Di", "Several studies found it.")
+    ]
+
+
+def test_a_bare_label_bullet_is_still_an_empty_claim():
+    [cited] = claims.cited_claims("- **Smith (2020).**")
+    assert cited.claim == "" and cited.error is None  # verify_claims turns it into empty_claim without a model call
+
+
+async def test_verify_claims_reports_a_cross_reference_without_matching_it(session):
+    class Never(Scripted):
+        async def stream(self, system, prompt):
+            raise AssertionError("no model call")
+            yield
+
+    [item] = await claims.verify_claims(session, "Smith & Lee (1987) is covered in [[some-note]].", llm=Never())
+    assert (item.error, item.check) == ("not_a_claim", None)
