@@ -106,7 +106,7 @@ def blocks(body: str) -> list[Block]:
 _ENTRY = re.compile(r"^\s*(?:[-*+]|\d+[.)])?\s*(?P<surname>[^,(]+?),.*?\((?P<year>(?:19|20)\d{2})[a-z]?[,)]")
 
 
-_AUTHOR = re.compile(r"(?:^|[,&]\s*)(?:&\s*)?([^,&()]+?),\s+(?:[A-Z][a-z]?\.[\s-]*)+")
+_AUTHOR = re.compile(r"(?:^|[,&]\s*)(?:&\s*)?([^,&()]+?),\s+(?:[^\W\d_][a-z]?\.[\s-]*)+")
 
 
 @dataclass(frozen=True)

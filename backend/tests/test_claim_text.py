@@ -119,3 +119,8 @@ def test_reference_entries_keep_every_author_surname():
     entries = reference_entries(refs)
     assert [e.surnames for e in entries[("lu", 2025)]] == [("lu", "sclar", "choi"), ("lu", "wang", "khashabi")]
     assert entries[("boden", 2004)] == [RefEntry(None, ("boden",))]
+
+
+def test_reference_authors_accept_non_ascii_initials():
+    entries = reference_entries("- Durand, É., Lee, K. (1987). T.\n")
+    assert entries[("durand", 1987)][0].surnames == ("durand", "lee")

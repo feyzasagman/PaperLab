@@ -96,6 +96,7 @@ _SECONDARY = re.compile(
     r"^(?P<orig>.*?)[,;]?\s*(?:as\s+)?(?:quoted|cited|summari[sz]ed|reported|discussed|described)\s+(?:in|by)\s+(?P<src>.+)$",
     re.I,
 )
+_SUPERSEDES = re.compile(r"(?:quoted|cited)\s+(?:in|by)\s*$", re.I)  # only these: narrative names read via Y
 _INITIALS = re.compile(r"[a-z]{1,2}\.?|(?:[a-z]\.)+")  # "j", "jk", "j.k." (folded)
 _INITIAL = re.compile(r"^\(?[A-Z]\.$")  # "J." before a surname: not a sentence end
 _FIRST_AUTHOR = re.compile(r",|\s&\s|\sand\s|\set al", re.I)
@@ -120,6 +121,7 @@ class Match:
     paper_ids: list
     titles: list[str]
     library_year: int | None = None  # the paper's year when it matched only as the neighbouring one (M2)
+    unnamed: list[str] | None = None  # titles of candidates dropped for lacking a named co-author (strict match)
 
 
 def split_sentences(text: str) -> list[str]:
@@ -136,7 +138,7 @@ def split_sentences(text: str) -> list[str]:
 
 def _coauthors(names: str) -> tuple[str, ...]:
     """Surnames named after the first author ("Lu, Wang et al." -> ("Wang",)); "et al." names nobody."""
-    parts = [p.strip() for p in re.split(r",\s*|\s+&\s+|\s+and\s+|\s+et al\.?", names) if p.strip()]
+    parts = [p.strip() for p in re.split(r",\s*(?:(?:&|and)\s+)?|\s+&\s+|\s+and\s+|\s+et al\.?", names) if p.strip()]
     return tuple(parts[1:])
 
 
@@ -165,7 +167,7 @@ def find(sentence: str) -> list[Citation]:
                     coauthors=_coauthors(parsed["names"]),
                 )
                 found.append(citation)
-                if secondary and via is None:
+                if secondary and via is None and _SUPERSEDES.search(text[: secondary.start("src")]):
                     standalone.append(citation)
     for m in _NARRATIVE.finditer(sentence):
         names, start = m["names"], m.start()
@@ -222,10 +224,17 @@ def _has_surname(author: str, surname: str) -> bool:
     return name == surname or name.endswith(f" {surname}") or name.split(",")[0].strip() == surname
 
 
-async def match(session: AsyncSession, citation: Citation, workspace_id=None, only_doi: str | None = None) -> Match:
+async def match(
+    session: AsyncSession,
+    citation: Citation,
+    workspace_id=None,
+    only_doi: str | None = None,
+    strict_coauthors: bool = False,
+) -> Match:
     """Library papers a citation points at: by DOI, or by first-author surname and year (inside a workspace if
     given). Zero or several matches are returned as they are, never resolved. `only_doi` (the reference list's DOI for
-    this citation) drops author–year candidates whose own DOI is another one."""
+    this citation) drops author–year candidates whose own DOI is another one. `strict_coauthors` requires every named
+    co-author on the candidates even when one is left; a candidate list it empties comes back in `unnamed`."""
     query = select(Paper.id, Paper.title, Paper.authors, Paper.year, Paper.doi)
     if workspace_id is not None:
         query = query.join(workspace_papers, workspace_papers.c.paper_id == Paper.id).where(
@@ -241,14 +250,24 @@ async def match(session: AsyncSession, citation: Citation, workspace_id=None, on
         if only_doi:
             rows = [r for r in rows if not r.doi or normalize_doi(r.doi) == only_doi]
         exact = [r for r in rows if r.year == citation.year]
+        wanted = [fold(c).strip() for c in citation.coauthors]
+
+        def named_in(rs):
+            return [r for r in rs if all(any(_has_surname(a, w) for a in r.authors or []) for w in wanted)]
+
         # A preprint or online-first year often differs from the issue year by one (D279): the cited year wins, and a
         # lone neighbour matches with a warning; two neighbours are left ambiguous.
         if exact or len(rows) != 1:
             rows = exact or rows
         else:
+            if strict_coauthors and not named_in(rows):
+                return Match([], [], unnamed=[rows[0].title])
             return Match([rows[0].id], [rows[0].title], library_year=rows[0].year)
-        if len(rows) > 1 and citation.coauthors:
-            wanted = [fold(c).strip() for c in citation.coauthors]
-            named = [r for r in rows if all(any(_has_surname(a, w) for a in r.authors or []) for w in wanted)]
-            rows = named or rows  # narrows an ambiguity, never loses a match
+        if strict_coauthors and rows:
+            named = named_in(rows)  # the reference list had several entries: a lone candidate must still fit
+            if not named:
+                return Match([], [], unnamed=[r.title for r in rows])
+            rows = named
+        elif len(rows) > 1 and citation.coauthors:
+            rows = named_in(rows) or rows  # narrows an ambiguity, never loses a match
     return Match([r.id for r in rows], [r.title for r in rows])

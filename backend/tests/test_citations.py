@@ -652,3 +652,52 @@ async def test_a_coauthor_is_a_whole_surname_never_a_suffix(session):
     wei = await add(session, "Wei paper", ["Ann Narrowsx", "Wei Li"], 1987)
     cite = citations.find("It holds (Narrowsx, Li et al., 1987).")[0]
     assert (await citations.match(session, cite)).paper_ids == [wei.id]
+
+
+_SCLAR_NOTE = (
+    "Salieri studies a different benchmark entirely (Strictlu, Sclar et al., 1987).\n\n## References\n\n"
+    "- Strictlu, X., Sclar, M., & Choi, Y. (1987). Salieri.{sclar}\n"
+    "- Strictlu, Y., Wang, D., & Khashabi, D. (1987). NeoCoder.{wang}\n"
+)
+
+
+@pytest.mark.parametrize(
+    "sclar, wang, library_doi",
+    [
+        ("", " https://doi.org/10.1000/strict-neo", "10.1000/strict-neo"),
+        (" https://doi.org/10.1000/strict-sal", "", None),
+    ],
+)
+async def test_several_reference_entries_never_check_the_lone_library_paper_lacking_the_coauthor(
+    session, sclar, wang, library_doi
+):
+    await add(session, "Strict NeoCoder", ["Yao Strictlu", "Dan Wang"], 1987, doi=library_doi)
+    [item] = await claims.verify_claims(session, _SCLAR_NOTE.format(sclar=sclar, wang=wang), llm=Scripted())
+    assert (item.error, item.check, item.candidates) == ("ambiguous_citation", None, ["Strict NeoCoder"])
+
+
+async def test_several_reference_entries_and_no_library_paper_is_paper_not_in_library(session):
+    [item] = await claims.verify_claims(session, _SCLAR_NOTE.format(sclar="", wang=""), llm=Scripted())
+    assert (item.error, item.check) == ("paper_not_in_library", None)
+
+
+async def test_two_papers_outside_the_workspace_are_both_named(session):
+    await add(session, "Out A", ["Ann Twooutws"], 1987)
+    await add(session, "Out B", ["Bob Twooutws"], 1987)
+    workspace = await workspaces.create(session, "m48 two outside")
+    note = "It holds in general (Twooutws, 1987).\n\n## References\n\n- Twooutws, A. (1987). T.\n"
+    [item] = await claims.verify_claims(session, note, workspace_id=workspace.id, llm=Scripted())
+    assert (item.error, item.candidates) == ("paper_not_in_workspace", ["Out A", "Out B"])
+
+
+def test_a_discussed_in_marker_keeps_the_narrative_citations():
+    found = citations.find("Lee (2021) showed that creativity declines with age (as discussed in Smith, 2020).")
+    assert [(c.surname, c.superseded) for c in found] == [("Lee", False), ("Smith", False)]
+
+
+@pytest.mark.parametrize(
+    "names, expected",
+    [("A, B & C", ("B", "C")), ("A, B, & C", ("B", "C")), ("A, B, and van Dijk", ("B", "van Dijk"))],
+)
+def test_the_last_coauthor_loses_its_joiner(names, expected):
+    assert citations._coauthors(names) == expected

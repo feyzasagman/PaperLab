@@ -363,16 +363,19 @@ def cited_claims(body: str) -> list[Cited]:
     return [c for b in claim_text.blocks(body) for c in (_row_claims(b) if b.cells else _block_claims(b))]
 
 
-def _entry_for(entries: dict, citation: citations.Citation) -> tuple[list[RefEntry], RefEntry | None]:
-    """The reference entries for a citation's key, narrowed by the co-authors it names; the one left, if one."""
+def _entry_for(entries: dict, citation: citations.Citation) -> tuple[list[RefEntry], RefEntry | None, bool]:
+    """The reference entries for a citation's key, narrowed by the co-authors it names; the one left, if one; and
+    whether the key had several entries (then library candidates must show the co-authors too)."""
     found = entries.get((citations.fold(citation.surname), citation.year), [])
     wanted = [citations.fold(c) for c in citation.coauthors]
     named = [e for e in found if all(any(s == w or s.endswith(" " + w) for s in e.surnames) for w in wanted)]
     narrowed = named or found  # narrowing narrows, it never empties
-    return narrowed, (narrowed[0] if len(narrowed) == 1 else None)
+    return narrowed, (narrowed[0] if len(narrowed) == 1 else None), len(found) > 1
 
 
-async def _match(session, citation: citations.Citation, doi: str | None, workspace_id) -> citations.Match:
+async def _match(
+    session, citation: citations.Citation, doi: str | None, workspace_id, strict: bool = False
+) -> citations.Match:
     """The note's reference list first: its DOI picks the one paper even when the library holds duplicates or the
     paper has no authors or year. Author–year when the list gives none or the DOI isn't in the library, but then
     never a paper whose own DOI differs from the list's."""
@@ -380,7 +383,7 @@ async def _match(session, citation: citations.Citation, doi: str | None, workspa
         by_doi = await citations.match(session, replace(citation, kind="doi", doi=doi), workspace_id)
         if len(by_doi.paper_ids) == 1:
             return by_doi
-    return await citations.match(session, citation, workspace_id, only_doi=doi)
+    return await citations.match(session, citation, workspace_id, only_doi=doi, strict_coauthors=strict)
 
 
 async def verify_claims(
@@ -415,19 +418,28 @@ async def verify_claims(
         if cited.error:
             items.append(ClaimItem(claim, citation, error=cited.error))
             continue
-        narrowed, entry = _entry_for(entries, citation) if citation.kind == "author_year" else ([], None)
+        narrowed, entry, several = (
+            _entry_for(entries, citation) if citation.kind == "author_year" else ([], None, False)
+        )
         if len(narrowed) > 1:
             # entries still share this key: the citation can't say which paper it means
             candidates = await citations.match(session, citation, workspace_id)
             items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=candidates.titles))
             continue
-        found = await _match(session, citation, entry.doi if entry else None, workspace_id)
+        found = await _match(session, citation, entry.doi if entry else None, workspace_id, several)
+        if found.unnamed:  # the library's author list may be truncated, so the co-author isn't claimed absent
+            items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=found.unnamed))
+            continue
         extra = {"warning": "year_mismatch", "library_year": found.library_year} if found.library_year else {}
         entry_doi = entry.doi if entry else None
         if not found.paper_ids and workspace_id is not None:
-            elsewhere = await _match(session, citation, entry_doi, None)
-            if len(elsewhere.paper_ids) == 1:
-                items.append(ClaimItem(claim, citation, error="paper_not_in_workspace", doi=entry_doi))
+            elsewhere = await _match(session, citation, entry_doi, None, several)
+            if elsewhere.paper_ids:
+                items.append(
+                    ClaimItem(
+                        claim, citation, error="paper_not_in_workspace", doi=entry_doi, candidates=elsewhere.titles
+                    )
+                )
                 continue
         if not found.paper_ids and entry:
             items.append(ClaimItem(claim, citation, error="paper_not_in_library", doi=entry_doi))
