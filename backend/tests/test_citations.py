@@ -582,3 +582,45 @@ async def test_a_referenced_paper_missing_from_the_library_is_paper_not_in_libra
 async def test_a_citation_in_no_reference_list_is_still_citation_not_found(session):
     [item] = await claims.verify_claims(session, "It holds broadly here (Nolistxyz, 1987).", llm=Scripted())
     assert (item.error, item.doi) == ("citation_not_found", None)
+
+
+async def test_a_coauthor_matching_no_entry_leaves_a_shared_key_ambiguous(session):
+    await add(session, "Zeta Narrow", ["Ann Zetanarrow"], 1987)
+    note = (
+        "It holds in general (Zetanarrow, Kim et al., 1987).\n\n## References\n\n"
+        "- Zetanarrow, A., Lee, B. (1987). One.\n- Zetanarrow, C., Wang, D. (1987). Two.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check) == ("ambiguous_citation", None)
+
+
+async def test_a_coauthor_is_a_whole_surname_not_a_suffix(session):
+    await add(session, "Lili Paper", ["Ann Lilishared"], 1987)
+    note = (
+        "It holds in general (Lilishared, Li et al., 1987).\n\n## References\n\n"
+        "- Lilishared, A., Lili, B. (1987). One.\n- Lilishared, C., Wang, D. (1987). Two.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check) == ("ambiguous_citation", None)
+
+
+async def test_a_single_entry_with_full_first_names_keeps_its_doi(session):
+    paper = await add(session, "Fullname Paper", ["Jon Fullnamesmith", "Kim Lee"], 1987, doi="10.1000/m48-full")
+    note = (
+        "It holds in general (Fullnamesmith & Lee, 1987).\n\n## References\n\n"
+        "- Fullnamesmith, Jon, & Lee, Kim (1987). T. https://doi.org/10.1000/m48-full\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check.paper_id) == (None, paper.id)
+
+
+async def test_a_paper_outside_the_workspace_is_paper_not_in_workspace(session):
+    await add(session, "Outside Paper", ["Ann Outsidews"], 1987)
+    workspace = await workspaces.create(session, "m48 empty scope")
+    for note in ("It holds in general (Outsidews, 1987).",
+                 "It holds in general (Outsidews, 1987).\n\n## References\n\n- Outsidews, A. (1987). T.\n"):
+        [item] = await claims.verify_claims(session, note, workspace_id=workspace.id, llm=Scripted())
+        assert item.error == "paper_not_in_workspace"
+    [gone] = await claims.verify_claims(session, "It holds in general (Nowherews, 1987).",
+                                        workspace_id=workspace.id, llm=Scripted())
+    assert gone.error == "citation_not_found"

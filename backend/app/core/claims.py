@@ -244,7 +244,7 @@ class ClaimItem:
     candidates: list[str] = field(default_factory=list)  # titles when ambiguous
     warning: str | None = None  # year_mismatch: matched a paper the library dates a year away
     library_year: int | None = None
-    doi: str | None = None  # paper_not_in_library: the reference list's DOI for it
+    doi: str | None = None  # the reference list's DOI for the paper (not the DOI written in the sentence)
 
 
 _WIKILINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
@@ -354,7 +354,8 @@ def _entry_for(entries: dict, citation: citations.Citation) -> tuple[list[RefEnt
     """The reference entries for a citation's key, narrowed by the co-authors it names; the one left, if one."""
     found = entries.get((citations.fold(citation.surname), citation.year), [])
     wanted = [citations.fold(c) for c in citation.coauthors]
-    narrowed = [e for e in found if all(any(s.endswith(w) for s in e.surnames) for w in wanted)] if wanted else found
+    named = [e for e in found if all(any(s == w or s.endswith(" " + w) for s in e.surnames) for w in wanted)]
+    narrowed = named or found  # narrowing narrows, it never empties
     return narrowed, (narrowed[0] if len(narrowed) == 1 else None)
 
 
@@ -381,8 +382,9 @@ async def verify_claims(
     table row that carries it (markdown is read as markdown). Send the whole note: a reference list at the end is never
     checked, but its DOIs are used to find the cited papers. A
     sentence that only points to another note is `not_a_claim`, neither matched nor checked.
-    A citation that matches no paper is `citation_not_found`, several is `ambiguous_citation` with the
-    titles; neither is guessed. A check that fails for one claim (its error code, or `check_failed` when the
+    A citation that matches no paper is `citation_not_found` when the reference list doesn't name it either,
+    `paper_not_in_library` (with the list's `doi`) when the list names it, and `paper_not_in_workspace` when the
+    library holds it outside `workspace_id`; several matches are `ambiguous_citation` with the titles; none is guessed. A check that fails for one claim (its error code, or `check_failed` when the
     model can't be reached) is that item's error and the rest still run. More than 30 cited claims
     raises InvalidInput("too_many_claims") before any model call. `workspace_id` limits matching to one
     workspace (the caller resolves a name with workspaces.by_name). A citation a year away from the only matching
@@ -407,8 +409,14 @@ async def verify_claims(
             continue
         found = await _match(session, citation, entry.doi if entry else None, workspace_id)
         extra = {"warning": "year_mismatch", "library_year": found.library_year} if found.library_year else {}
+        entry_doi = entry.doi if entry else None
+        if not found.paper_ids and workspace_id is not None:
+            elsewhere = await _match(session, citation, entry_doi, None)
+            if len(elsewhere.paper_ids) == 1:
+                items.append(ClaimItem(claim, citation, error="paper_not_in_workspace", doi=entry_doi))
+                continue
         if not found.paper_ids and entry:
-            items.append(ClaimItem(claim, citation, error="paper_not_in_library", doi=entry.doi))
+            items.append(ClaimItem(claim, citation, error="paper_not_in_library", doi=entry_doi))
         elif not found.paper_ids:
             items.append(ClaimItem(claim, citation, error="citation_not_found"))
         elif len(found.paper_ids) > 1:
