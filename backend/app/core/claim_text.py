@@ -106,23 +106,38 @@ def blocks(body: str) -> list[Block]:
 _ENTRY = re.compile(r"^\s*(?:[-*+]|\d+[.)])?\s*(?P<surname>[^,(]+?),.*?\((?P<year>(?:19|20)\d{2})[a-z]?[,)]")
 
 
-def _entries(references: str) -> dict[tuple[str, int], list[str | None]]:
-    entries: dict[tuple[str, int], list[str | None]] = {}
+_AUTHOR = re.compile(r"(?:^|[,&]\s*)(?:&\s*)?([^,&()]+?),\s+(?:[A-Z][a-z]?\.[\s-]*)+")
+
+
+@dataclass(frozen=True)
+class RefEntry:
+    doi: str | None
+    surnames: tuple[str, ...]  # folded, first author first
+
+
+def reference_entries(references: str) -> dict[tuple[str, int], list[RefEntry]]:
+    """(folded first-author surname, year) -> the reference-list entries with that key, each with its DOI (or None)
+    and every author's folded surname (to tell "Lu, Wang et al." from "Lu, Sclar et al.", pilot 2 N4)."""
+    entries: dict[tuple[str, int], list[RefEntry]] = {}
     for line in references.split("\n"):
         if entry := _ENTRY.match(line):
             doi = citations._DOI.search(line)
-            key = (citations.fold(entry["surname"].strip()), int(entry["year"]))
-            entries.setdefault(key, []).append(normalize_doi(doi.group(1)) if doi else None)
+            head = line.split("(", 1)[0].lstrip("-*+0123456789.) ")
+            first = citations.fold(entry["surname"].strip())
+            surnames = tuple(citations.fold(s.strip()) for s in _AUTHOR.findall(head)) or (first,)
+            entries.setdefault((first, int(entry["year"])), []).append(
+                RefEntry(normalize_doi(doi.group(1)) if doi else None, surnames)
+            )
     return entries
 
 
 def reference_dois(references: str) -> dict[tuple[str, int], str]:
-    """(folded first-author surname, year) → DOI for each entry that gives one (D279). A key two entries share is left
+    """(folded first-author surname, year) -> DOI for each entry that gives one (D279). A key two entries share is left
     out even when only one of them has a DOI: the citation can't say which paper it means (the benchmarks note cites
     two Lu (2025) papers, one without a DOI)."""
-    return {key: dois[0] for key, dois in _entries(references).items() if len(dois) == 1 and dois[0]}
+    return {key: es[0].doi for key, es in reference_entries(references).items() if len(es) == 1 and es[0].doi}
 
 
 def shared_keys(references: str) -> set[tuple[str, int]]:
     """The (surname, year) keys two or more reference entries share: a citation with such a key is ambiguous."""
-    return {key for key, dois in _entries(references).items() if len(dois) > 1}
+    return {key for key, es in reference_entries(references).items() if len(es) > 1}

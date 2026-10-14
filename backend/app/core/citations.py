@@ -112,6 +112,7 @@ class Citation:
     narrative: bool = False  # "Smith (2020) found": the names are part of the sentence, so a claim keeps them
     via: str | None = None  # the original work when this cites the source it was read in ("as cited in")
     superseded: bool = False  # an original the sentence says was read elsewhere: cut from the claim, never checked
+    coauthors: tuple[str, ...] = ()  # surnames named after the first author; "et al." names nobody
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,12 @@ def split_sentences(text: str) -> list[str]:
         elif piece.strip():
             out.append(piece.strip())
     return out
+
+
+def _coauthors(names: str) -> tuple[str, ...]:
+    """Surnames named after the first author ("Lu, Wang et al." -> ("Wang",)); "et al." names nobody."""
+    parts = [p.strip() for p in re.split(r",\s*|\s+&\s+|\s+and\s+|\s+et al\.?", names) if p.strip()]
+    return tuple(parts[1:])
 
 
 def find(sentence: str) -> list[Citation]:
@@ -154,7 +161,8 @@ def find(sentence: str) -> list[Citation]:
                 surname = _FIRST_AUTHOR.split(parsed["names"].strip())[0].strip()
                 via = secondary["orig"].strip(" ,;") or None if secondary else None
                 citation = Citation(
-                    "author_year", part.strip(), group.span(), surname=surname, year=int(parsed["year"]), via=via
+                    "author_year", part.strip(), group.span(), surname=surname, year=int(parsed["year"]), via=via,
+                    coauthors=_coauthors(parsed["names"]),
                 )
                 found.append(citation)
                 if secondary and via is None:
@@ -174,6 +182,7 @@ def find(sentence: str) -> list[Citation]:
                 surname=surname,
                 year=int(m["year"]),
                 narrative=True,
+                coauthors=_coauthors(names),
             )
         )
     if standalone:  # the narrative citations are the originals the author read through Y

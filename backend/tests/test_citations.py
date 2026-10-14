@@ -469,7 +469,7 @@ async def test_a_list_doi_that_is_not_in_the_library_drops_a_candidate_with_anot
     await add(session, "Other doi paper", ["Ann Listdoi"], 1987, doi="10.1000/m46-b")
     note = "It holds in general (Listdoi, 1987).\n\n## References\n\n- Listdoi, A. (1987). T. https://doi.org/10.1000/m46-a\n"
     [item] = await claims.verify_claims(session, note, llm=Scripted())
-    assert (item.error, item.check) == ("citation_not_found", None)
+    assert (item.error, item.check) == ("paper_not_in_library", None)
 
 
 async def test_a_key_two_list_entries_share_is_ambiguous_and_never_checked(session):
@@ -546,3 +546,39 @@ def test_the_pilot_secondary_citations_go_to_abraham():
 def test_a_secondary_marker_needs_a_cited_source_with_a_year(sentence, surname, year, via):
     [found] = claims.cited_claims(sentence)
     assert (found.citation.surname, found.citation.year, found.citation.via) == (surname, year, via)
+
+
+def test_coauthors_named_in_a_citation():
+    assert citations.find("It holds (Lu, Wang et al., 2025).")[0].coauthors == ("Wang",)
+    assert citations.find("Doshi & Hauser (2024) found it.")[0].coauthors == ("Hauser",)
+    assert citations.find("Smith et al. (2020) found it.")[0].coauthors == ()
+
+
+async def test_a_coauthor_picks_one_of_two_shared_reference_entries(session):
+    wang = await add(session, "Coauth NeoCoder", ["Yao Coauthlu", "Dan Wang"], 1987, doi="10.1000/m48-neo")
+    await add(session, "Coauth Salieri", ["Xi Coauthlu", "Mia Sclar"], 1987, doi="10.1000/m48-sal")
+    refs = (
+        "\n\n## References\n\n- Coauthlu, X., Sclar, M. (1987). Salieri. https://doi.org/10.1000/m48-sal\n"
+        "- Coauthlu, Y., Wang, D. (1987). NeoCoder. https://doi.org/10.1000/m48-neo\n"
+    )
+    note = "Codeforces problems were used here (Coauthlu, Wang et al., 1987)." + refs
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check.paper_id) == (None, wang.id)
+
+
+async def test_a_referenced_paper_missing_from_the_library_is_paper_not_in_library(session):
+    note = (
+        "Corazza proposes a dynamic definition here (Nolibrary, 1987).\n\n## References\n\n"
+        "- Nolibrary, G. E. (1987). Potential originality. https://doi.org/10.1000/m48-absent\n"
+        "- Bookonly, M. A. (1987). *The creative mind*. Routledge.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.doi) == ("paper_not_in_library", "10.1000/m48-absent")
+    swapped = note.replace("(Nolibrary, 1987)", "(Bookonly, 1987)")
+    [book] = await claims.verify_claims(session, swapped, llm=Scripted())
+    assert (book.error, book.doi) == ("paper_not_in_library", None)
+
+
+async def test_a_citation_in_no_reference_list_is_still_citation_not_found(session):
+    [item] = await claims.verify_claims(session, "It holds broadly here (Nolistxyz, 1987).", llm=Scripted())
+    assert (item.error, item.doi) == ("citation_not_found", None)

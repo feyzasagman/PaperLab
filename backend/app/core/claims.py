@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import citations, claim_text, llm_connections, llm_json, notes, prompts, quotes, retrieval
+from app.core.claim_text import RefEntry
 from app.core.enrichment import normalize_doi
 from app.core.errors import DomainError, InvalidInput, NotFound
 from app.models import Chunk, LLMOutput, Paper, PaperStatus
@@ -239,10 +240,11 @@ class ClaimItem:
     claim: str  # the sentence with its citation(s) removed
     citation: citations.Citation
     check: ClaimCheck | None = None
-    error: str | None = None  # citation_not_found | ambiguous_citation | empty_claim | not_a_claim
+    error: str | None = None  # citation_not_found | paper_not_in_library | ambiguous_citation | …
     candidates: list[str] = field(default_factory=list)  # titles when ambiguous
     warning: str | None = None  # year_mismatch: matched a paper the library dates a year away
     library_year: int | None = None
+    doi: str | None = None  # paper_not_in_library: the reference list's DOI for it
 
 
 _WIKILINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
@@ -348,11 +350,18 @@ def cited_claims(body: str) -> list[Cited]:
     return [c for b in claim_text.blocks(body) for c in (_row_claims(b) if b.cells else _block_claims(b))]
 
 
-async def _match(session, citation: citations.Citation, dois: dict, workspace_id) -> citations.Match:
+def _entry_for(entries: dict, citation: citations.Citation) -> tuple[list[RefEntry], RefEntry | None]:
+    """The reference entries for a citation's key, narrowed by the co-authors it names; the one left, if one."""
+    found = entries.get((citations.fold(citation.surname), citation.year), [])
+    wanted = [citations.fold(c) for c in citation.coauthors]
+    narrowed = [e for e in found if all(any(s.endswith(w) for s in e.surnames) for w in wanted)] if wanted else found
+    return narrowed, (narrowed[0] if len(narrowed) == 1 else None)
+
+
+async def _match(session, citation: citations.Citation, doi: str | None, workspace_id) -> citations.Match:
     """The note's reference list first: its DOI picks the one paper even when the library holds duplicates or the
     paper has no authors or year. Author–year when the list gives none or the DOI isn't in the library, but then
     never a paper whose own DOI differs from the list's."""
-    doi = dois.get((citations.fold(citation.surname), citation.year)) if citation.kind == "author_year" else None
     if doi:
         by_doi = await citations.match(session, replace(citation, kind="doi", doi=doi), workspace_id)
         if len(by_doi.paper_ids) == 1:
@@ -380,8 +389,7 @@ async def verify_claims(
     paper still matches, with warning year_mismatch and the library's year.
     """
     body, references = claim_text.split_references(text)
-    dois = claim_text.reference_dois(references)
-    shared = claim_text.shared_keys(references)
+    entries = claim_text.reference_entries(references)
     pending = cited_claims(body)
     if len(pending) > MAX_CLAIMS:
         raise InvalidInput("too_many_claims", detail=f"{len(pending)} cited claims; the limit is {MAX_CLAIMS}.")
@@ -391,14 +399,17 @@ async def verify_claims(
         if cited.error:
             items.append(ClaimItem(claim, citation, error=cited.error))
             continue
-        if citation.kind == "author_year" and (citations.fold(citation.surname), citation.year) in shared:
-            # two reference entries share this key: the citation can't say which paper it means
+        narrowed, entry = _entry_for(entries, citation) if citation.kind == "author_year" else ([], None)
+        if len(narrowed) > 1:
+            # entries still share this key: the citation can't say which paper it means
             candidates = await citations.match(session, citation, workspace_id)
             items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=candidates.titles))
             continue
-        found = await _match(session, citation, dois, workspace_id)
+        found = await _match(session, citation, entry.doi if entry else None, workspace_id)
         extra = {"warning": "year_mismatch", "library_year": found.library_year} if found.library_year else {}
-        if not found.paper_ids:
+        if not found.paper_ids and entry:
+            items.append(ClaimItem(claim, citation, error="paper_not_in_library", doi=entry.doi))
+        elif not found.paper_ids:
             items.append(ClaimItem(claim, citation, error="citation_not_found"))
         elif len(found.paper_ids) > 1:
             items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=found.titles))
