@@ -445,3 +445,59 @@ async def test_get_search_run_and_get_prisma_carry_a_cut_short_run(session, jobs
     assert seen["stats_json"]["cut_short"] is True and seen["stats_json"]["unfinished_sources"] == ["arxiv"]
     prisma = result(await call("get_prisma", workspace=f"Cut short {RUN}"))
     assert len(prisma["notes"]) == 1 and "partial" in prisma["notes"][0]
+
+
+# --- screening criteria tools (M49) ---
+
+
+async def _criteria_pool(session):
+    workspace, hits = await make_pool(session, [("a", None)])
+    workspace.research_question, workspace.inclusion_criteria, workspace.exclusion_criteria = "RQ", "In", "Out"
+    hits[0].suggestion = "include"
+    await session.flush()
+    return workspace, hits[0]
+
+
+def _criteria(state):
+    return state["research_question"], state["inclusion_criteria"], state["exclusion_criteria"]
+
+
+async def test_get_screening_criteria_reads_the_question_and_criteria(session):
+    workspace, _ = await _criteria_pool(session)
+    state = result(await call("get_screening_criteria", workspace=workspace.name))
+    assert _criteria(state) == ("RQ", "In", "Out")
+
+
+async def test_set_screening_criteria_changes_only_the_given_fields_and_clears_suggestions(session):
+    workspace, hit = await _criteria_pool(session)
+    state = result(await call("set_screening_criteria", workspace=workspace.name, exclusion_criteria="New out"))
+    assert _criteria(state) == ("RQ", "In", "New out")
+    await session.refresh(hit)
+    assert hit.suggestion is None
+
+
+async def test_setting_the_same_values_keeps_the_suggestions(session):
+    workspace, hit = await _criteria_pool(session)
+    result(await call("set_screening_criteria", workspace=workspace.name, inclusion_criteria="In"))
+    await session.refresh(hit)
+    assert hit.suggestion == "include"
+
+
+async def test_set_is_refused_while_suggestions_run(session):
+    workspace, _ = await _criteria_pool(session)
+    workspace.suggest_status = "running"
+    await session.flush()
+    response = await call("set_screening_criteria", workspace=workspace.name, inclusion_criteria="x")
+    assert response.is_error and response.structured_content["error"] == "suggestions_running"
+    assert workspace.inclusion_criteria == "In"
+
+
+async def test_a_field_over_4000_characters_is_refused(session):
+    workspace, _ = await _criteria_pool(session)
+    response = await call("set_screening_criteria", workspace=workspace.name, research_question="x" * 4001)
+    assert response.is_error and workspace.research_question == "RQ"
+
+
+async def test_an_unknown_workspace_is_unknown_workspace_for_criteria():
+    response = await call("get_screening_criteria", workspace="No such workspace")
+    assert response.is_error and response.structured_content["error"] == "unknown_workspace"

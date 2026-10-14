@@ -238,6 +238,26 @@ async def _refuse_remote(session: AsyncSession, allow_remote: bool) -> None:
         raise Conflict("remote_model_needs_confirm", model=model[0])
 
 
+async def get_screening_criteria(session: AsyncSession, workspace: str) -> ScreeningStateOut:
+    """The workspace's research question, inclusion and exclusion criteria (and the pre-screening state)."""
+    return ScreeningStateOut.model_validate(await screening.get_state(session, await workspace_id(session, workspace)))
+
+
+async def set_screening_criteria(
+    session: AsyncSession, workspace: str, research_question: str | None = None,
+    inclusion_criteria: str | None = None, exclusion_criteria: str | None = None,
+) -> ScreeningStateOut:
+    """Saves only the fields given (an empty string clears one), as the screening page does. A real change clears
+    every stored AI suggestion. Refused while suggestions are being made: stop them first."""
+    ws = await workspace_id(session, workspace)
+    if (await screening.get_state(session, ws))["suggest_status"] != "idle":
+        raise Conflict("suggestions_running", detail="Stop the AI suggestions before changing the criteria.")
+    given = {key: value for key, value in (("research_question", research_question), ("inclusion", inclusion_criteria),
+                                           ("exclusion", exclusion_criteria)) if value is not None}
+    state = await screening.set_criteria(session, ws, **given) if given else await screening.get_state(session, ws)
+    return ScreeningStateOut.model_validate(state)
+
+
 async def run_prescreen(session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None) -> ScreeningStateOut:
     """Starts AI pre-screening. There is no confirm dialog over MCP, so a remote default model is refused."""
     ws = await workspace_id(session, workspace)

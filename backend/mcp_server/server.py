@@ -11,9 +11,11 @@ import functools
 import json
 import re
 import uuid
+from typing import Annotated
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from pydantic import Field
 
 from app.core import graph, library, notes, pipeline, screening, workspaces
 from app.core.errors import Conflict, DomainError, InvalidInput, NotFound
@@ -35,7 +37,9 @@ mcp = MCPServer(
         "Saved searches: create_saved_search runs a search on a schedule, list_saved_searches shows them and "
         "set_saved_search_enabled pauses or resumes one. "
         "Notes: list_notes reads them, create_note saves one on a passage it quotes exactly. "
-        "AI pre-screening: run_prescreen starts it, get_screening_suggestions reads the results and accept_suggestions "
+        "AI pre-screening: get_screening_criteria reads the question and criteria, set_screening_criteria saves them "
+        "(ask the owner first; it clears the suggestions), run_prescreen starts it, "
+        "get_screening_suggestions reads the results and accept_suggestions "
         "accepts some. Claims: verify_claim and verify_claims check a claim against the papers it cites, with a "
         "quote as evidence. Evidence cards: generate_evidence_card starts one (about a minute per paper), "
         "get_evidence_card reads it, list_evidence_cards shows a workspace's cards. "
@@ -220,6 +224,33 @@ async def get_screening_suggestions(
     ones; pass next_cursor back to page. These are suggestions only; nothing here is a decision."""
     async with sessions() as session:
         return await pipeline.get_screening_suggestions(session, workspace, run_id, min_relevance, cursor)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def get_screening_criteria(workspace: str) -> pipeline.ScreeningStateOut:
+    """Use to read a workspace's research question, inclusion criteria and exclusion criteria, which AI
+    pre-screening judges every hit against, before drafting or checking them."""
+    async with sessions() as session:
+        return await pipeline.get_screening_criteria(session, workspace)
+
+
+@mcp.tool()
+@recoverable
+async def set_screening_criteria(
+    workspace: str,
+    research_question: Annotated[str | None, Field(max_length=4000)] = None,
+    inclusion_criteria: Annotated[str | None, Field(max_length=4000)] = None,
+    exclusion_criteria: Annotated[str | None, Field(max_length=4000)] = None,
+) -> pipeline.ScreeningStateOut:
+    """Use to save a workspace's research question, inclusion or exclusion criteria (up to 4000 characters each);
+    only the fields given change and an empty string clears one. Any change clears every stored AI suggestion, so
+    run_prescreen again afterwards; refused (suggestions_running) while suggestions are being made.
+    Ask the owner before calling."""
+    async with sessions() as session:
+        return await pipeline.set_screening_criteria(
+            session, workspace, research_question, inclusion_criteria, exclusion_criteria
+        )
 
 
 @mcp.tool()

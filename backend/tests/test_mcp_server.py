@@ -45,6 +45,7 @@ EXPECTED_TOOLS = {
     "list_hits": True, "review_hits": None, "import_hit": None, "snowball": None,
     "set_eligibility": None, "get_prisma": True, "list_notes": True,
     "create_saved_search": None, "list_saved_searches": True, "set_saved_search_enabled": None,
+    "get_screening_criteria": True, "set_screening_criteria": None,
     "run_prescreen": None, "get_screening_suggestions": True, "accept_suggestions": None,
     "verify_claim": None, "verify_claims": None,
     "generate_evidence_card": None, "get_evidence_card": True, "list_evidence_cards": True,
@@ -67,7 +68,8 @@ async def test_the_server_holds_no_sql_and_imports_only_core():
     source = Path(server.__file__).read_text()
     imports = [line for line in source.splitlines() if line.startswith(("import ", "from "))]
     assert all(
-        line.startswith(("from app.core", "import functools", "import json", "import re", "import uuid", "from mcp"))
+        line.startswith(("from app.core", "import functools", "import json", "import re", "import uuid", "from mcp",
+                              "from typing import Annotated", "from pydantic import Field"))
         or line == "from app.db import SessionLocal"
         for line in imports
     ), imports
