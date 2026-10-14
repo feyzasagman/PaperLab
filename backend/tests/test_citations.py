@@ -648,7 +648,7 @@ async def test_coauthors_that_match_nobody_leave_the_ambiguity(session):
 
 
 async def test_a_coauthor_is_a_whole_surname_never_a_suffix(session):
-    await add(session, "Lili paper", ["Ann Narrowsx", "Lili X"], 1987)
+    await add(session, "Lili paper", ["Ann Narrowsx", "Ann Lili"], 1987)
     wei = await add(session, "Wei paper", ["Ann Narrowsx", "Wei Li"], 1987)
     cite = citations.find("It holds (Narrowsx, Li et al., 1987).")[0]
     assert (await citations.match(session, cite)).paper_ids == [wei.id]

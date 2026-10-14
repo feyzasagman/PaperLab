@@ -216,7 +216,7 @@ def _first_author_is(authors: list[str], surname: str) -> bool:
     return name == wanted or name.endswith(f" {wanted}")
 
 
-def _names(author: str, surname: str) -> bool:
+def _has_surname(author: str, surname: str) -> bool:
     """A library author is the named co-author: whole surname only ("li" never matches "Lili")."""
     name = fold(author).strip()
     return name == surname or name.endswith(f" {surname}") or name.split(",")[0].strip() == surname
@@ -249,6 +249,6 @@ async def match(session: AsyncSession, citation: Citation, workspace_id=None, on
             return Match([rows[0].id], [rows[0].title], library_year=rows[0].year)
         if len(rows) > 1 and citation.coauthors:
             wanted = [fold(c).strip() for c in citation.coauthors]
-            named = [r for r in rows if all(any(_names(a, w) for a in r.authors or []) for w in wanted)]
+            named = [r for r in rows if all(any(_has_surname(a, w) for a in r.authors or []) for w in wanted)]
             rows = named or rows  # narrows an ambiguity, never loses a match
     return Match([r.id for r in rows], [r.title for r in rows])
