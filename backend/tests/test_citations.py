@@ -533,3 +533,16 @@ def test_the_pilot_secondary_citations_go_to_abraham():
     to_abraham = [c for c in found if c.citation.via]
     assert {c.citation.via for c in to_abraham} >= {"Runco & Jaeger, 2012, p. 92", "Barron, 1955", "Boden, 2004"}
     assert all((c.citation.surname, c.citation.year) == ("Abraham", 2025) for c in to_abraham)
+
+
+@pytest.mark.parametrize(
+    "sentence, surname, year, via",
+    [
+        ("It holds broadly here (Smith, 2020, discussed in detail below).", "Smith", 2020, None),
+        ("It holds broadly here (see Lee, 2019, cited by many).", "Lee", 2019, None),
+        ("It holds broadly here (Lee, 2019, described by Kim, 2020).", "Kim", 2020, "Lee, 2019"),
+    ],
+)
+def test_a_secondary_marker_needs_a_cited_source_with_a_year(sentence, surname, year, via):
+    [found] = claims.cited_claims(sentence)
+    assert (found.citation.surname, found.citation.year, found.citation.via) == (surname, year, via)

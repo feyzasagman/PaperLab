@@ -147,7 +147,9 @@ def find(sentence: str) -> list[Citation]:
         for part in group.group(1).split(";"):
             text = _LEAD.sub("", part.strip())
             secondary = _SECONDARY.match(text)
-            parsed = _PART.match(secondary["src"] if secondary else text)
+            parsed = secondary and _PART.match(secondary["src"])
+            if not parsed:  # "discussed in detail below": no cited source with a year, so an ordinary citation
+                secondary, parsed = None, _PART.match(text)
             if parsed and parsed["names"].strip()[:1].isupper():
                 surname = _FIRST_AUTHOR.split(parsed["names"].strip())[0].strip()
                 via = secondary["orig"].strip(" ,;") or None if secondary else None
@@ -176,14 +178,9 @@ def find(sentence: str) -> list[Citation]:
         )
     if standalone:  # the narrative citations are the originals the author read through Y
         originals = [c.text for c in found if c.narrative]
-        found = [
-            replace(c, superseded=True)
-            if c.narrative
-            else replace(c, via="; ".join(originals) or None)
-            if c in standalone
-            else c
-            for c in found
-        ]
+        via = "; ".join(originals) or None
+        found = [replace(c, superseded=True) if c.narrative else c for c in found]
+        found = [replace(c, via=via) if c in standalone else c for c in found]
     return sorted(found, key=lambda c: c.span)
 
 
