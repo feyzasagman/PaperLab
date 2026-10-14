@@ -64,15 +64,19 @@ export async function sweepE2EConnections() {
 
 /**
  * A fresh test stack has no model, and the AI specs (pre-screening, evidence cards...) expect a default one, as the
- * owner's library has. Seeds one and makes it the default, not E2E-prefixed so the sweep leaves it.
+ * owner's library has. Reuses an existing model, else seeds one; not E2E-prefixed so the sweep leaves it. Local
+ * (localhost): a cloud model makes the Suggest button ask window.confirm, which Playwright dismisses. The fake
+ * provider never calls the URL. Runs before the owner's-default snapshot so that snapshot already sees a default.
  */
 async function ensureDefaultModel() {
-  if ((await get<Model[]>('/api/llm/models')).some((model) => model.is_default)) return
+  const models = await get<Model[]>('/api/llm/models')
+  if (models.some((model) => model.is_default)) return
+  if (models.length > 0) return restoreOwnersDefault(models[0].id)
   const json = { 'Content-Type': 'application/json' }
   const created = await fetch(`${BASE}/api/llm/connections`, {
     method: 'POST',
     headers: json,
-    body: JSON.stringify({ kind: 'openai_compatible', label: 'Test stack model', base_url: 'http://fake-provider.test/v1' }),
+    body: JSON.stringify({ kind: 'openai_compatible', label: 'Test stack model', base_url: 'http://localhost:11434/v1' }),
   })
   if (created.status !== 201) throw new Error(`POST /api/llm/connections answered ${created.status}`)
   const { id } = (await created.json()) as Connection
