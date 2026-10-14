@@ -6,6 +6,19 @@ say() {
   printf 'paperlab-mcp: %s\n' "$1" >&2
 }
 
+# --install: write ~/.local/bin/paperlab-mcp, which runs this script, so every user's MCP config and Claude Code
+# command read the same "$HOME/.local/bin/paperlab-mcp". A wrapper, not a symlink: the cd below finds the folder from $0.
+if [ "${1:-}" = --install ]; then
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")" || exit 1
+  bin="${HOME:?}/.local/bin"
+  mkdir -p "$bin" || exit 1
+  quoted=$(printf '%s' "$self" | sed "s/'/'\\\\''/g")
+  printf '#!/bin/sh\nexec '"'"'%s'"'"' "$@"\n' "$quoted" > "$bin/paperlab-mcp" || exit 1
+  chmod 755 "$bin/paperlab-mcp" || exit 1
+  say "installed $bin/paperlab-mcp, which runs $self."
+  exit 0
+fi
+
 cd "$(dirname "$0")/.." || exit 1
 
 # The desktop app copies this script to <its data folder>/scripts/, beside docker-compose.yml; the release tarball has the same layout. The per-user places come first: they exist only when this user installed that Docker.

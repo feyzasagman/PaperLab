@@ -1,8 +1,10 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from app.core import citations, claims, workspaces
+from app.core.claim_text import split_references
 from app.core.errors import InvalidInput
 from app.models import Paper, PaperStatus
 
@@ -108,7 +110,7 @@ async def test_verify_claims_checks_in_order_with_the_citation_removed(session):
     second = await add(session, "Second paper", ["Bo Ordering2"], 1988)
     text = "Models flatten style (Ordering, 1987). Readers notice Ordering2 (1988) said so. No citation here."
     items = await claims.verify_claims(session, text, llm=Scripted())
-    assert [i.claim for i in items] == ["Models flatten style.", "Readers notice said so."]
+    assert [i.claim for i in items] == ["Models flatten style.", "Readers notice Ordering2 said so."]
     assert [i.check.paper_id for i in items] == [first.id, second.id]
     assert all(i.error is None for i in items)
 
@@ -216,3 +218,275 @@ async def test_a_claim_with_under_three_words_is_empty_and_asks_no_model(session
 
     [item] = await claims.verify_claims(session, "Yes (Shortsurname, 1987).", llm=Never())
     assert item.error == "empty_claim" and item.check is None
+
+
+@pytest.mark.parametrize(
+    "sentence, surname, year, text",
+    [
+        ("Anderson, Shah & Kreminski (2024) found it.", "Anderson", 2024, "Anderson, Shah & Kreminski (2024)"),
+        ("Anderson, Shah, and Kreminski (2024) found it.", "Anderson", 2024, "Anderson, Shah, and Kreminski (2024)"),
+        ("It holds (Anderson, Shah, & Kreminski, 2024).", "Anderson", 2024, "Anderson, Shah, & Kreminski, 2024"),
+        ("Anderson et al. (2024) found it.", "Anderson", 2024, "Anderson et al. (2024)"),
+        ("Doshi & Hauser (2024) found it.", "Doshi", 2024, "Doshi & Hauser (2024)"),
+        ("Runco and Jaeger (2012) found it.", "Runco", 2012, "Runco and Jaeger (2012)"),
+        ("Plucker et al. (2004, p. 90) define it.", "Plucker", 2004, "Plucker et al. (2004, p. 90)"),
+        (
+            "Ismayilzada, Paul, Bosselut & van der Plas (2024) survey it.",
+            "Ismayilzada",
+            2024,
+            "Ismayilzada, Paul, Bosselut & van der Plas (2024)",
+        ),
+        ("However, Smith and Lee (2020) argue it.", "Smith", 2020, "Smith and Lee (2020)"),
+        ("Thus, Smith, Jones and Lee (2021) agree.", "Smith", 2021, "Smith, Jones and Lee (2021)"),
+    ],
+)
+def test_name_lists_keep_the_first_author(sentence, surname, year, text):
+    [found] = citations.find(sentence)
+    assert (found.surname, found.year, found.text) == (surname, year, text)
+    assert found.narrative == (not sentence.startswith("It holds"))  # only "(Anderson, Shah, & Kreminski, 2024)" isn't
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "claims"
+
+
+def pilot(name: str) -> list:
+    return claims.cited_claims(split_references((FIXTURES / name).read_text())[0])
+
+
+def by(found, surname, year):
+    return [c for c in found if (c.citation.surname, c.citation.year) == (surname, year)]
+
+
+def test_boden_2009_is_judged_on_his_own_sentence_not_abrahams():
+    found = pilot("definition.md")
+    assert len(found) == 20
+    [boden] = by(found, "Boden", 2009)
+    assert boden.claim == (
+        'Boden notes that "valuable" can mean interesting, useful, beautiful, simple, richly complex and more.'
+    )
+    abraham = [c.claim for c in by(found, "Abraham", 2025)]
+    assert 'Abraham proposes that a creative idea is one that is "both novel and satisfying".' in abraham
+
+
+def test_no_pilot_claim_holds_markdown():
+    for name in ("definition.md", "ai-creativity-benchmarks.md"):
+        for cited in pilot(name):
+            assert not any(mark in cited.claim for mark in ("|", "##", "**", "[[", "]]")), cited.claim
+            assert not cited.claim.startswith(("#", "- ")), cited.claim
+
+
+def test_a_table_row_citation_is_judged_on_the_rows_other_cells():
+    found = pilot("ai-creativity-benchmarks.md")
+    assert len(found) == 46
+    row = [c for c in by(found, "Anderson", 2024) if c.error is None][0]
+    assert row.claim == (
+        "C&C '24. 36-participant ideation study, ChatGPT vs an alternative creativity support tool. "
+        "Different users produced less semantically distinct ideas with ChatGPT."
+    )
+
+
+def test_a_cross_reference_is_not_a_claim():
+    found = pilot("ai-creativity-benchmarks.md")
+    first_four = found[:4]
+    assert [(c.citation.surname, c.error) for c in first_four] == [
+        ("Koivisto", "not_a_claim"),
+        ("Hubert", "not_a_claim"),
+        ("Doshi", "not_a_claim"),
+        ("Anderson", "not_a_claim"),
+    ]
+    assert first_four[0].claim.endswith("Hubert et al. and Doshi & Hauser are in computational creativity.")
+    assert found[-1].error == "not_a_claim"  # "- [[llm-homogenization]]: the full treatment of Anderson, …"
+
+
+def test_a_label_citation_takes_the_rest_of_its_bullet():
+    [gomez] = by(pilot("ai-creativity-benchmarks.md"), "Gómez-Rodríguez", 2023)[:1]
+    assert gomez.claim.startswith("The prompt is deliberately unusual: Ignatius J. Reilly from A Confederacy of Dunces")
+
+
+def test_three_citations_in_one_sentence_share_that_sentence_only():
+    found = claims.cited_claims(
+        "Earlier text (Zed, 2001). Several studies found it (Ann, 2020; Bo & Cy, 2021; Di et al., 2022). Later text."
+    )
+    assert [(c.citation.surname, c.claim) for c in found[1:]] == [
+        ("Ann", "Several studies found it."),
+        ("Bo", "Several studies found it."),
+        ("Di", "Several studies found it."),
+    ]
+
+
+def test_a_bare_label_bullet_is_still_an_empty_claim():
+    [cited] = claims.cited_claims("- **Smith (2020).**")
+    assert cited.claim == "" and cited.error is None  # verify_claims turns it into empty_claim without a model call
+
+
+async def test_verify_claims_reports_a_cross_reference_without_matching_it(session):
+    class Never(Scripted):
+        async def stream(self, system, prompt):
+            raise AssertionError("no model call")
+            yield
+
+    [item] = await claims.verify_claims(session, "Smith & Lee (1987) is covered in [[some-note]].", llm=Never())
+    assert (item.error, item.check) == ("not_a_claim", None)
+
+
+def test_a_label_that_is_not_first_in_its_block_gets_no_claim_from_other_sentences():
+    found = claims.cited_claims(
+        "Other finding about novelty was large here. Smith (2020) agrees. More about other people (Lee, 2019)."
+    )
+    assert [(c.citation.surname, c.claim) for c in found] == [
+        ("Smith", "Smith agrees."),  # two words: verify_claims reports empty_claim
+        ("Lee", "More about other people."),
+    ]
+
+
+def test_a_first_sentence_label_stops_before_the_next_cited_sentence():
+    found = claims.cited_claims("- **Smith (2020).** Finding one holds. Finding two holds (Lee, 2019).")
+    assert [(c.citation.surname, c.claim) for c in found] == [
+        ("Smith", "Finding one holds."),
+        ("Lee", "Finding two holds."),
+    ]
+
+
+def test_a_table_rows_claim_leaves_out_other_cells_that_cite_papers():
+    found = claims.cited_claims("| A | B | C |\n|---|---|---|\n| Smith (2020) | Lee (2019) | Finding holds broadly |")
+    assert [(c.citation.surname, c.claim) for c in found] == [("Smith", ""), ("Lee", "")]  # two cited cells
+
+
+def test_a_citation_without_a_final_period_stays_inside_its_block():
+    found = claims.cited_claims("- Point has no final period (Lee, 2021)\n\n## Heading\n\nNext text.")
+    assert [c.claim for c in found] == ["Point has no final period."]
+
+
+def test_a_near_miss_cross_reference_is_still_a_claim():
+    texts = ("Effects are in line with [[theory]] (Lee, 2021).", "Scores are higher in [[x]]-style tasks (Lee, 2021).")
+    for text in texts:
+        [cited] = claims.cited_claims(text)
+        assert cited.error is None, text
+
+
+@pytest.mark.parametrize("written", ["Gómez-Rodríguez", "Gomez-Rodriguez", "Gómez–Rodríguez", "GÓMEZ-RODRÍGUEZ"])
+def test_any_dash_and_accent_folds(written):
+    assert citations._first_author_is(["Carlos Gómez‐Rodríguez"], written)
+
+
+async def test_a_year_off_by_one_matches_the_only_candidate_and_says_so(session):
+    paper = await add(session, "Offbyone paper", ["Anil R. Offbyone"], 1987, doi="10.1000/m46-offbyone")
+    cite = citations.Citation("author_year", "", (0, 0), surname="Offbyone", year=1988)
+    found = await citations.match(session, cite)
+    assert (found.paper_ids, found.library_year) == ([paper.id], 1987)
+    [item] = await claims.verify_claims(
+        session, "Individual creativity rose a lot (Offbyone & Hauser, 1988).", llm=Scripted()
+    )
+    assert (item.error, item.warning, item.library_year, item.check.paper_id) == (None, "year_mismatch", 1987, paper.id)
+
+
+async def test_the_cited_year_wins_over_a_neighbouring_one(session):
+    exact = await add(session, "Exact year", ["Ann Yearwinner"], 1988)
+    await add(session, "Year before", ["Ann Yearwinner"], 1987)
+    cite = citations.Citation("author_year", "", (0, 0), surname="Yearwinner", year=1988)
+    found = await citations.match(session, cite)
+    assert (found.paper_ids, found.library_year) == ([exact.id], None)
+
+
+async def test_two_neighbouring_years_are_ambiguous(session):
+    await add(session, "Before", ["Ann Twoyears"], 1987)
+    await add(session, "After", ["Ann Twoyears"], 1989)
+    [item] = await claims.verify_claims(session, "Something holds broadly (Twoyears, 1988).", llm=Scripted())
+    assert item.error == "ambiguous_citation" and sorted(item.candidates) == ["After", "Before"]
+
+
+async def test_the_reference_list_doi_beats_duplicates_and_missing_metadata(session):
+    with_doi = await add(session, "Homogenization (DOI only)", [], None, doi="10.1000/m46-homog")
+    await add(session, "Homogenization copy A", ["Barrett R. Refdoi"], 1987)
+    await add(session, "Homogenization copy B", ["Barrett R. Refdoi"], 1987)
+    body = "Different users produced less distinct ideas (Refdoi, Shah & Kreminski, 1987)."
+    refs = (
+        "\n\n## References\n\n"
+        "- Refdoi, B. R., Shah, J. H., & Kreminski, M. (1987). H. https://doi.org/10.1000/m46-homog\n"
+    )
+    [item] = await claims.verify_claims(session, body + refs, llm=Scripted())
+    assert (item.error, item.check.paper_id) == (None, with_doi.id)
+    [item] = await claims.verify_claims(session, body, llm=Scripted())
+    assert item.error == "ambiguous_citation"
+
+
+async def test_a_reference_doi_missing_from_the_library_falls_back_to_author_year(session):
+    paper = await add(session, "Fallback paper", ["Ann Fallbackname"], 1987)
+    note = (
+        "It holds in general (Fallbackname, 1987).\n\n## References\n\n"
+        "- Fallbackname, A. (1987). F. https://doi.org/10.1000/not-here\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert item.check.paper_id == paper.id
+
+
+def test_a_short_first_sentence_without_a_bold_lead_is_not_a_label():
+    [smith] = claims.cited_claims("Smith (2020) found convergence. Other work disagrees strongly with this view.")
+    assert smith.claim == "Smith found convergence."
+    [smith] = claims.cited_claims("Creativity rose (Smith, 2020). Diversity fell in every group studied.")
+    assert smith.claim == "Creativity rose."  # two words: verify_claims reports empty_claim
+    [smith] = claims.cited_claims("- Smith (2020). Finding one holds.")
+    assert smith.claim == ""
+    [smith] = claims.cited_claims("- __Smith (2020).__ Finding one holds.")
+    assert smith.claim == "Finding one holds."
+
+
+def test_a_table_citation_is_judged_on_its_own_cell_first():
+    note = (
+        "| Topic | Finding | Type |\n|---|---|---|\n"
+        "| Homogenization | Ideas converge across users (Smith, 2020) | Lab study |"
+    )
+    [smith] = claims.cited_claims(note)
+    assert smith.claim.startswith("Ideas converge across users.") and "Lab study" in smith.claim
+
+
+def test_a_cited_cell_never_borrows_another_cited_cells_finding():
+    found = claims.cited_claims("| A | B | C |\n|---|---|---|\n| Smith (2020) | Fluency rose | Lee (2021) |")
+    assert [(c.citation.surname, c.claim) for c in found] == [("Smith", ""), ("Lee", "")]
+    found = claims.cited_claims(
+        "| A | B |\n|---|---|\n| Ideas converge widely (Smith, 2020) | Fluency rose fast (Lee, 2021) |"
+    )
+    assert [c.claim for c in found] == ["Ideas converge widely.", "Fluency rose fast."]
+
+
+def test_a_wikilink_is_a_cross_reference_only_at_the_end_or_before_a_colon():
+    for text in (
+        "Divergent thinking is stronger in [[children]] (Smith, 2020).",
+        "- [[Homogenization]] \u2014 ideas converge (Anderson, 2024).",
+    ):
+        [cited] = claims.cited_claims(text)
+        assert cited.error is None, text
+    for text in (
+        "Both are covered in [[some-note]] (Smith, 2020).",
+        "- [[some-note]]: the full treatment (Smith, 2020).",
+        "These are summarised in [[some-note]] (Smith, 2020).",
+    ):
+        [cited] = claims.cited_claims(text)
+        assert cited.error == "not_a_claim", text
+
+
+async def test_a_list_doi_that_is_not_in_the_library_drops_a_candidate_with_another_doi(session):
+    await add(session, "Other doi paper", ["Ann Listdoi"], 1987, doi="10.1000/m46-b")
+    note = "It holds in general (Listdoi, 1987).\n\n## References\n\n- Listdoi, A. (1987). T. https://doi.org/10.1000/m46-a\n"
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check) == ("citation_not_found", None)
+
+
+async def test_a_key_two_list_entries_share_is_ambiguous_and_never_checked(session):
+    await add(session, "The only Sharedkey paper", ["Ann Sharedkey"], 1987)
+    note = (
+        "It holds in general (Sharedkey, 1987).\n\n## References\n\n"
+        "- Sharedkey, A. (1987). One. https://doi.org/10.1000/m46-one\n- Sharedkey, B. (1987). Two.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.check, item.candidates) == ("ambiguous_citation", None, ["The only Sharedkey paper"])
+
+
+async def test_a_doi_paper_outside_the_workspace_is_not_matched_but_author_year_inside_it_is(session):
+    await add(session, "Outside by doi", ["Ann Wsscope"], 1987, doi="10.1000/m46-ws")
+    inside = await add(session, "Inside by name", ["Ann Wsscope"], 1987)
+    workspace = await workspaces.create(session, "m46 scope")
+    await workspaces.add_paper(session, workspace.id, inside.id)
+    note = "It holds in general (Wsscope, 1987).\n\n## References\n\n- Wsscope, A. (1987). T. https://doi.org/10.1000/m46-ws\n"
+    [item] = await claims.verify_claims(session, note, workspace_id=workspace.id, llm=Scripted())
+    assert item.check.paper_id == inside.id

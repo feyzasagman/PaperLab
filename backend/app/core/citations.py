@@ -43,8 +43,52 @@ _BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
 _DOI = re.compile(r"(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?(10\.\d{4,9}/[^\s]+)", re.I)
 _PAREN = re.compile(r"\(([^()]*?(?:19|20)\d{2}[a-z]?[^()]*)\)")
 _PART = re.compile(r"^(?P<names>[^\d]*?),?\s*(?P<year>(?:19|20)\d{2})[a-z]?\b")
+# Words that open a sentence and are followed by a comma, so a name list can't start with them ("However, Smith and
+# Lee (2020)"). ponytail: a word list; check candidate surnames against the library if a real surname collides.
+LEAD_WORDS = frozenset(SENTENCE_STARTERS) | {
+    "However",
+    "Thus",
+    "Hence",
+    "Moreover",
+    "Also",
+    "Similarly",
+    "Likewise",
+    "Here",
+    "Then",
+    "Still",
+    "Yet",
+    "Indeed",
+    "Finally",
+    "First",
+    "Second",
+    "Third",
+    "Further",
+    "Furthermore",
+    "Instead",
+    "Conversely",
+    "Notably",
+    "Overall",
+    "Again",
+    "Therefore",
+    "Meanwhile",
+    "Recently",
+    "Later",
+    "Earlier",
+    "Importantly",
+    "Specifically",
+    "Consequently",
+    "Nevertheless",
+    "Nonetheless",
+    "Additionally",
+    "Alternatively",
+    "Accordingly",
+}
+_PARTICLE = r"(?:(?:van|von|der|den|de|del|della|da|di|du|dos|la|le|ter|ten)\s+)*"
+_NAME = _PARTICLE + r"[A-Z][\w'’\-‐]+"
+# "Smith (2020)", "Smith et al. (2020, p. 4)", "Smith & Lee (2020)", "Smith, Lee, and van Dijk (2020)"
 _NARRATIVE = re.compile(
-    r"(?P<names>[A-Z][\w'’\-]+(?:\s+et al\.?|\s+(?:&|and)\s+[A-Z][\w'’\-]+)?)\s+\((?P<year>(?:19|20)\d{2})[a-z]?\)"
+    rf"(?P<names>{_NAME}(?:\s+et al\.?|(?:,\s+{_NAME})*,?\s+(?:&|and)\s+{_NAME})?)"
+    r"\s+\((?P<year>(?:19|20)\d{2})[a-z]?(?:,\s*(?:pp?\.|ch\.|sec\.)\s*[\w–\-]+)?\)"
 )
 _LEAD = re.compile(r"^(?:(?:see|also|e\.g\.,?|cf\.)\s+)+", re.I)
 _INITIALS = re.compile(r"[a-z]{1,2}\.?|(?:[a-z]\.)+")  # "j", "jk", "j.k." (folded)
@@ -60,12 +104,14 @@ class Citation:
     doi: str | None = None
     surname: str | None = None
     year: int | None = None
+    narrative: bool = False  # "Smith (2020) found": the names are part of the sentence, so a claim keeps them
 
 
 @dataclass(frozen=True)
 class Match:
     paper_ids: list
     titles: list[str]
+    library_year: int | None = None  # the paper's year when it matched only as the neighbouring one (M2)
 
 
 def split_sentences(text: str) -> list[str]:
@@ -98,16 +144,33 @@ def find(sentence: str) -> list[Citation]:
                     Citation("author_year", part.strip(), group.span(), surname=surname, year=int(parsed["year"]))
                 )
     for m in _NARRATIVE.finditer(sentence):
-        if m["names"] in SENTENCE_STARTERS:
+        names, start = m["names"], m.start()
+        while len(head := names.split(", ", 1)) == 2 and head[0] in LEAD_WORDS:
+            start, names = start + len(head[0]) + 2, head[1]
+        if names in LEAD_WORDS:
             continue
-        surname = _FIRST_AUTHOR.split(m["names"])[0].strip()
-        found.append(Citation("author_year", m.group(0), m.span(), surname=surname, year=int(m["year"])))
+        surname = _FIRST_AUTHOR.split(names)[0].strip()
+        found.append(
+            Citation(
+                "author_year",
+                sentence[start : m.end()],
+                (start, m.end()),
+                surname=surname,
+                year=int(m["year"]),
+                narrative=True,
+            )
+        )
     return sorted(found, key=lambda c: c.span)
 
 
+# Every dash a library or a note may use for a hyphenated name (Gómez‐Rodríguez with U+2010) compares as "-" (M3).
+_DASHES = str.maketrans(dict.fromkeys("‐‑‒–—―−﹘﹣－", "-"))
+
+
 def fold(text: str) -> str:
-    """Case- and accent-insensitive form (Müller == muller)."""
-    return "".join(c for c in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(c))
+    """Case-, accent- and dash-insensitive form (Müller == muller, Gómez‐Rodríguez == Gomez-Rodriguez)."""
+    text = unicodedata.normalize("NFKD", text.translate(_DASHES).casefold())
+    return "".join(c for c in text if not unicodedata.combining(c))
 
 
 def _first_author_is(authors: list[str], surname: str) -> bool:
@@ -123,10 +186,11 @@ def _first_author_is(authors: list[str], surname: str) -> bool:
     return name == wanted or name.endswith(f" {wanted}")
 
 
-async def match(session: AsyncSession, citation: Citation, workspace_id=None) -> Match:
+async def match(session: AsyncSession, citation: Citation, workspace_id=None, only_doi: str | None = None) -> Match:
     """Library papers a citation points at: by DOI, or by first-author surname and year (inside a workspace if
-    given). Zero or several matches are returned as they are, never resolved."""
-    query = select(Paper.id, Paper.title, Paper.authors)
+    given). Zero or several matches are returned as they are, never resolved. `only_doi` (the reference list's DOI for
+    this citation) drops author–year candidates whose own DOI is another one."""
+    query = select(Paper.id, Paper.title, Paper.authors, Paper.year, Paper.doi)
     if workspace_id is not None:
         query = query.join(workspace_papers, workspace_papers.c.paper_id == Paper.id).where(
             workspace_papers.c.workspace_id == workspace_id
@@ -134,8 +198,17 @@ async def match(session: AsyncSession, citation: Citation, workspace_id=None) ->
     if citation.kind == "doi":
         query = query.where(func.lower(Paper.doi) == citation.doi.lower())
     else:
-        query = query.where(Paper.year == citation.year)
+        query = query.where(Paper.year.between(citation.year - 1, citation.year + 1))
     rows = (await session.execute(query.order_by(Paper.title))).all()
     if citation.kind == "author_year":
         rows = [r for r in rows if _first_author_is(r.authors, citation.surname)]
+        if only_doi:
+            rows = [r for r in rows if not r.doi or normalize_doi(r.doi) == only_doi]
+        exact = [r for r in rows if r.year == citation.year]
+        # A preprint or online-first year often differs from the issue year by one (D279): the cited year wins, and a
+        # lone neighbour matches with a warning; two neighbours are left ambiguous.
+        if exact or len(rows) != 1:
+            rows = exact or rows
+        else:
+            return Match([rows[0].id], [rows[0].title], library_year=rows[0].year)
     return Match([r.id for r in rows], [r.title for r in rows])

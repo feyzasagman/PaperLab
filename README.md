@@ -358,14 +358,18 @@ Windows `%APPDATA%\Claude\logs\mcp-server-paperlab.log`, Linux in Claude Desktop
 Open PaperLab and click **Connect Claude**. It fills in the config or command for your system, and checks that
 PaperLab's side answers.
 
-Without the Connect Claude page, use the full path of your PaperLab folder (the desktop app's data folder above, or
-the folder you unpacked):
-- **macOS and Linux:** in Claude Desktop (**Settings → Developer → Edit Config**), give `mcpServers.paperlab` the
-  `"command": "<folder>/scripts/paperlab-mcp"`. For Claude Code: `claude mcp add -s user paperlab -- '<folder>/scripts/paperlab-mcp'`.
+Without the Connect Claude page:
+- **macOS, Linux and WSL:** Claude starts PaperLab through `~/.local/bin/paperlab-mcp`. The desktop app puts it there
+  each time it starts (not inside WSL); otherwise run `scripts/paperlab-mcp --install` once in the PaperLab folder.
+  In Claude Desktop (**Settings → Developer → Edit Config**), give `mcpServers.paperlab` the `"command": "/bin/sh"`
+  and the `"args": ["-c", "exec \"$HOME/.local/bin/paperlab-mcp\""]`; with WSL, the `"command": "wsl"` and the
+  `"args": ["--cd", "~", "-e", ".local/bin/paperlab-mcp"]`. For Claude Code:
+  `claude mcp add -s user paperlab -- "$HOME/.local/bin/paperlab-mcp"`.
   Don't use `mcp install`: the entry it writes runs the server outside the container.
   The script finds docker even where Claude Desktop can't see your shell's `PATH`; if yours is installed somewhere
   else, set `PAPERLAB_DOCKER` to its full path.
-- **Windows:** give `mcpServers.paperlab` the `"command": "docker"` and the
+- **Windows:** with the full path of your PaperLab folder (the desktop app's data folder above, or the folder you
+  unpacked), give `mcpServers.paperlab` the `"command": "docker"` and the
   `"args": ["compose", "-f", "<folder>\\docker-compose.yml", "exec", "-T", "api", "python", "-m", "mcp_server"]`.
 
 The server's tools:
@@ -403,7 +407,7 @@ Systematic search and screening:
 
 Checking claims:
 - `verify_claim`: whether a library paper supports a claim, with a quote from the paper;
-- `verify_claims`: the same for every cited sentence in a pasted paragraph (DOI or author-year), up to 30.
+- `verify_claims`: the same for every citation in a pasted note or paragraph (DOI or author-year), up to 30.
 
 Evidence cards:
 - `generate_evidence_card`: builds a paper's card in the background (about a minute); ask again with `get_evidence_card` until it is ready;

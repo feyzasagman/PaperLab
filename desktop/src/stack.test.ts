@@ -371,6 +371,38 @@ describe('writeFiles', () => {
     expect(readFileSync(join(data, 'scripts', 'paperlab-mcp'), 'utf8')).toBe('#!/bin/sh\n')
     expect(statSync(join(data, 'scripts', 'paperlab-mcp')).mode & 0o777).toBe(0o755)
   })
+
+  it("writes ~/.local/bin/paperlab-mcp running the data folder's launcher, so Claude's setup reads the same for everyone", () => {
+    const from = mkdtempSync(join(tmpdir(), 'paperlab-resources-'))
+    const data = join(mkdtempSync(join(tmpdir(), 'paperlab-data-')), "Bob's PaperLab")
+    const bin = join(mkdtempSync(join(tmpdir(), 'paperlab-home-')), '.local', 'bin')
+    const sources = { compose: join(from, 'docker-compose.yml'), script: join(from, 'paperlab-mcp') }
+    writeFileSync(sources.compose, 'name: paperlab-app\n')
+    writeFileSync(sources.script, '#!/bin/sh\n')
+
+    writeFiles(data, sources, bin)
+
+    const launcher = join(data, 'scripts', 'paperlab-mcp').replaceAll("'", "'\\''")
+    expect(readFileSync(join(bin, 'paperlab-mcp'), 'utf8')).toBe(`#!/bin/sh\nexec '${launcher}' "$@"\n`)
+    expect(statSync(join(bin, 'paperlab-mcp')).mode & 0o777).toBe(0o755)
+  })
+
+  it('still writes the compose file and launcher, and only logs, when the bin folder cannot be written', () => {
+    const from = mkdtempSync(join(tmpdir(), 'paperlab-resources-'))
+    const data = join(mkdtempSync(join(tmpdir(), 'paperlab-data-')), 'PaperLab')
+    const blocker = join(mkdtempSync(join(tmpdir(), 'paperlab-home-')), 'not-a-folder')
+    writeFileSync(blocker, 'a file where the bin folder should be')
+    const sources = { compose: join(from, 'docker-compose.yml'), script: join(from, 'paperlab-mcp') }
+    writeFileSync(sources.compose, 'name: paperlab-app\n')
+    writeFileSync(sources.script, '#!/bin/sh\n')
+    const logged: string[] = []
+
+    expect(() => writeFiles(data, sources, join(blocker, 'bin'), (line) => logged.push(line))).not.toThrow()
+
+    expect(readFileSync(join(data, 'docker-compose.yml'), 'utf8')).toBe('name: paperlab-app\n')
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toMatch(/paperlab-mcp/)
+  })
 })
 
 // Not in the brief: carried from Task 8's review. findDocker never resolves symlinks, and /usr/local/bin/docker is

@@ -13,21 +13,25 @@ describe('detectOs', () => {
 })
 
 describe('desktopConfig', () => {
-  it('runs the launcher script on macOS and Linux', () => {
+  it('runs ~/.local/bin/paperlab-mcp through sh on macOS and Linux, the same for every user and folder', () => {
     const expected = `{
   "mcpServers": {
     "paperlab": {
-      "command": "/Users/me/research-note/scripts/paperlab-mcp"
+      "command": "/bin/sh",
+      "args": [
+        "-c",
+        "exec \\"$HOME/.local/bin/paperlab-mcp\\""
+      ]
     }
   }
 }`
     expect(desktopConfig(MAC, 'macos')).toBe(expected)
-    expect(desktopConfig(MAC, 'linux')).toBe(expected)
+    expect(desktopConfig('/opt/PaperLab', 'linux')).toBe(expected)
   })
 
-  it('runs the launcher script through wsl on Windows + WSL, with the path inside WSL', () => {
+  it('starts wsl in the Linux home and runs .local/bin/paperlab-mcp from there on Windows + WSL', () => {
     expect(JSON.parse(desktopConfig('/home/me/PaperLab', 'wsl'))).toEqual({
-      mcpServers: { paperlab: { command: 'wsl', args: ['-e', '/home/me/PaperLab/scripts/paperlab-mcp'] } },
+      mcpServers: { paperlab: { command: 'wsl', args: ['--cd', '~', '-e', '.local/bin/paperlab-mcp'] } },
     })
   })
 
@@ -53,25 +57,18 @@ describe('desktopConfig', () => {
   })
 
   it('drops one trailing separator from the folder', () => {
-    expect(desktopConfig(`${MAC}/`, 'macos')).toBe(desktopConfig(MAC, 'macos'))
     expect(desktopConfig(`${WINDOWS}\\`, 'windows')).toBe(desktopConfig(WINDOWS, 'windows'))
   })
 })
 
 describe('claudeCodeCommand', () => {
-  it('quotes the launcher script on macOS, Linux and WSL', () => {
-    const expected = "claude mcp add -s user paperlab -- '/Users/me/research-note/scripts/paperlab-mcp'"
-    expect((['macos', 'linux', 'wsl'] as const).map((os) => claudeCodeCommand(`${MAC}/`, os))).toEqual([
+  it('runs ~/.local/bin/paperlab-mcp on macOS, Linux and WSL, the same for every user and folder', () => {
+    const expected = 'claude mcp add -s user paperlab -- "$HOME/.local/bin/paperlab-mcp"'
+    expect((['macos', 'linux', 'wsl'] as const).map((os) => claudeCodeCommand(MAC, os))).toEqual([
       expected,
       expected,
       expected,
     ])
-  })
-
-  it("keeps a folder with spaces and a ' in it as one argument", () => {
-    expect(claudeCodeCommand("/Users/me/Bob's papers/Paper Lab", 'macos')).toBe(
-      "claude mcp add -s user paperlab -- '/Users/me/Bob'\\''s papers/Paper Lab/scripts/paperlab-mcp'",
-    )
   })
 
   it('calls docker compose directly on Windows', () => {

@@ -12,28 +12,31 @@ export function detectOs(platform: string): SetupOs {
 /** The folder as typed, without surrounding spaces or one trailing `/` or `\`. */
 const trimmed = (folder: string) => folder.trim().replace(/[/\\]$/, '')
 
+/** Where `scripts/paperlab-mcp --install` and the desktop app put the launcher, the same for every user on macOS, Linux
+ * and inside WSL. */
+export const LAUNCHER = '$HOME/.local/bin/paperlab-mcp'
+
 const COMPOSE_EXEC = ['exec', '-T', 'api', 'python', '-m', 'mcp_server']
 
-/** The `mcpServers` entry to paste into claude_desktop_config.json. Windows calls `docker compose` directly: Windows
- * apps get the system PATH Docker Desktop fills, and a `.cmd` wrapper won't start without a shell. */
+/** The `mcpServers` entry to paste into claude_desktop_config.json. Claude Desktop doesn't expand $HOME in `command`,
+ * so the launcher goes through sh (or wsl's `~`). Windows calls `docker compose` directly: Windows apps get the system
+ * PATH Docker Desktop fills, and a `.cmd` wrapper won't start without a shell. */
 export function desktopConfig(folder: string, os: SetupOs): string {
-  const root = trimmed(folder)
   const paperlab =
     os === 'windows'
-      ? { command: 'docker', args: ['compose', '-f', `${root}\\docker-compose.yml`, ...COMPOSE_EXEC] }
+      ? { command: 'docker', args: ['compose', '-f', `${trimmed(folder)}\\docker-compose.yml`, ...COMPOSE_EXEC] }
       : os === 'wsl'
-        ? { command: 'wsl', args: ['-e', `${root}/scripts/paperlab-mcp`] }
-        : { command: `${root}/scripts/paperlab-mcp` }
+        ? { command: 'wsl', args: ['--cd', '~', '-e', '.local/bin/paperlab-mcp'] }
+        : { command: '/bin/sh', args: ['-c', `exec "${LAUNCHER}"`] }
   return JSON.stringify({ mcpServers: { paperlab } }, null, 2)
 }
 
 /** The one-line `claude mcp add` for Claude Code, run in a terminal (inside WSL for `wsl`). */
 export function claudeCodeCommand(folder: string, os: SetupOs): string {
-  const root = trimmed(folder)
   if (os === 'windows') {
-    return `claude mcp add -s user paperlab -- docker compose -f "${root}\\docker-compose.yml" ${COMPOSE_EXEC.join(' ')}`
+    return `claude mcp add -s user paperlab -- docker compose -f "${trimmed(folder)}\\docker-compose.yml" ${COMPOSE_EXEC.join(' ')}`
   }
-  return `claude mcp add -s user paperlab -- '${`${root}/scripts/paperlab-mcp`.replaceAll("'", "'\\''")}'`
+  return `claude mcp add -s user paperlab -- "${LAUNCHER}"`
 }
 
 /** Where Claude Desktop keeps its config on each system. */

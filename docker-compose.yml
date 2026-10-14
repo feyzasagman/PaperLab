@@ -51,7 +51,10 @@ services:
       PAPERLAB_DIR: ${PWD:-}
       # The built-in search model's folder. E2E's no-search-model run points it at an empty one (README).
       MODELS_DIR: ${MODELS_DIR:-/models}
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+      # Any non-empty DEV_RELOAD (e.g. DEV_RELOAD=1) restarts the api and workers on every saved change under backend/.
+      # Off by default: when your own library runs from this folder, a save would cancel its running jobs. scripts/e2e-stack.sh turns it on.
+      DEV_RELOAD: ${DEV_RELOAD:-}
+    command: sh -c 'alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 $${DEV_RELOAD:+--reload}'
     ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
 
   worker: &worker
@@ -65,13 +68,19 @@ services:
       # The built-in search model's folder. E2E's no-search-model run points it at an empty one (README).
       MODELS_DIR: ${MODELS_DIR:-/models}
       PAPERLAB_STACK: ${COMPOSE_PROJECT_NAME}
-    # Not `arq --watch`: that restarts the worker in-process and never re-imports changed code.
-    command: watchfiles --filter python "arq app.workers.settings.WorkerSettings" app
+      DEV_RELOAD: ${DEV_RELOAD:-} # see the api
+    # With DEV_RELOAD, watchfiles, not `arq --watch`: that restarts the worker in-process and never re-imports changed
+    # code.
+    command: >-
+      sh -c 'if [ -n "$$DEV_RELOAD" ]; then exec watchfiles --filter python "arq app.workers.settings.WorkerSettings" app;
+      else exec arq app.workers.settings.WorkerSettings; fi'
 
   ingest-worker:
     <<: *worker
     # A paper's ingest and re-embed, one paper at a time: ten at once ran the worker out of memory.
-    command: watchfiles --filter python "arq app.workers.settings.IngestWorkerSettings" app
+    command: >-
+      sh -c 'if [ -n "$$DEV_RELOAD" ]; then exec watchfiles --filter python "arq app.workers.settings.IngestWorkerSettings" app;
+      else exec arq app.workers.settings.IngestWorkerSettings; fi'
 
   frontend:
     build: ./frontend

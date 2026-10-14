@@ -27,6 +27,17 @@ def test_dev_stack_ports_are_configurable_with_the_live_defaults():
     }
 
 
+
+def test_the_dev_stack_reloads_code_only_when_asked():
+    # A save in the folder the owner's own stack runs from restarted its worker and cancelled their jobs (2026-10-14):
+    # reloading is opt-in (DEV_RELOAD=1), and the test stack opts in.
+    found = services("docker-compose.yml")
+    for name in ("api", "worker", "ingest-worker"):
+        command = found[name]["command"]
+        assert "DEV_RELOAD" in command and found[name]["environment"]["DEV_RELOAD"] == "${DEV_RELOAD:-}", name
+    assert "$${DEV_RELOAD:+--reload}" in found["api"]["command"]
+    assert "export DEV_RELOAD=1" in (ROOT / "scripts" / "e2e-stack.sh").read_text()
+
 SCRIPT = ROOT / "scripts" / "e2e-stack.sh"
 
 
