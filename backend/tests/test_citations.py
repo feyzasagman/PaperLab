@@ -625,3 +625,30 @@ async def test_a_paper_outside_the_workspace_is_paper_not_in_workspace(session):
     [gone] = await claims.verify_claims(session, "It holds in general (Nowherews, 1987).",
                                         workspace_id=workspace.id, llm=Scripted())
     assert gone.error == "citation_not_found"
+
+
+async def test_coauthors_narrow_two_library_candidates(session):
+    wang = await add(session, "Narrow NeoCoder", ["Yao Narrowlu", "Dan Wang"], 1987)
+    await add(session, "Narrow Salieri", ["Xi Narrowlu", "Mia Sclar"], 1987)
+    cite = citations.find("It holds (Narrowlu, Wang et al., 1987).")[0]
+    assert (await citations.match(session, cite)).paper_ids == [wang.id]
+
+
+async def test_a_coauthor_never_drops_a_lone_match(session):
+    only_first = await add(session, "Lone paper", ["Ann Lonefirst"], 1987)  # truncated author list
+    cite = citations.find("It holds (Lonefirst, Nothere et al., 1987).")[0]
+    assert (await citations.match(session, cite)).paper_ids == [only_first.id]
+
+
+async def test_coauthors_that_match_nobody_leave_the_ambiguity(session):
+    await add(session, "Twin one", ["Ann Twincoauth", "Bo Alpha"], 1987)
+    await add(session, "Twin two", ["Ann Twincoauth", "Cy Beta"], 1987)
+    cite = citations.find("It holds (Twincoauth, Gamma et al., 1987).")[0]
+    assert len((await citations.match(session, cite)).paper_ids) == 2
+
+
+async def test_a_coauthor_is_a_whole_surname_never_a_suffix(session):
+    await add(session, "Lili paper", ["Ann Narrowsx", "Lili X"], 1987)
+    wei = await add(session, "Wei paper", ["Ann Narrowsx", "Wei Li"], 1987)
+    cite = citations.find("It holds (Narrowsx, Li et al., 1987).")[0]
+    assert (await citations.match(session, cite)).paper_ids == [wei.id]

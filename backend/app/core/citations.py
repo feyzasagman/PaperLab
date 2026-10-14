@@ -216,6 +216,12 @@ def _first_author_is(authors: list[str], surname: str) -> bool:
     return name == wanted or name.endswith(f" {wanted}")
 
 
+def _names(author: str, surname: str) -> bool:
+    """A library author is the named co-author: whole surname only ("li" never matches "Lili")."""
+    name = fold(author).strip()
+    return name == surname or name.endswith(f" {surname}") or name.split(",")[0].strip() == surname
+
+
 async def match(session: AsyncSession, citation: Citation, workspace_id=None, only_doi: str | None = None) -> Match:
     """Library papers a citation points at: by DOI, or by first-author surname and year (inside a workspace if
     given). Zero or several matches are returned as they are, never resolved. `only_doi` (the reference list's DOI for
@@ -241,4 +247,8 @@ async def match(session: AsyncSession, citation: Citation, workspace_id=None, on
             rows = exact or rows
         else:
             return Match([rows[0].id], [rows[0].title], library_year=rows[0].year)
+        if len(rows) > 1 and citation.coauthors:
+            wanted = [fold(c).strip() for c in citation.coauthors]
+            named = [r for r in rows if all(any(_names(a, w) for a in r.authors or []) for w in wanted)]
+            rows = named or rows  # narrows an ambiguity, never loses a match
     return Match([r.id for r in rows], [r.title for r in rows])
