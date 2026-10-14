@@ -7,12 +7,13 @@ import zipfile
 from dataclasses import dataclass
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import workspaces
+from app.core import notes, workspaces
 from app.core.citations_export import bibtex_keys, csl_item, filename_slug
-from app.models import Note, Workspace, note_anchors, note_papers
+from app.core.errors import InvalidInput
+from app.models import Note, Paper, Provenance, Workspace, note_anchors, note_papers
 
 LABELS = {"human": "You", "llm": "AI", "llm_edited": "AI · edited"}
 HEADING_MAX = 80
@@ -125,3 +126,70 @@ async def export_workspace(session: AsyncSession, workspace_id: uuid.UUID, origi
             text = render_paper(p, keys[str(p.id)], by_paper.get(p.id, []), keys, origin)
             zf.writestr(f"{slug}/{keys[str(p.id)]}.md", text)
     return buffer.getvalue()
+
+
+MAX_FILES = 50
+MAX_BYTES = 1024 * 1024
+DOI = re.compile(r"10\.\d{4,9}/\S+", re.IGNORECASE)
+FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+
+
+@dataclass(frozen=True)
+class ImportResult:
+    created: int
+    linked_papers: int  # created notes linked to at least one library paper
+    unmatched_files: int  # created notes with no paper found
+    skipped_duplicates: int
+
+
+def _split(text: str) -> tuple[str, str]:
+    """(frontmatter text, body) of a markdown file; the frontmatter is empty when there is none."""
+    if m := FRONTMATTER.match(text):
+        return m.group(1), text[m.end() :].strip()
+    return "", text.strip()
+
+
+def _dois(text: str) -> set[str]:
+    return {m.group().rstrip(".,;)]>").lower() for m in DOI.finditer(text)}
+
+
+def _check(files: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
+    if len(files) > MAX_FILES:
+        raise InvalidInput(f"Import at most {MAX_FILES} files at a time.")
+    texts = []
+    for name, data in files:
+        if not name.lower().endswith(".md"):
+            raise InvalidInput(f"{name} is not a Markdown (.md) file.")
+        if len(data) > MAX_BYTES:
+            raise InvalidInput(f"{name} is larger than 1 MB.")
+        try:
+            texts.append((name, data.decode("utf-8")))
+        except UnicodeDecodeError:
+            raise InvalidInput(f"{name} is not UTF-8 text.") from None
+    return texts
+
+
+async def import_files(session: AsyncSession, files: list[tuple[str, bytes]]) -> ImportResult:
+    """Each .md file becomes one unanchored human note, linked to the library papers whose DOI the file mentions.
+    A body that already exists as a note is skipped. Raises InvalidInput: limits, encoding, empty file."""
+    parsed = []
+    for name, text in _check(files):
+        front, body = _split(text)
+        if not body:
+            raise InvalidInput(f"{name} has no text to import.")
+        parsed.append((front, body))
+    created = linked = skipped = 0
+    for front, body in parsed:
+        if await session.scalar(select(Note.id).where(Note.body == body).limit(1)):
+            skipped += 1
+            continue
+        dois = _dois(front) | _dois(body)
+        found = list(await session.scalars(select(Paper.id).where(func.lower(Paper.doi).in_(dois)))) if dois else []
+        note = Note(body=body, provenance=Provenance.HUMAN)
+        session.add(note)
+        await session.flush()
+        await notes._link(session, note.id, found)
+        created += 1
+        linked += bool(found)
+    await session.commit()
+    return ImportResult(created, linked, created - linked, skipped)

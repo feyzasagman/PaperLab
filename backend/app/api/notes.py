@@ -1,10 +1,11 @@
 import uuid
+from dataclasses import asdict
 from typing import Literal
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Response, UploadFile
 
 from app.api.deps import LLMByModelIdDep, SessionDep
-from app.core import note_suggestions, notes
+from app.core import note_suggestions, notes, notes_markdown
 from app.schemas.chat import PromoteRequest
 from app.schemas.note_suggestions import NoteSuggestionOut, NoteSuggestionsOut
 from app.schemas.notes import NoteCreate, NoteOut, NotePapersIn, NoteUpdate
@@ -52,6 +53,15 @@ async def suggest_notes(paper_id: uuid.UUID, session: SessionDep, llm: LLMByMode
             for s in suggested.suggestions
         ],
     )
+
+
+@router.post("/api/notes/import")
+async def import_notes(files: list[UploadFile], session: SessionDep) -> dict[str, int]:
+    """Markdown files as unanchored notes linked to library papers by the DOIs they contain. 422: over 50 files, over
+    1 MB, not .md, not UTF-8, or empty."""
+    # Read at most one byte over the limit, so an oversized upload is refused without loading it whole.
+    data = [(f.filename or "", await f.read(notes_markdown.MAX_BYTES + 1)) for f in files]
+    return asdict(await notes_markdown.import_files(session, data))
 
 
 @router.post("/api/notes", status_code=201)
