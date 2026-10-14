@@ -606,6 +606,7 @@ async def test_a_coauthor_is_a_whole_surname_not_a_suffix(session):
 
 async def test_a_single_entry_with_full_first_names_keeps_its_doi(session):
     paper = await add(session, "Fullname Paper", ["Jon Fullnamesmith", "Kim Lee"], 1987, doi="10.1000/m48-full")
+    await add(session, "Fullname Decoy", ["Jon Fullnamesmith"], 1987, doi="10.1000/m48-decoy")
     note = (
         "It holds in general (Fullnamesmith & Lee, 1987).\n\n## References\n\n"
         "- Fullnamesmith, Jon, & Lee, Kim (1987). T. https://doi.org/10.1000/m48-full\n"
