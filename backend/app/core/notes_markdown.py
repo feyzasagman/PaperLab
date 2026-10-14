@@ -37,6 +37,7 @@ class NoteItem:
 
 def neutralise(text: str) -> str:
     """Text for a heading or wikilink label: `#` would start a tag, `[[ ]]` a link."""
+    text = " ".join(text.split())  # a newline would start a new markdown line
     return re.sub(r"\]{2,}", "]", re.sub(r"\[{2,}", "[", text)).replace("#", "\\#")
 
 
@@ -84,7 +85,7 @@ def render_paper(paper, key: str, notes: list[NoteItem], keys: dict[str, str], o
 
 
 def render_index(name: str, question: str | None, entries: list[tuple[str, str]]) -> str:
-    head = f"# {neutralise(name)}\n\n" + (f"Research question: {question}\n\n" if question else "")
+    head = f"# {neutralise(name)}\n\n" + (f"Research question: {' '.join(question.split())}\n\n" if question else "")
     return head + "\n".join(f"- [[{key}]] {neutralise(title)}" for key, title in entries) + "\n"
 
 
@@ -131,7 +132,8 @@ async def export_workspace(session: AsyncSession, workspace_id: uuid.UUID, origi
 MAX_FILES = 50
 MAX_BYTES = 1024 * 1024
 DOI = re.compile(r"10\.\d{4,9}/\S+", re.IGNORECASE)
-FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+FRONTMATTER = re.compile(r"\A---\r?\n(?:(.*?)\r?\n)?---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+DOI_TRAIL = ".,;:)]>\"'`*_"
 
 
 @dataclass(frozen=True)
@@ -145,12 +147,21 @@ class ImportResult:
 def _split(text: str) -> tuple[str, str]:
     """(frontmatter text, body) of a markdown file; the frontmatter is empty when there is none."""
     if m := FRONTMATTER.match(text):
-        return m.group(1), text[m.end() :].strip()
+        return m.group(1) or "", text[m.end() :].strip()
     return "", text.strip()
 
 
+def _front_doi(front: str) -> str:
+    try:
+        meta = yaml.safe_load(front)
+    except yaml.YAMLError:
+        return ""
+    value = meta.get("doi") if isinstance(meta, dict) else None
+    return value if isinstance(value, str) else ""
+
+
 def _dois(text: str) -> set[str]:
-    return {m.group().rstrip(".,;)]>").lower() for m in DOI.finditer(text)}
+    return {m.group().rstrip(DOI_TRAIL).lower() for m in DOI.finditer(text)}
 
 
 def _check(files: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
@@ -163,9 +174,12 @@ def _check(files: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
         if len(data) > MAX_BYTES:
             raise InvalidInput(f"{name} is larger than 1 MB.")
         try:
-            texts.append((name, data.decode("utf-8")))
+            text = data.decode("utf-8-sig")  # -sig: drop a BOM, which would hide the frontmatter
         except UnicodeDecodeError:
             raise InvalidInput(f"{name} is not UTF-8 text.") from None
+        if "\x00" in text:  # Postgres text can't hold NUL
+            raise InvalidInput(f"{name} is not plain text.")
+        texts.append((name, text))
     return texts
 
 
@@ -183,7 +197,7 @@ async def import_files(session: AsyncSession, files: list[tuple[str, bytes]]) ->
         if await session.scalar(select(Note.id).where(Note.body == body).limit(1)):
             skipped += 1
             continue
-        dois = _dois(front) | _dois(body)
+        dois = _dois(front) | _dois(_front_doi(front)) | _dois(body)
         found = list(await session.scalars(select(Paper.id).where(func.lower(Paper.doi).in_(dois)))) if dois else []
         note = Note(body=body, provenance=Provenance.HUMAN)
         session.add(note)

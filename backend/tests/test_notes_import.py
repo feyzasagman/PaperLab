@@ -85,3 +85,41 @@ async def test_http_import_and_422s(client, session):
     assert (await links(session, body))[1] == {paper.id}
     bad = await client.post("/api/notes/import", files=[("files", ("n.txt", b"x", "text/plain"))])
     assert bad.status_code == 422 and "Markdown" in bad.json()["detail"]
+
+
+@pytest.mark.parametrize("fmt", ['doi: "{d}"', "doi: '{d}'", "doi: https://doi.org/{d}"])
+async def test_quoted_frontmatter_doi_links(session, fmt):
+    paper = await make_paper(session, f"10.7777/q{abs(hash(fmt)) % 9999}-{RUN}")
+    body = f"quoted {fmt} {RUN}"
+    text = "---\n" + fmt.format(d=paper.doi) + f"\n---\n{body}"
+    result = await nm.import_files(session, [md("q.md", text)])
+    assert result.linked_papers == 1
+    note = await session.scalar(select(Note).where(Note.body == body))
+    assert set(await session.scalars(select(note_papers.c.paper_id).where(note_papers.c.note_id == note.id))) == {
+        paper.id
+    }
+
+
+@pytest.mark.parametrize("wrap", ["`{d}`", "[link]({d})", "**{d}**", "_{d}_", "<{d}>", '"{d}"', "{d}:"])
+async def test_markup_wrapped_body_doi_links(session, wrap):
+    paper = await make_paper(session, f"10.7777/w{abs(hash(wrap)) % 9999}-{RUN}")
+    body = f"see {wrap.format(d=paper.doi)} {RUN}"
+    assert (await nm.import_files(session, [md("w.md", body)])).linked_papers == 1
+
+
+async def test_bom_and_empty_frontmatter_are_stripped(session):
+    await nm.import_files(
+        session, [("b.md", f"﻿---\ntitle: x\n---\nbom body {RUN}".encode()), md("e.md", f"---\n---\nempty fm {RUN}")]
+    )
+    bodies = set(await session.scalars(select(Note.body).where(Note.body.in_([f"bom body {RUN}", f"empty fm {RUN}"]))))
+    assert len(bodies) == 2
+
+
+def test_newlines_in_titles_cannot_inject_markdown():
+    assert "\n# inj" not in nm.render_index("n", "q\n# inj", [("k", "a\n- b")])
+    assert nm.neutralise("a\n- b") == "a - b"
+
+
+async def test_nul_byte_is_a_plain_422(client):
+    bad = await client.post("/api/notes/import", files=[("files", ("n.md", b"a\x00b", "text/markdown"))])
+    assert bad.status_code == 422 and "n.md" in bad.json()["detail"]
