@@ -175,3 +175,40 @@ test('a source that did not answer is named with its error, even when the run wa
   await waitFor(() => expect(screen.getByText("Semantic Scholar didn't answer: 429 Too Many Requests")).toBeInTheDocument())
   expect(screen.getByText("arXiv didn't answer")).toBeInTheDocument()
 })
+
+const statsRun = (stats_json: unknown) =>
+  ({
+    id: 'run-4', workspace_id: 'ws-1', query_text: 'q', filters_json: {}, sources_json: ['arxiv'],
+    status: 'exhausted', started_at: '2026-09-24T00:00:00Z', stopped_at: '2026-09-24T00:29:00Z', stats_json,
+  }) as never
+
+test('a cut-short run with a failed source shows both lines', async () => {
+  vi.mocked(api.getSearchRun).mockResolvedValue(
+    statsRun({ cut_short: true, unfinished_sources: ['core'], failed_sources: ['arxiv'], per_source_error: { arxiv: '503' } }),
+  )
+  renderWithClient(<SearchTab workspaceId="ws-1" runId="run-4" onRunIdChange={vi.fn()} />)
+  await waitFor(() => expect(screen.getByText('Stopped early after 29 min — 1 sources not finished')).toBeInTheDocument())
+  expect(screen.getByText("arXiv didn't answer: 503")).toBeInTheDocument()
+})
+
+test('an error for a source not in failed_sources is not shown', async () => {
+  vi.mocked(api.getSearchRun).mockResolvedValue(
+    statsRun({ failed_sources: ['arxiv'], per_source_error: { arxiv: '503', core: 'secret boom' } }),
+  )
+  renderWithClient(<SearchTab workspaceId="ws-1" runId="run-4" onRunIdChange={vi.fn()} />)
+  await waitFor(() => expect(screen.getByText("arXiv didn't answer: 503")).toBeInTheDocument())
+  expect(screen.queryByText(/secret boom/)).toBeNull()
+})
+
+test('malformed failure stats do not crash the tab or render a line', async () => {
+  vi.mocked(api.getSearchRun).mockResolvedValue(statsRun({ failed_sources: 'arxiv', per_source_error: 'x' }))
+  renderWithClient(<SearchTab workspaceId="ws-1" runId="run-4" onRunIdChange={vi.fn()} />)
+  await waitFor(() => expect(screen.getByText(/exhausted/)).toBeInTheDocument())
+  expect(screen.queryByText(/didn't answer/)).toBeNull()
+})
+
+test('a non-string error value is not rendered', async () => {
+  vi.mocked(api.getSearchRun).mockResolvedValue(statsRun({ failed_sources: ['arxiv'], per_source_error: { arxiv: { a: 1 } } }))
+  renderWithClient(<SearchTab workspaceId="ws-1" runId="run-4" onRunIdChange={vi.fn()} />)
+  await waitFor(() => expect(screen.getByText("arXiv didn't answer")).toBeInTheDocument())
+})
