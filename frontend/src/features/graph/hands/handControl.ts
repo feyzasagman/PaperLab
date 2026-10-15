@@ -32,7 +32,9 @@ export const TURN_GAIN = 2 * Math.PI
 export const TILT_GAIN = Math.PI
 /** Palm moves smaller than this are tracker jitter; larger than JUMP is a lost-and-found hand, not a move. */
 export const DEAD_ZONE = 0.003
-export const JUMP = 0.25
+export const JUMP = 0.15
+/** One frame never turns or tips the view more than this many radians, however far the hand moved since the last steady frame. */
+export const TURN_STEP_LIMIT = 0.3
 /** Two-hand spread changes below 0.5% are jitter; a change past 25% in one frame is a jump, not a zoom. */
 export const ZOOM_JITTER = 0.005
 export const ZOOM_JUMP = 1.25
@@ -93,7 +95,11 @@ export function handStep(state: HandState, hands: readonly Hand[]): [HandState, 
     if (step > JUMP) return [{ ...base, anchor: here }, still]
     if (step < DEAD_ZONE) return [base, still]
     // Like dragging the scene with the hand: move right and the papers follow to the right.
-    return [{ ...base, anchor: here }, { ...still, turn: { azimuth: -dx * TURN_GAIN, polar: dy * TILT_GAIN } }]
+    const turn = {
+      azimuth: clamp(-dx * TURN_GAIN, -TURN_STEP_LIMIT, TURN_STEP_LIMIT),
+      polar: clamp(dy * TILT_GAIN, -TURN_STEP_LIMIT, TURN_STEP_LIMIT),
+    }
+    return [{ ...base, anchor: here }, { ...still, turn }]
   }
 
   if (mode === 'two-palms') {

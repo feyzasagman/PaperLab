@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { palmCentre, type Hand } from './gestures'
-import { dwellStep, EDGE, handStep, initialDwell, initialHandState, STABLE_FRAMES, TURN_GAIN, type HandMoves, type HandState } from './handControl'
+import { dwellStep, EDGE, handStep, initialDwell, initialHandState, STABLE_FRAMES, TURN_GAIN, TURN_STEP_LIMIT, ZOOM_STEP_LIMIT, type HandMoves, type HandState } from './handControl'
 import fixtures from './handFixtures.json'
 
 const f = fixtures as unknown as Record<'point' | 'fist' | 'palm', Hand> & { twoPalms: Hand[] }
@@ -86,4 +86,33 @@ it('selects the paper held under the pointer for DWELL_MS, once', () => {
   expect(step.progress).toBe(0)
   step = dwellStep(dwellStep(step.dwell, null, 1700).dwell, null, 5000)
   expect([step.progress, step.selected]).toEqual([0, null])
+})
+
+it("caps one frame's turn, so a hand that moved during a misread frame never snaps the view", () => {
+  const moves = run([...repeat([f.palm], 3), [f.fist], [shifted(f.palm, -0.12)]])
+  expect(moves[3].turn).toBeNull()
+  expect(moves[4].mode).toBe('palm')
+  expect(moves[4].turn!.azimuth).toBeCloseTo(-TURN_STEP_LIMIT, 9)
+})
+
+it('keeps a held gesture through a brief loss of the hand', () => {
+  const moves = run([...repeat([f.palm], 3), [], [], [shifted(f.palm, -0.02)]])
+  expect(moves.slice(2).map((m) => m.mode)).toEqual(['palm', 'palm', 'palm', 'palm'])
+  expect(moves[5].turn!.azimuth).toBeCloseTo(-0.02 * TURN_GAIN, 9)
+})
+
+it("limits one frame's zoom and ignores tiny spread changes", () => {
+  expect(run([1, 1, 1, 1.2].map((k) => spread(f.twoPalms, k))).at(-1)!.zoom).toBeCloseTo(1 / ZOOM_STEP_LIMIT, 9)
+  expect(run([1, 1, 1, 1.003].map((k) => spread(f.twoPalms, k))).at(-1)!.zoom).toBeNull()
+})
+
+it('starts the hold again when the pointer leaves a paper and comes back', () => {
+  let step = dwellStep(initialDwell(), 'a', 0)
+  step = dwellStep(step.dwell, 'a', 800)
+  step = dwellStep(step.dwell, null, 900)
+  step = dwellStep(step.dwell, 'a', 1000)
+  expect(step.progress).toBe(0)
+  step = dwellStep(step.dwell, 'a', 1900)
+  expect(step.selected).toBeNull()
+  expect(dwellStep(step.dwell, 'a', 2000).selected).toBe('a')
 })
