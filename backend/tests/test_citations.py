@@ -738,3 +738,44 @@ def test_a_discussed_in_marker_keeps_the_narrative_citations():
 )
 def test_the_last_coauthor_loses_its_joiner(names, expected):
     assert citations._coauthors(names) == expected
+
+
+@pytest.mark.parametrize(
+    "author, surname, expected",
+    [
+        ("Wang D", "wang", True),
+        ("Wang D.K.", "wang", True),
+        ("Dan Wang", "wang", True),
+        ("Ann Lili", "li", False),
+        ("WANG Dan", "wang", False),  # ponytail: surname-first with a full given name is not told from "Dan Wang"
+    ],
+)
+def test_has_surname_accepts_surname_initials(author, surname, expected):
+    assert citations._has_surname(author, surname) is expected
+
+
+async def test_nsix_a_list_ending_in_et_al_stays_ambiguous(session):
+    await add(session, "Nsix Etal", ["Yao Nsixet", "Dan Wang", "et al."], 1987)
+    note = (
+        "Salieri differs (Nsixet, Sclar et al., 1987).\n\n## References\n\n"
+        "- Nsixet, X., Sclar, M. (1987). Salieri.\n- Nsixet, Y., Wang, D. (1987). NeoCoder.\n"
+    )
+    [item] = await claims.verify_claims(session, note, llm=Scripted())
+    assert (item.error, item.candidates) == ("ambiguous_citation", ["Nsix Etal"])
+
+
+async def test_nsix_a_surname_initials_coauthor_is_checked_not_ruled_out(session):
+    paper = await add(session, "Nsix Initials", ["Yao Nsixini", "Wang D"], 1987)
+    cite = citations.find("It holds (Nsixini, Wang et al., 1987).")[0]
+    assert (await citations.match(session, cite, strict_coauthors=True)).paper_ids == [paper.id]
+
+
+async def test_strict_unsure_paper_outside_the_workspace_is_ambiguous(session):
+    await add(session, "Outside Unsure", ["Yao Nsixws"], 1987)
+    workspace = await workspaces.create(session, "nsix outside")
+    note = (
+        "Salieri differs (Nsixws, Sclar et al., 1987).\n\n## References\n\n"
+        "- Nsixws, X., Sclar, M. (1987). Salieri.\n- Nsixws, Y., Wang, D. (1987). NeoCoder.\n"
+    )
+    [item] = await claims.verify_claims(session, note, workspace_id=workspace.id, llm=Scripted())
+    assert (item.error, item.candidates) == ("ambiguous_citation", ["Outside Unsure"])

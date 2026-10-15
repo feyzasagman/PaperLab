@@ -441,6 +441,9 @@ async def verify_claims(
                     )
                 )
                 continue
+            if elsewhere.unnamed:  # held, but its author list may be truncated: not a "not in library" claim
+                items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=elsewhere.unnamed))
+                continue
         if not found.paper_ids and entry:
             items.append(ClaimItem(claim, citation, error="paper_not_in_library", doi=entry_doi))
         elif not found.paper_ids:
