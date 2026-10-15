@@ -21,3 +21,14 @@ it('shows the how-to line only while asked to', () => {
   rerender(<CameraControls onAction={() => {}} showHint={false} />)
   expect(screen.queryByText(HINT)).toBeNull()
 })
+
+it('offers a Hands mode toggle that says whether it is on', () => {
+  const onToggle = vi.fn()
+  const { rerender } = render(<CameraControls onAction={() => {}} showHint={false} hands={{ on: false, onToggle }} />)
+  const toggle = screen.getByRole('button', { name: 'Hands mode' })
+  expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.click(toggle)
+  expect(onToggle).toHaveBeenCalledTimes(1)
+  rerender(<CameraControls onAction={() => {}} showHint={false} hands={{ on: true, onToggle }} />)
+  expect(screen.getByRole('button', { name: 'Hands mode' })).toHaveAttribute('aria-pressed', 'true')
+})
