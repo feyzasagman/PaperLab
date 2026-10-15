@@ -487,7 +487,7 @@ async def test_a_job_that_hits_its_time_limit_says_so_with_done_and_total(sessio
     assert workspace.suggest_done == 1
     assert "4-hour limit after 1 of 3" in workspace.suggest_error
     assert workspace.suggest_error.endswith("press Suggest to continue with the rest.")
-    assert "start pre-screening again" in workspace.suggest_error
+    assert "press Suggest to continue" in workspace.suggest_error
 
 
 async def test_a_stop_leaves_no_time_limit_error(session, worker, monkeypatch):
