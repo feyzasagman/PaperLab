@@ -7,6 +7,58 @@ from app.providers import dblp
 pytestmark = pytest.mark.anyio
 
 
+async def test_author_homonym_suffix_is_removed_and_surname_merge_works():
+    from app.core.candidates import Candidate, surname
+
+    candidate = from_dblp({
+        "title": "Shared title", "authors": {"author": [{"text": "Wei Wang 0001"}, "Ada Author 123"]},
+    })
+    assert candidate.authors == ["Wei Wang", "Ada Author 123"]
+    assert surname(candidate.authors[0]) == "wang"
+    other = Candidate(title="Shared title", authors=["Wei Wang"], sources=("crossref",))
+    assert len(merge({"crossref": [other], "dblp": [candidate]}, 10)) == 1
+
+
+@pytest.mark.parametrize("venue,expected", [(["NeurIPS", "CoRR"], "NeurIPS"), ([], None), ("CoRR", "CoRR")])
+async def test_venue_is_a_string_or_none(venue, expected):
+    assert from_dblp({"venue": venue}).venue == expected
+
+
+async def test_title_is_unescaped_and_trailing_period_removed():
+    assert from_dblp({"title": "Attention &amp; Learning."}).title == "Attention & Learning"
+
+
+async def test_corr_arxiv_doi_maps_to_preprint_and_merges_with_conference_version():
+    preprint = from_dblp({
+        "key": "journals/corr/abs-1706-03762", "title": "Attention is All you Need.",
+        "doi": "10.48550/arXiv.1706.03762", "venue": "CoRR",
+    })
+    assert preprint.external_ids == {"dblp": "journals/corr/abs-1706-03762", "arxiv": "1706.03762"}
+    assert preprint.pdf_urls == ["https://arxiv.org/pdf/1706.03762"]
+    conference = from_dblp({
+        "key": "conf/nips/VaswaniSPUJGKP17", "title": "Attention is All you Need.",
+        "ee": "https://arxiv.org/abs/1706.03762", "venue": "NeurIPS",
+    })
+    assert len(merge({"dblp": [conference, preprint]}, 10)) == 1
+
+
+@pytest.mark.parametrize("key", ["conf/nips/VaswaniSPUJGKP17", "journals/corr/abs-1706-03762"])
+async def test_real_dblp_keys_are_accepted(key):
+    from app.schemas.discovery import CandidateIn
+
+    CandidateIn(title="Test", external_ids={"dblp": key})
+
+
+@pytest.mark.parametrize("key", ["../paper", "conf/../paper", "conf/test?query", "anything", "conf//test"])
+async def test_malformed_dblp_keys_are_rejected(key):
+    from pydantic import ValidationError
+
+    from app.schemas.discovery import CandidateIn
+
+    with pytest.raises(ValidationError):
+        CandidateIn(title="Test", external_ids={"dblp": key})
+
+
 def body(entries, total=None):
     return {
         "result": {

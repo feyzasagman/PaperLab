@@ -5,6 +5,11 @@ import { candidateKey, citationsLabel, pageLink, sameCandidate } from './candida
 const ids = { doi: null, external_ids: {} }
 
 describe('pageLink', () => {
+  it('links DBLP metadata-only candidates to their record', () => {
+    expect(pageLink({ doi: null, external_ids: { dblp: 'conf/nips/VaswaniSPUJGKP17' } }))
+      .toBe('https://dblp.org/rec/conf/nips/VaswaniSPUJGKP17')
+  })
+
   it('prefers the DOI, then arXiv, then OpenAlex, then Semantic Scholar, then CORE', () => {
     const all = { doi: '10.1/x', external_ids: { arxiv: '1810.04805', openalex: 'W1', semantic_scholar: 'a'.repeat(40), core: '42' } }
     expect(pageLink(all)).toBe('https://doi.org/10.1/x')
@@ -156,10 +161,4 @@ describe('sameCandidate', () => {
       sameCandidate(candidate({ external_ids: { zenodo: '1' } }), candidate({ external_ids: { zenodo: '2' } })),
     ).toBe(false)
   })
-})
-
-
-it('links DBLP metadata-only candidates to their record', () => {
-  expect(pageLink({ doi: null, external_ids: { dblp: 'conf/nips/VaswaniSPUJGKP17' } }))
-    .toBe('https://dblp.org/rec/conf/nips/VaswaniSPUJGKP17')
 })

@@ -185,6 +185,9 @@ def from_dblp(entry: Mapping[str, Any]) -> Candidate:
     if not isinstance(authors, list):
         authors = [authors]
     names = [a.get("text", "") if isinstance(a, dict) else a for a in authors]
+    venue = entry.get("venue") or None
+    if isinstance(venue, list):
+        venue = venue[0] if venue else None
     year = str(entry.get("year") or "")
     doi = (entry.get("doi") or "").removeprefix("https://doi.org/").strip().lower() or None
     links = entry.get("ee") or []
@@ -196,10 +199,10 @@ def from_dblp(entry: Mapping[str, Any]) -> Candidate:
     arxiv_id = _ARXIV_VERSION.sub("", arxiv_id) if arxiv_id else None
     ids = {k: v for k, v in {"dblp": entry.get("key"), "arxiv": arxiv_id}.items() if v}
     return Candidate(
-        title=html.unescape(entry.get("title") or "Untitled"),
-        authors=[html.unescape(n) for n in names if isinstance(n, str) and n][:MAX_AUTHORS],
+        title=html.unescape(entry.get("title") or "Untitled").rstrip("."),
+        authors=[re.sub(r"\s\d{4}$", "", html.unescape(n)) for n in names if isinstance(n, str) and n][:MAX_AUTHORS],
         year=int(year) if year.isdigit() and len(year) == 4 else None,
-        venue=entry.get("venue") or None, doi=doi, external_ids=ids,
+        venue=venue, doi=doi, external_ids=ids,
         pdf_urls=ordered_pdf_urls(arxiv_id), sources=("dblp",),
     )
 

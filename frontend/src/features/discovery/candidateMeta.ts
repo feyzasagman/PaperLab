@@ -50,7 +50,7 @@ const ID_URL_BUILDERS: Record<string, (id: string) => string> = {
 const ID_PRIORITY = ['openalex', 'semantic_scholar', 'arxiv', 'core', 'pubmed', 'pmc', 'zenodo', 'hal', 'doaj', 'openaire', 'iacr_eprint', 'biorxiv', 'medrxiv', 'dblp']
 
 /** Where "Open page" goes: the DOI, else arXiv, OpenAlex, Semantic Scholar, CORE, then PubMed, then PMC, then
- * Zenodo, then HAL, then DOAJ, then OpenAIRE, then IACR ePrint, then bioRxiv, then medRxiv; null with no identifier. */
+ * Zenodo, then HAL, then DOAJ, then OpenAIRE, then IACR ePrint, then bioRxiv, then medRxiv, then DBLP; null with no identifier. */
 export function pageLink(candidate: Pick<Candidate, 'doi' | 'external_ids'>): string | null {
   if (candidate.doi) return `https://doi.org/${candidate.doi}`
   for (const source of ['arxiv', 'openalex', 'semantic_scholar', 'core', 'pubmed', 'pmc', 'zenodo', 'hal', 'doaj', 'openaire', 'iacr_eprint', 'biorxiv', 'medrxiv', 'dblp']) {

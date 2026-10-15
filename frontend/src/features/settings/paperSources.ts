@@ -2,7 +2,6 @@ import type { PaperSourceId } from '@/api/client'
 
 /** What each source is for, under its switch in Settings → Paper sources. */
 export const DESCRIPTIONS: Record<PaperSourceId, string> = {
-  dblp: 'Computer-science publications, venues and authors. Free, no key needed; no PDFs.',
   openalex: 'Title and DOI search, and details for the papers you upload.',
   crossref: 'Title and DOI search across papers with a DOI. Free.',
   semantic_scholar: 'Similar papers, arXiv lookups and free PDF links. Free; a free key avoids its busy shared pool.',
@@ -21,6 +20,7 @@ export const DESCRIPTIONS: Record<PaperSourceId, string> = {
   iacr_eprint: 'Cryptology preprints from the IACR ePrint Archive, synced periodically in the background. Free, no key needed.',
   biorxiv: 'Biology preprints from bioRxiv, synced periodically in the background. Free, no key needed.',
   medrxiv: 'Medical preprints from medRxiv, synced periodically in the background. Free, no key needed.',
+  dblp: 'Computer-science publications, venues and authors. Free, no key needed; no PDFs.',
 }
 
 /** The "May cost money" badge plus its price line, for sources that can charge even without a key. Only OpenAlex
