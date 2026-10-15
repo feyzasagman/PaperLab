@@ -20,3 +20,14 @@ it('starts and pauses the tour, and picks its order only while it is stopped', (
   expect(screen.getByRole('combobox', { name: 'Tour order' })).toBeDisabled()
   expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Follow links', 'Oldest first'])
 })
+
+it('keeps the picker arrow keys from reaching the 3D view key handler', () => {
+  const spy = vi.fn()
+  render(
+    <div onKeyDown={spy}>
+      <TourControls running={false} order="links" onOrder={vi.fn()} onToggle={vi.fn()} />
+    </div>,
+  )
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'Tour order' }), { key: 'ArrowDown' })
+  expect(spy).not.toHaveBeenCalled()
+})

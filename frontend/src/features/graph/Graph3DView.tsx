@@ -119,7 +119,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
   // builds on that goal, not on the camera's half-way pose (which orbits through odd distances).
   const aim = useRef<{ until: number; position: Vec3; lookAt: Vec3 } | null>(null)
   const tour = useTour(onSelect, focusId)
-  const stopTour = tour.stop
+  const { stop: stopTour, running: tourRunning, start: startTour } = tour
   const [tourOrder, setTourOrder] = useState<TourOrder>('links')
   const [handsOn, setHandsOn] = useState(false)
 
@@ -225,11 +225,11 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
 
   // The tour counts as the owner taking over too: the spin stops and the how-to line goes.
   const toggleTour = useCallback(() => {
-    if (tour.running) return stopTour()
+    if (tourRunning) return stopTour()
     stopSpin()
     setTouched(true)
-    tour.start(tourOrder === 'links' ? tourByLinks(nodes, links, focusId) : tourByYear(nodes))
-  }, [tour, stopTour, stopSpin, setTouched, tourOrder, nodes, links, focusId])
+    startTour(tourOrder === 'links' ? tourByLinks(nodes, links, focusId) : tourByYear(nodes))
+  }, [tourRunning, startTour, stopTour, stopSpin, setTouched, tourOrder, nodes, links, focusId])
 
   // OrbitControls is ready once the canvas has mounted. The scroll wheel gets the same limits as the buttons, and
   // every camera change (a drag, a glide, the spin) is written onto the group for the E2E tests to read.

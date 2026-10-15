@@ -23,6 +23,8 @@ export function TourControls({ running, order, onOrder, onToggle }: Props) {
         aria-label="Tour order"
         value={order}
         disabled={running}
+        // the picker's own keys (arrows choose an option) must not reach the 3D view's key handler
+        onKeyDown={(event) => event.stopPropagation()}
         onChange={(event) => {
           const value = event.target.value
           if (value === 'links' || value === 'years') onOrder(value)
