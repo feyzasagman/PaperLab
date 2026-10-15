@@ -234,11 +234,19 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
   const pickAt = useCallback(
     (x: number, y: number) => {
       const graph = graphRef.current
-      if (!graph) return null
+      const target = orbitOf(graph)?.target
+      if (!graph || !target) return null
+      const cam = graph.camera().position
       let best: { id: string; title: string } | null = null
       let nearest = PICK_RADIUS
       for (const node of data.nodes) {
         if (node.x === undefined) continue
+        // A paper behind the camera still projects onto the screen: skip anything not in front of it.
+        const ahead =
+          (node.x - cam.x) * (target.x - cam.x) +
+          ((node.y ?? 0) - cam.y) * (target.y - cam.y) +
+          ((node.z ?? 0) - cam.z) * (target.z - cam.z)
+        if (ahead <= 0) continue
         const at = graph.graph2ScreenCoords(node.x, node.y ?? 0, node.z ?? 0)
         const gap = Math.hypot(at.x - x * size.width, at.y - y * size.height)
         if (gap < nearest) {

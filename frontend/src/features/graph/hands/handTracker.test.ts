@@ -146,3 +146,15 @@ it('stops only once however often stop is called', async () => {
   stop()
   expect(mocks.close).toHaveBeenCalledTimes(1)
 })
+
+it('leaves a second start on the same element running when the first one stops', async () => {
+  const stopB = vi.fn()
+  const streamB = { getTracks: () => [{ stop: stopB }] } as unknown as MediaStream
+  const element = video()
+  const stopA = await startTracker(element, vi.fn())
+  mocks.getUserMedia.mockResolvedValueOnce(streamB)
+  await startTracker(element, vi.fn())
+  stopA()
+  expect(element.srcObject).toBe(streamB)
+  expect(stopB).not.toHaveBeenCalled()
+})

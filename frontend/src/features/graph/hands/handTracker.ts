@@ -68,7 +68,9 @@ export async function startTracker(
   const stream = await openCamera()
   const cameraOff = () => {
     stream.getTracks().forEach((track) => track.stop())
-    video.srcObject = null
+    // Only if it still holds this stream: two starts on one element (StrictMode, or a quick off and on) must not
+    // wipe the later one's picture.
+    if (video.srcObject === stream) video.srcObject = null
   }
   let landmarker: HandLandmarker
   try {

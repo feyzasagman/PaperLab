@@ -79,3 +79,9 @@ it('stops a camera that finishes opening after the overlay has gone', async () =
   await act(async () => open(tracker.stop))
   expect(tracker.stop).toHaveBeenCalled()
 })
+
+it('says the camera failed when the start fails for an unknown reason', async () => {
+  tracker.start = () => Promise.reject(new Error('x'))
+  render(<HandsMode {...props()} />)
+  expect(await screen.findByText(PROBLEM_TEXT.failed)).toBeInTheDocument()
+})
