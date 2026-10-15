@@ -42,6 +42,24 @@ export function orbited(camera: Vec3, target: Vec3, radians: number): Vec3 {
   return { x: target.x + dx * cos + dz * sin, y: camera.y, z: target.z - dx * sin + dz * cos }
 }
 
+/** The camera never tips closer than this to straight above or below what it looks at (OrbitControls flips there). */
+export const MIN_POLAR = 0.15
+
+/** The camera tipped round the target by `radians` (positive looks from higher up), at the same distance. */
+export function tilted(camera: Vec3, target: Vec3, radians: number): Vec3 {
+  const dx = camera.x - target.x
+  const dy = camera.y - target.y
+  const dz = camera.z - target.z
+  const distance = Math.hypot(dx, dy, dz)
+  if (distance === 0) return { ...camera }
+  const flat = Math.hypot(dx, dz)
+  const polar = clamp(Math.atan2(flat, dy) - radians, MIN_POLAR, Math.PI - MIN_POLAR)
+  // Straight above or below there's no direction to lean towards: lean towards +z, where the view starts.
+  const [ux, uz] = flat === 0 ? [0, 1] : [dx / flat, dz / flat]
+  const across = distance * Math.sin(polar)
+  return { x: target.x + ux * across, y: target.y + distance * Math.cos(polar), z: target.z + uz * across }
+}
+
 /** Where a move other than reset puts the camera; reset is the view's own fit, so it has no position here. */
 export function cameraTarget(action: Exclude<CameraAction, 'reset'>, camera: Vec3, target: Vec3): Vec3 {
   switch (action) {

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { cameraTarget, keyAction, MAX_DISTANCE, MIN_DISTANCE, orbited, zoomed, type Vec3 } from './cameraMoves'
+import { cameraTarget, keyAction, MAX_DISTANCE, MIN_DISTANCE, MIN_POLAR, orbited, tilted, zoomed, type Vec3 } from './cameraMoves'
 
 const origin: Vec3 = { x: 0, y: 0, z: 0 }
 const distance = (a: Vec3, b: Vec3) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
@@ -52,4 +52,23 @@ it('maps the view keys to moves, and ignores other keys and shortcut chords', ()
   expect(key('-', { metaKey: true })).toBeNull() // Cmd − zooms the page, not the graph
   expect(key('0', { ctrlKey: true })).toBeNull()
   expect(key('ArrowLeft', { altKey: true })).toBeNull()
+})
+
+it('tilts round the target at the same distance, keeping its heading, and undoes with the opposite tilt', () => {
+  expectNear(tilted({ x: 0, y: 0, z: 100 }, origin, Math.PI / 4), { x: 0, y: 100 * Math.SQRT1_2, z: 100 * Math.SQRT1_2 })
+  const target = { x: 5, y: 5, z: 5 }
+  const camera = { x: 40, y: -10, z: 70 }
+  expect(Math.abs(distance(tilted(camera, target, 0.3), target) - distance(camera, target))).toBeLessThan(1e-9)
+  expectNear(tilted(tilted(camera, target, 0.3), target, -0.3), camera)
+  const side = tilted({ x: 30, y: 0, z: 40 }, origin, 0.2)
+  expect(side.x / side.z).toBeCloseTo(0.75, 9)
+})
+
+it('never tilts past MIN_POLAR from straight above or below, and leans towards +z from the very top', () => {
+  expect(Math.acos(tilted({ x: 0, y: 0, z: 100 }, origin, 10).y / 100)).toBeCloseTo(MIN_POLAR, 9)
+  expect(Math.acos(tilted({ x: 0, y: 0, z: 100 }, origin, -10).y / 100)).toBeCloseTo(Math.PI - MIN_POLAR, 9)
+  const fromTop = tilted({ x: 0, y: 100, z: 0 }, origin, -0.5)
+  expect(fromTop.z).toBeGreaterThan(0)
+  expect(distance(fromTop, origin)).toBeCloseTo(100, 9)
+  expectNear(tilted(origin, origin, 1), origin)
 })
