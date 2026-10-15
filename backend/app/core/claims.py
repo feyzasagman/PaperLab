@@ -151,13 +151,25 @@ def _prompt(claim: str, quoted_text: str | None, texts: list[str], passages: lis
     return PROMPT_TEMPLATE.format(claim=claim, passages=numbered, quoted_text=quoted)
 
 
-def _pick_quote(reply: _Reply, texts: list[str]) -> tuple[str | None, int | None, bool]:
+def _pick_quote(reply: _Reply, texts: list[str], leads: list[str]) -> tuple[str | None, int | None, bool]:
     """(kept quote, 0-based passage index, a quote was asked for but dropped). The named passage is tried first
-    (a number outside the passages counts as none), then every passage; the quote's passage wins over the named one."""
+    (a number outside the passages counts as none), then every passage; the quote's passage wins over the named one.
+    A quote that starts in a passage's marked lead and ends in the passage is kept too;
+    one wholly in the lead is not."""
     if not reply.quote.strip():
         return None, None, False
     found = quotes.locate(reply.quote, reply.passage, texts)
-    return (found[0], found[1], False) if found else (None, None, True)
+    if found:
+        return found[0], found[1], False
+    named = reply.passage - 1 if reply.passage is not None and 1 <= reply.passage <= len(texts) else None
+    order = ([named] if named is not None else []) + [i for i in range(len(texts)) if i != named]
+    for i in order:
+        if not leads[i]:
+            continue
+        kept, _ = quotes.check_quotes([reply.quote], [f"{leads[i]} {texts[i]}"], 1)
+        if kept and quotes.fold(kept[0][0]) not in quotes.fold(leads[i]):
+            return kept[0][0], i, False
+    return None, None, True
 
 
 async def _write_output(session, paper, claim, content: dict, passages, model, connection_name) -> uuid.UUID:
@@ -220,7 +232,7 @@ async def verify_claim(
         return ClaimCheck(
             **base, verdict="cannot_verify", reason="model_error", passages=passages, model=model, output_id=output_id
         )
-    quote, index, dropped = _pick_quote(reply, texts)
+    quote, index, dropped = _pick_quote(reply, texts, leads)
     chosen = passages[index] if index is not None else {}
     low = dropped or (reply.verdict in CHECKED and quote is None)
     check = ClaimCheck(
