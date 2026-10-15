@@ -237,10 +237,11 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
       if (!graph || !target) return null
       const cam = graph.camera().position
       let best: { id: string; title: string } | null = null
-      let nearest = PICK_RADIUS
+      let nearestDepth = Infinity
       for (const node of data.nodes) {
         if (node.x === undefined) continue
-        // A paper behind the camera still projects onto the screen: skip anything not in front of it.
+        // A paper behind the camera still projects onto the screen, so only papers in front of it count, and of those
+        // under the pointer the nearest wins: it hides the ones behind.
         const ahead =
           (node.x - cam.x) * (target.x - cam.x) +
           ((node.y ?? 0) - cam.y) * (target.y - cam.y) +
@@ -248,8 +249,8 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
         if (ahead <= 0) continue
         const at = graph.graph2ScreenCoords(node.x, node.y ?? 0, node.z ?? 0)
         const gap = Math.hypot(at.x - x * size.width, at.y - y * size.height)
-        if (gap < nearest) {
-          nearest = gap
+        if (gap < PICK_RADIUS && ahead < nearestDepth) {
+          nearestDepth = ahead
           best = { id: node.id, title: node.title }
         }
       }
