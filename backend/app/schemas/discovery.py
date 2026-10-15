@@ -12,6 +12,7 @@ AuthorName = Annotated[str, Field(min_length=1, max_length=300)]
 # One generic dict field instead of one field per source, so a new source needs one new entry here, not a new
 # CandidateIn/CandidateOut field. The openalex pattern caps the total length at 20 characters, as the old field did.
 SOURCE_ID_PATTERNS: dict[str, re.Pattern[str]] = {
+    "dblp": re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,499}$"),
     "arxiv": re.compile(r"^(\d{4}\.\d{4,5}|[A-Za-z-]+(\.[A-Za-z]{2})?/\d{7})$"),
     "openalex": re.compile(r"^W\d{1,19}$"),
     "semantic_scholar": re.compile(r"^[0-9a-f]{40}$"),

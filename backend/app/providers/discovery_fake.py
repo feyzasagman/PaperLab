@@ -466,6 +466,16 @@ class FakeAdapter:
     handle: Callable[[httpx.Request], httpx.Response]
 
 
+def _dblp_handle(request: httpx.Request) -> httpx.Response:
+    offset = int(request.url.params.get("f", "0"))
+    size = int(request.url.params.get("h", "20"))
+    hits = [{"info": {"key": f"conf/paperlab/{i}", "title": title, "doi": doi}}
+            for i, (title, doi, _) in enumerate(PAPERS)][offset:offset + size]
+    return httpx.Response(200, json={"result": {"status": {"@code": "200"}, "hits": {
+        "@total": str(len(PAPERS)), "@sent": str(len(hits)), "hit": hits,
+    }}})
+
+
 def _openalex_handle(request: httpx.Request) -> httpx.Response:
     if "page" in request.url.params:
         return _openalex_search_page(request.url.params)
@@ -528,6 +538,7 @@ def _pdf_handle(request: httpx.Request) -> httpx.Response:
 
 
 ADAPTERS: tuple[FakeAdapter, ...] = (
+    FakeAdapter("dblp.org", lambda path, params: path == "/search/publ/api", _dblp_handle),
     FakeAdapter(
         "api.openalex.org",
         lambda path, params: path == "/works" or path.startswith("/works/"),

@@ -27,7 +27,7 @@ async def test_without_a_row_every_source_is_on_but_openalex(no_row):
         "unpaywall": True, "pubmed": True, "pmc": True, "europe_pmc": True, "zenodo": True, "hal": True,
         "acm_dl": True, "ssrn": False, "doaj": True, "openaire": True, "iacr_eprint": True,
         "biorxiv": True,
-        "medrxiv": True,
+        "medrxiv": True, "dblp": False,
     }  # fmt: skip
     assert sources.contact_email is None
     assert sources.api_keys == {
@@ -93,7 +93,7 @@ async def test_null_removes_the_email_or_a_key(no_row):
         ({"api_keys": {"core": "sk-​core-0123456789"}}, paper_sources.NOT_PLAIN_KEY),
         ({"api_keys": {"core": "sk-core\n0123456789"}}, paper_sources.NOT_PLAIN_KEY),
         ({"api_keys": {"arxiv": KEY}}, "arxiv doesn't take an API key"),
-        ({"enabled": {"dblp": True}}, "unknown paper source: dblp"),
+        ({"enabled": {"unknown_source": True}}, "unknown paper source: unknown_source"),
     ],
     ids=[
         "no-at", "no-dot", "too-long", "blank-key", "zero-width-space", "newline", "keyless-source", "unknown-source",

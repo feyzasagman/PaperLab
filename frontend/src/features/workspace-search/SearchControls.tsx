@@ -21,7 +21,7 @@ import type { SearchRunCreate, SearchRunSource } from '@/api/client'
 const SEARCH_SOURCES: Record<SearchRunSource, true> = {
   arxiv: true, crossref: true, core: true, semantic_scholar: true, openalex: true, pubmed: true,
   pmc: true, europe_pmc: true, zenodo: true, hal: true, acm_dl: true, ssrn: true, doaj: true, openaire: true,
-  iacr_eprint: true, biorxiv: true, medrxiv: true,
+  iacr_eprint: true, biorxiv: true, medrxiv: true, dblp: true,
 }
 
 export function isSearchSource(id: string): id is SearchRunSource {

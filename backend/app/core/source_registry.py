@@ -22,6 +22,7 @@ from app.core.candidates import (
     from_biorxiv,
     from_core,
     from_crossref,
+    from_dblp,
     from_doaj,
     from_europe_pmc,
     from_hal,
@@ -41,6 +42,7 @@ from app.providers import (
     biorxiv,
     core_ac,
     crossref,
+    dblp,
     doaj,
     europe_pmc,
     hal,
@@ -132,6 +134,10 @@ async def _doaj(http: httpx.AsyncClient, kind: str, value: str) -> list[Candidat
 async def _openaire(http: httpx.AsyncClient, kind: str, value: str) -> list[Candidate]:
     items = await openaire.search(http, value, PER_SOURCE)
     return [candidate for item in items if item and (candidate := from_openaire(item))]
+
+
+async def _dblp(http: httpx.AsyncClient, kind: str, value: str) -> list[Candidate]:
+    return [from_dblp(entry) for entry in await dblp.search(http, value, PER_SOURCE)]
 
 
 @dataclass(frozen=True)
@@ -244,6 +250,11 @@ REGISTRY: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="medrxiv", name="medRxiv", keyed=False, enabled_by_default=True, is_discovery_source=True,
         new_client=biorxiv.new_client, page=biorxiv.search_page_medrxiv, mapper=from_medrxiv, page_size=30,
+    ),
+    SourceSpec(
+        id="dblp", name="DBLP", keyed=False, enabled_by_default=False, is_discovery_source=True,
+        new_client=dblp.new_client, ask=_dblp, ask_kinds=("title",),
+        page=dblp.search_page, mapper=from_dblp, page_size=20,
     ),
 )
 

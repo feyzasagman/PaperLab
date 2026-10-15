@@ -199,6 +199,9 @@ References page, send Semantic Scholar the paper's DOI (its arXiv ID when the DO
 it has none. With OpenAlex ticked, the
 References tab also sends OpenAlex the paper's OpenAlex ID and the OpenAlex IDs of the works it cites. Your contact
 email goes to Crossref, Unpaywall and OpenAlex (when on), never to the others or to PDF hosts.
+DBLP is off by default. When enabled, Find papers and Workspace Search send DBLP search title words
+and pagination parameters, never PDFs, notes, contact email or API keys. DBLP supplies no PDFs; existing
+arXiv and Unpaywall resolution still applies.
 API keys stay in your local database and are never sent back to the browser. Adding a paper downloads its PDF from the
 free link found. None of them send a paper's text.
 An MCP client you connect, such as Claude Desktop, receives what its tools return: passages from your papers, paper

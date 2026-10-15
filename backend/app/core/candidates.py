@@ -179,6 +179,31 @@ def with_s2(candidate: Candidate, paper: dict[str, Any] | None) -> Candidate:
     )
 
 
+def from_dblp(entry: Mapping[str, Any]) -> Candidate:
+    """DBLP supplies metadata and landing pages, never PDF links."""
+    authors = (entry.get("authors") or {}).get("author") or []
+    if not isinstance(authors, list):
+        authors = [authors]
+    names = [a.get("text", "") if isinstance(a, dict) else a for a in authors]
+    year = str(entry.get("year") or "")
+    doi = (entry.get("doi") or "").removeprefix("https://doi.org/").strip().lower() or None
+    links = entry.get("ee") or []
+    if not isinstance(links, list):
+        links = [links]
+    arxiv_id = arxiv_from_doi(doi) or next(
+        (found for link in links if isinstance(link, str) and (found := _arxiv_from_url(link))), None
+    )
+    arxiv_id = _ARXIV_VERSION.sub("", arxiv_id) if arxiv_id else None
+    ids = {k: v for k, v in {"dblp": entry.get("key"), "arxiv": arxiv_id}.items() if v}
+    return Candidate(
+        title=html.unescape(entry.get("title") or "Untitled"),
+        authors=[html.unescape(n) for n in names if isinstance(n, str) and n][:MAX_AUTHORS],
+        year=int(year) if year.isdigit() and len(year) == 4 else None,
+        venue=entry.get("venue") or None, doi=doi, external_ids=ids,
+        pdf_urls=ordered_pdf_urls(arxiv_id), sources=("dblp",),
+    )
+
+
 def from_arxiv(entry: Mapping[str, Any]) -> Candidate:
     """An entry from providers/arxiv.py: its arXiv ID already has no version, and is always present (a parsed
     entry with no id is filtered out by providers/arxiv.py's own _entry())."""
@@ -517,6 +542,7 @@ def _ids(candidate: Candidate) -> set[str]:
         "iacr_eprint": candidate.external_ids.get("iacr_eprint"),
         "biorxiv": candidate.external_ids.get("biorxiv"),
         "medrxiv": candidate.external_ids.get("medrxiv"),
+        "dblp": candidate.external_ids.get("dblp"),
     }
     return {f"{kind}:{value.lower()}" for kind, value in keys.items() if value}
 
@@ -544,6 +570,7 @@ def _combined(records: list[Candidate]) -> Candidate:
     external_ids = {
         k: v
         for k, v in {
+            "dblp": first_id("dblp"),
             "arxiv": arxiv_id, "openalex": first_id("openalex"), "semantic_scholar": first_id("semantic_scholar"),
             "core": first_id("core"), "pubmed": first_id("pubmed"), "pmc": first_id("pmc"),
             "zenodo": first_id("zenodo"), "hal": first_id("hal"), "doaj": first_id("doaj"),

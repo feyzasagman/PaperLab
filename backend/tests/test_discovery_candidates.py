@@ -227,7 +227,7 @@ def test_every_recorded_candidate_round_trips_through_the_api_schemas(candidate)
 @pytest.mark.parametrize(
     "external_ids",
     [{"arxiv": "not-an-arxiv-id"}, {"openalex": "12345"}, {"openalex": "W" + "1" * 20},
-     {"semantic_scholar": "too-short"}, {"core": "abc"}, {"dblp": "anything"}],
+     {"semantic_scholar": "too-short"}, {"core": "abc"}, {"unknown_source": "anything"}],
     ids=["bad-arxiv", "bad-openalex", "openalex-over-20-chars", "bad-s2", "bad-core", "unknown-source"],
 )  # fmt: skip
 def test_candidate_in_rejects_a_malformed_or_unknown_external_id(external_ids):

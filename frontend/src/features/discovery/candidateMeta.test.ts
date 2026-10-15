@@ -157,3 +157,9 @@ describe('sameCandidate', () => {
     ).toBe(false)
   })
 })
+
+
+it('links DBLP metadata-only candidates to their record', () => {
+  expect(pageLink({ doi: null, external_ids: { dblp: 'conf/nips/VaswaniSPUJGKP17' } }))
+    .toBe('https://dblp.org/rec/conf/nips/VaswaniSPUJGKP17')
+})

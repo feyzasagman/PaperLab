@@ -49,10 +49,16 @@ async def test_the_e2e_fake_finds_three_papers_and_suggests_the_same_three(sessi
     assert [c.sources for c in found.results] == [
         (
             "openalex", "crossref", "arxiv", "core", "pubmed", "pmc", "europe_pmc", "zenodo", "hal", "acm_dl",
-            "ssrn", "doaj", "openaire",
+            "ssrn", "doaj", "openaire", "dblp",
         ),
-        ("openalex", "crossref", "pubmed", "pmc", "europe_pmc", "zenodo", "hal", "acm_dl", "ssrn", "doaj", "openaire"),
-        ("openalex", "crossref", "pubmed", "pmc", "europe_pmc", "zenodo", "hal", "acm_dl", "ssrn", "doaj", "openaire"),
+        (
+            "openalex", "crossref", "pubmed", "pmc", "europe_pmc", "zenodo", "hal", "acm_dl", "ssrn", "doaj",
+            "openaire", "dblp",
+        ),
+        (
+            "openalex", "crossref", "pubmed", "pmc", "europe_pmc", "zenodo", "hal", "acm_dl", "ssrn", "doaj",
+            "openaire", "dblp",
+        ),
     ]  # fmt: skip
     assert [bool(c.pdf_urls) for c in found.results] == [True, True, False]
 

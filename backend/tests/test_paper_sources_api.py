@@ -41,6 +41,7 @@ async def test_the_defaults_come_back_without_a_row(client, no_row):
         ("iacr_eprint", "IACR ePrint", True, None),
         ("biorxiv", "bioRxiv", True, None),
         ("medrxiv", "medRxiv", True, None),
+        ("dblp", "DBLP", False, None),
     ]
 
 
@@ -78,7 +79,7 @@ async def test_null_removes_a_key_and_the_email(client, no_row):
         {"api_keys": {"core": ""}},
         {"api_keys": {"core": "sk-​core-0123456789"}},
         {"api_keys": {"arxiv": KEY}},
-        {"enabled": {"dblp": True}},
+        {"enabled": {"unknown_source": True}},
         {"enabled": {"crossref": None}},
         {"enabled": {"crossref": "yes please"}},
         {"surprise": True},

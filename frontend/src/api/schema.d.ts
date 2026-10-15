@@ -1901,7 +1901,7 @@ export interface components {
             /** Pdf Urls */
             pdf_urls: string[];
             /** Sources */
-            sources: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "unpaywall" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv")[];
+            sources: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "unpaywall" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv" | "dblp")[];
             /** Paper Id */
             paper_id: string | null;
         };
@@ -3118,7 +3118,7 @@ export interface components {
              * Id
              * @enum {string}
              */
-            id: "openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "unpaywall" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv";
+            id: "openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "unpaywall" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv" | "dblp";
             /** Name */
             name: string;
             /** Enabled */
@@ -3603,7 +3603,7 @@ export interface components {
              * Sources
              * @default []
              */
-            sources: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv")[];
+            sources: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv" | "dblp")[];
             /** Year From */
             year_from?: number | null;
             /** Year To */
@@ -3675,7 +3675,7 @@ export interface components {
             /** Query */
             query?: string | null;
             /** Sources */
-            sources?: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv")[] | null;
+            sources?: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv" | "dblp")[] | null;
             /** Year From */
             year_from?: number | null;
             /** Year To */
@@ -3773,7 +3773,7 @@ export interface components {
                 [key: string]: unknown;
             };
             /** Sources */
-            sources: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv")[];
+            sources: ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core" | "pubmed" | "pmc" | "europe_pmc" | "zenodo" | "hal" | "acm_dl" | "ssrn" | "doaj" | "openaire" | "iacr_eprint" | "biorxiv" | "medrxiv" | "dblp")[];
             /**
              * Query Overrides
              * @default {}
@@ -4016,6 +4016,8 @@ export interface components {
             biorxiv?: boolean;
             /** Medrxiv */
             medrxiv?: boolean;
+            /** Dblp */
+            dblp?: boolean;
         };
         /** SourcesEvent */
         SourcesEvent: {

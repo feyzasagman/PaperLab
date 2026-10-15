@@ -2,6 +2,7 @@ import type { PaperSourceId } from '@/api/client'
 
 /** What each source is for, under its switch in Settings → Paper sources. */
 export const DESCRIPTIONS: Record<PaperSourceId, string> = {
+  dblp: 'Computer-science publications, venues and authors. Free, no key needed; no PDFs.',
   openalex: 'Title and DOI search, and details for the papers you upload.',
   crossref: 'Title and DOI search across papers with a DOI. Free.',
   semantic_scholar: 'Similar papers, arXiv lookups and free PDF links. Free; a free key avoids its busy shared pool.',
