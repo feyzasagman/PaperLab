@@ -8,7 +8,9 @@ import { useBoxSize } from './useBoxSize'
 import { emphasis, labelledIds, linkState, shortTitle } from './paperModel'
 import { hasWebGL, WEBGL_FAILED, WEBGL_OFF, type ViewProps } from './viewModel'
 import { CameraControls } from './CameraControls'
-import { hopKey } from './paperWalk'
+import { TourControls } from './TourControls'
+import { useTour } from './useTour'
+import { hopKey, tourByLinks, tourByYear, type TourOrder } from './paperWalk'
 import { orbitOf, useHandsCamera } from './useHandsCamera'
 import {
   cameraTarget,
@@ -116,6 +118,9 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
   // Where the last button or key press is sending the camera, until its glide ends: a second press during the glide
   // builds on that goal, not on the camera's half-way pose (which orbits through odd distances).
   const aim = useRef<{ until: number; position: Vec3; lookAt: Vec3 } | null>(null)
+  const tour = useTour(onSelect, focusId)
+  const stopTour = tour.stop
+  const [tourOrder, setTourOrder] = useState<TourOrder>('links')
   const [handsOn, setHandsOn] = useState(false)
 
   useEffect(() => {
@@ -180,6 +185,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
   const move = useCallback(
     (action: CameraAction) => {
       stopSpin()
+      stopTour()
       setTouched(true)
       const graph = graphRef.current
       if (!graph) return
@@ -199,21 +205,31 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
       aim.current = { until: performance.now() + MOVE_MS, position, lookAt }
       graph.cameraPosition(position, lookAt, MOVE_MS)
     },
-    [fit, stopSpin, setTouched],
+    [fit, stopSpin, stopTour, setTouched],
   )
 
   const getGraph = useCallback(() => graphRef.current, [])
   const handsMoved = useCallback(() => {
     aim.current = null
-  }, [])
+    stopTour()
+  }, [stopTour])
   const { turnBy, zoomBy, pickAt } = useHandsCamera(getGraph, data.nodes, size, handsMoved)
 
   // Turning Hands mode on counts as the owner taking over: the spin stops and the how-to line goes.
   const toggleHands = useCallback(() => {
     stopSpin()
+    stopTour()
     setTouched(true)
     setHandsOn((on) => !on)
-  }, [stopSpin, setTouched, setHandsOn])
+  }, [stopSpin, stopTour, setTouched, setHandsOn])
+
+  // The tour counts as the owner taking over too: the spin stops and the how-to line goes.
+  const toggleTour = useCallback(() => {
+    if (tour.running) return stopTour()
+    stopSpin()
+    setTouched(true)
+    tour.start(tourOrder === 'links' ? tourByLinks(nodes, links, focusId) : tourByYear(nodes))
+  }, [tour, stopTour, stopSpin, setTouched, tourOrder, nodes, links, focusId])
 
   // OrbitControls is ready once the canvas has mounted. The scroll wheel gets the same limits as the buttons, and
   // every camera change (a drag, a glide, the spin) is written onto the group for the E2E tests to read.
@@ -232,6 +248,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
     const takeOver = () => {
       aim.current = null
       stopSpin()
+      stopTour()
       setTouched(true)
     }
     controls.addEventListener('change', show)
@@ -240,7 +257,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
       controls.removeEventListener('change', show)
       controls.removeEventListener('start', takeOver)
     }
-  }, [canvasReady, stopSpin])
+  }, [canvasReady, stopSpin, stopTour])
 
   // Selecting a paper flies the camera to it, so it sits in the middle of the view, close enough to read its name.
   useEffect(() => {
@@ -342,6 +359,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
             {canvasReady && (
               <CameraControls onAction={move} showHint={!touched} hands={{ on: handsOn, onToggle: toggleHands }} />
             )}
+            {canvasReady && <TourControls running={tour.running} order={tourOrder} onOrder={setTourOrder} onToggle={toggleTour} />}
             {canvasReady && handsOn && (
               <Suspense fallback={null}>
                 <HandsMode onTurn={turnBy} onZoom={zoomBy} pickAt={pickAt} onSelect={onSelect} onHop={onStep} />

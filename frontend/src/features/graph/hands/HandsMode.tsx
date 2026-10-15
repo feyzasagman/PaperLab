@@ -104,7 +104,7 @@ export default function HandsMode(props: HandsModeProps) {
 
   return (
     <>
-      <div className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-4.5rem)] flex-col items-start gap-1">
+      <div className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-15rem)] flex-col items-start gap-1">
         {/* Mirrored like a selfie, so moving a hand right moves it right on screen too. */}
         <video ref={video} aria-hidden muted playsInline className="w-40 -scale-x-100 rounded-md border bg-black/40" />
         <p role="status" className="rounded-md bg-background/85 px-2 py-1 text-xs">
