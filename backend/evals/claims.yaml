@@ -126,3 +126,13 @@ cases:
     kind: unrelated
     claim: Creativity scores are higher for adults who meditate before the task.
     accepted: [not_addressed]
+  # Art or Artifice? (the sentence crosses a page break and a sidebar: pilot 2 N1)
+  - paper: "Art or Artifice?"
+    kind: "true"
+    claim: In the TTCW evaluation, none of the LLM judges correlated positively with the expert assessments.
+    accepted: [supported, partially_supported]
+  # Why the standard definition of creativity fails (most passages start mid-sentence)
+  - paper: Why the standard definition of creativity
+    kind: "true"
+    claim: Effectiveness in the standard definition is also called usefulness, value, adaptiveness, fit or appropriateness.
+    accepted: [supported, partially_supported]

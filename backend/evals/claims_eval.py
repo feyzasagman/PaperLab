@@ -8,6 +8,7 @@ Exit 0 pass, 1 fail (a gate missed, or no real model answer), 2 bad input.
 
 import argparse
 import asyncio
+import contextlib
 import json
 import statistics
 import sys
@@ -22,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import claims, llm_connections
+from app.core import claims, llm_connections, prompts
 from app.core.errors import DomainError
 from app.db import SessionLocal
 from app.models import LLMOutput
@@ -115,7 +116,8 @@ def passes(metrics: Metrics, gates: Gates) -> bool:
 
 async def _check(session, case: Case, paper_id, llm) -> dict:
     start = time.perf_counter()
-    row = {"paper": case.paper, "claim": case.claim, "kind": case.kind, "accepted": case.accepted}
+    row = {"paper": case.paper, "claim": case.claim, "kind": case.kind, "accepted": case.accepted,
+           "prompt_version": claims.CLAIM_PROMPT_VERSION}
     try:
         check = await claims.verify_claim(session, case.claim, paper_id=paper_id, llm=llm, save=False)
     except (LLMError, LLMUnavailable) as exc:
@@ -145,15 +147,36 @@ async def evaluate(session: AsyncSession, cases: list[Case], llm, limit: int | N
     return score(rows), rows
 
 
-async def execute(session, config: Config, llm, limit: int | None, out: Path | None) -> int:
+@contextlib.contextmanager
+def using_prompt(version: int | None):
+    """Run with claim_check.v<version>.md instead of the module's prompt; the module's own is restored on exit."""
+    if version is None or version == claims.CLAIM_PROMPT_VERSION:
+        yield
+        return
     try:
-        metrics, rows = await evaluate(session, config.cases, llm, limit)
+        system, template = prompts.load("claim_check", version).split("\n<!-- prompt -->\n")
+    except FileNotFoundError as exc:
+        raise EvalError(f"no claim check prompt version {version}") from exc
+    saved = claims.SYSTEM_PROMPT, claims.PROMPT_TEMPLATE, claims.CLAIM_PROMPT_VERSION
+    claims.SYSTEM_PROMPT, claims.PROMPT_TEMPLATE, claims.CLAIM_PROMPT_VERSION = system, template, version
+    try:
+        yield
+    finally:
+        claims.SYSTEM_PROMPT, claims.PROMPT_TEMPLATE, claims.CLAIM_PROMPT_VERSION = saved
+
+
+async def execute(session, config: Config, llm, limit: int | None, out: Path | None,
+                  prompt_version: int | None = None) -> int:
+    try:
+        with using_prompt(prompt_version):
+            version = claims.CLAIM_PROMPT_VERSION
+            metrics, rows = await evaluate(session, config.cases, llm, limit)
     except (EvalError, DomainError) as exc:
         print(f"bad input: {exc}", file=sys.stderr)
         return 2
     if out:
         out.write_text("".join(json.dumps(r) + "\n" for r in rows))
-    print(metrics)
+    print(f"prompt_version={version}", metrics)
     if metrics.overstated_accuracy is None:
         print("overstated accuracy: n/a (no overstated case in this run)")
     if metrics.cannot_verify == metrics.cases:
@@ -175,7 +198,8 @@ async def _main(args) -> int:
     config = load_config(args.config)
     async with SessionLocal() as session:
         connection, model = await llm_connections.resolve(session, None)
-        return await execute(session, config, build_llm(connection, model.name), args.limit, args.out)
+        llm = build_llm(connection, model.name)
+        return await execute(session, config, llm, args.limit, args.out, args.prompt_version)
 
 
 def main() -> None:
@@ -183,6 +207,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=CONFIG)
     parser.add_argument("--limit", type=_limit)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--prompt-version", type=int, help="claim_check prompt version (default: the current one)")
     try:
         code = asyncio.run(_main(parser.parse_args()))
     except (EvalError, DomainError) as exc:

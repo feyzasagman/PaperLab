@@ -19,7 +19,7 @@ from app.models import Chunk, LLMOutput, Paper, PaperStatus
 from app.providers.base import LLMError, LLMUnavailable
 from app.providers.llm import build_llm
 
-CLAIM_PROMPT_VERSION = 1
+CLAIM_PROMPT_VERSION = 2
 PASSAGES = 6
 SYSTEM_PROMPT, PROMPT_TEMPLATE = prompts.load("claim_check", CLAIM_PROMPT_VERSION).split("\n<!-- prompt -->\n")
 OUTPUT_KIND = "claim_check"
