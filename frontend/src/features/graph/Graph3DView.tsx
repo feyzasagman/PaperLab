@@ -8,6 +8,7 @@ import { useBoxSize } from './useBoxSize'
 import { emphasis, labelledIds, linkState, shortTitle } from './paperModel'
 import { hasWebGL, WEBGL_FAILED, WEBGL_OFF, type ViewProps } from './viewModel'
 import { CameraControls } from './CameraControls'
+import { hopKey } from './paperWalk'
 import { orbitOf, useHandsCamera } from './useHandsCamera'
 import {
   cameraTarget,
@@ -95,7 +96,7 @@ type Link3D = {
 }
 
 /** Which clusters overlap in 2D (spec §5.2): free physics in three dimensions, orbit by dragging, zoom by scrolling. */
-export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onSelect }: ViewProps) {
+export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onSelect, onStep }: ViewProps) {
   const [Graph, setGraph] = useState<typeof import('react-force-graph-3d').default | null>(null)
   const [papers, setPapers] = useState<typeof import('./paperNodes') | null>(null)
   const [failed, setFailed] = useState(false)
@@ -269,10 +270,16 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
             ref={view}
             role="group"
             aria-label="3D graph"
-            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Plus - 0"
+            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Plus - 0 [ ]"
             tabIndex={0}
             data-auto-rotate="false"
             onKeyDown={(event) => {
+              const hop = hopKey(event)
+              if (hop !== null && onStep) {
+                event.preventDefault()
+                onStep(hop)
+                return
+              }
               const action = keyAction(event)
               if (!action) return
               event.preventDefault() // arrows turn the view, not the page
@@ -337,7 +344,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
             )}
             {canvasReady && handsOn && (
               <Suspense fallback={null}>
-                <HandsMode onTurn={turnBy} onZoom={zoomBy} pickAt={pickAt} onSelect={onSelect} />
+                <HandsMode onTurn={turnBy} onZoom={zoomBy} pickAt={pickAt} onSelect={onSelect} onHop={onStep} />
               </Suspense>
             )}
           </div>
