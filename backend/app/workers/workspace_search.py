@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -35,6 +36,9 @@ MAX_BATCH_ITERATIONS = 200
 # Margin subtracted from SEARCH_RUN_JOB_TIMEOUT for the loop's own wall-clock deadline (C2 Important 1) — enough
 # room for one in-flight batch's HTTP calls plus the final commit to finish after the deadline trips.
 SEARCH_RUN_SAFETY_MARGIN = 60
+
+_SECRET_PARAM = re.compile(r"(?i)((?:api_)?key=)[^&\s']+")
+_ERROR_MAX_CHARS = 200
 
 _TRY_LOCK = text("SELECT pg_try_advisory_xact_lock(:key)")
 
@@ -138,8 +142,16 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
                     per_source_out = dict(run.stats_json.get("per_source_out_of_range", {}))
                     for source, count in result.out_of_range.items():
                         per_source_out[source] = per_source_out.get(source, 0) + count
+                    per_source_error = dict(run.stats_json.get("per_source_error", {}))
+                    for source, error in result.errors.items():
+                        per_source_error[source] = _SECRET_PARAM.sub(r"\1***", error)[:_ERROR_MAX_CHARS]
+                        logger.warning("workspace search run %s: %s failed: %s", rid, source, per_source_error[source])
+                    capped = [s for s in result.sources_exhausted if s in result.errors]  # exhausted by the error cap
+                    failed_sources = sorted({*run.stats_json.get("failed_sources", []), *capped})
                     run.stats_json = {
                         **run.stats_json,
+                        "per_source_error": per_source_error,
+                        "failed_sources": failed_sources,
                         "last_batch_new_hits": result.new_hits,
                         "per_source_raw_count": per_source_raw,
                         "per_source_out_of_range": per_source_out,

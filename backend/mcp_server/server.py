@@ -189,7 +189,9 @@ async def start_search_run(
 @mcp.tool(annotations=READ_ONLY)
 @recoverable
 async def get_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
-    """Use to check a search run's progress: status (running, exhausted, stopped) and per-source counts in stats."""
+    """Use to check a search run's progress: status (running, exhausted, stopped) and per-source counts in stats.
+    stats_json.failed_sources lists sources that stopped answering (their hits are missing); per_source_error holds
+    the last error seen per source, even for one that later recovered."""
     async with sessions() as session:
         return await pipeline.get_search_run(session, run_id)
 

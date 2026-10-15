@@ -2,10 +2,23 @@ import { useState } from 'react'
 import { useSearchRun, useStartSearchRun, useStopSearchRun } from '@/api/queries'
 import { Scene3D } from '@/features/scene3d/Scene3D'
 import type { SearchRunStatus } from '@/features/scene3d/poses'
+import { SOURCE_NAMES } from '@/features/discovery/candidateMeta'
 import { SearchControls } from './SearchControls'
 import { HitTable } from './HitTable'
 import { SavedSearches } from './SavedSearches'
 import { ScreeningAssist } from './ScreeningAssist'
+
+/** The sources that failed on a run, each with its error text when the server gave a string; tolerant of bad shapes. */
+function failedSources(stats: Record<string, unknown> | null | undefined): { id: string; error?: string }[] {
+  const failed = stats?.failed_sources
+  const errors = stats?.per_source_error
+  const table = errors && typeof errors === 'object' && !Array.isArray(errors) ? (errors as Record<string, unknown>) : {}
+  return (Array.isArray(failed) ? failed.filter((x): x is string => typeof x === 'string') : []).map((id) => {
+    const error = Object.hasOwn(table, id) ? table[id] : undefined
+    const name = Object.hasOwn(SOURCE_NAMES, id) ? SOURCE_NAMES[id as keyof typeof SOURCE_NAMES] : id
+    return { id: name, error: typeof error === 'string' ? error : undefined }
+  })
+}
 
 // Module level, so the scene never restarts on a re-render.
 const loadSearchRunScene = () => import('@/features/scene3d/directors/searchRun')
@@ -38,6 +51,7 @@ export function SearchTab({
       <SavedSearches workspaceId={workspaceId} currentQuery={query} onRunStarted={onRunIdChange} />
       <ScreeningAssist workspaceId={workspaceId} />
       {run.data && (
+        <>
         <div className="flex items-center gap-2 border-b px-3 py-1 text-sm text-muted-foreground">
           <Scene3D
             load={loadSearchRunScene}
@@ -54,6 +68,12 @@ export function SearchTab({
             </span>
           )}
         </div>
+        {failedSources(run.data.stats_json).map(({ id, error }) => (
+          <div key={id} className="border-b px-3 py-1 text-sm text-muted-foreground">
+            {id} didn't answer{error ? `: ${error}` : ''}
+          </div>
+        ))}
+        </>
       )}
       <HitTable workspaceId={workspaceId} run={run.data} />
     </div>

@@ -99,9 +99,13 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                 rows = {hit.id: (hit, ref) for hit, ref in pool.rows}
                 run_id = workspace.suggest_run_id
                 deadline = time.monotonic() + SUGGEST_JOB_TIMEOUT - SAFETY_MARGIN
+                hit_deadline = False
                 for hit_id in suggestion_queue(pool, run_id)[: workspace.suggest_total or None]:  # D265: start sets it to the cap
                     await session.refresh(workspace)
-                    if workspace.suggest_status != "running" or time.monotonic() >= deadline:
+                    if workspace.suggest_status != "running":
+                        break
+                    if time.monotonic() >= deadline:
+                        hit_deadline = True
                         break
                     hit, ref = rows[hit_id]
                     await session.refresh(hit)
@@ -120,6 +124,11 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                     await session.commit()
                 # Only a normal finish imports: not a Stop (pressed during the last hit too) or the deadline.
                 await session.refresh(workspace)
+                if hit_deadline and workspace.suggest_status == "running":
+                    workspace.suggest_error = (
+                        f"Stopped at the {SUGGEST_JOB_TIMEOUT // 3600}-hour limit after {workspace.suggest_done} of "
+                        f"{workspace.suggest_total}; press Suggest to continue with the rest."
+                    )
                 if (
                     workspace.suggest_status == "running" and time.monotonic() < deadline
                     and workspace.auto_import_min_relevance is not None

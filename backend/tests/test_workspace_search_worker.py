@@ -504,3 +504,68 @@ async def test_a_run_that_exhausts_every_source_is_not_cut_short(session, worker
     reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
     assert reloaded.status == "exhausted" and not reloaded.stats_json.get("cut_short")
     assert "unfinished_sources" not in reloaded.stats_json
+
+
+async def _run_with_clock_jumping_past_cooldowns(session, monkeypatch, sources, transport):
+    from app.core import workspace_search as core_module
+
+    fake_clock = itertools.count(0, step=10_000)
+    monkeypatch.setattr(core_module, "_now", lambda: datetime.fromtimestamp(next(fake_clock), tz=timezone.utc))
+    run = await _new_run(session, "running", sources)
+    for source in sources:
+        session.add(WorkspaceSearchCursor(run_id=run.id, source=source, cursor_json={"value": 0}))
+    await session.commit()
+    await worker_module.run_workspace_search({"transport": transport}, str(run.id))
+    return await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+
+
+async def test_a_source_that_errors_to_the_cap_is_recorded_as_failed(session, worker, monkeypatch, caplog):
+    from app.core import workspace_search as core_module
+
+    async def broken_page(*_args, **_kwargs):
+        raise httpx.HTTPStatusError("Client error '429' for url", request=httpx.Request("GET", "https://x"),
+                                    response=httpx.Response(429))
+
+    monkeypatch.setitem(core_module._PAGE_FUNCS, "crossref", broken_page)
+    monkeypatch.setattr(core_module, "_ERROR_BACKOFF_SECONDS", (0,))
+    caplog.set_level("WARNING")
+    reloaded = await _run_with_clock_jumping_past_cooldowns(
+        session, monkeypatch, ["arxiv", "crossref"], discovery_fake.transport()
+    )
+    stats = reloaded.stats_json
+    assert stats["failed_sources"] == ["crossref"]
+    assert "429" in stats["per_source_error"]["crossref"]
+    assert stats["per_source_raw_count"].get("arxiv", 0) > 0
+    assert "crossref failed" in caplog.text
+
+
+async def test_a_source_that_errors_once_then_succeeds_is_not_failed(session, worker, monkeypatch):
+    from app.core import workspace_search as core_module
+
+    real = core_module._PAGE_FUNCS["arxiv"]
+    calls = itertools.count()
+
+    async def flaky(*args, **kwargs):
+        if next(calls) == 0:
+            raise httpx.ConnectError("boom")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setitem(core_module._PAGE_FUNCS, "arxiv", flaky)
+    reloaded = await _run_with_clock_jumping_past_cooldowns(session, monkeypatch, ["arxiv"],
+                                                            discovery_fake.transport())
+    assert reloaded.stats_json.get("failed_sources", []) == []
+    assert "arxiv" in reloaded.stats_json["per_source_error"]
+    assert reloaded.stats_json["per_source_raw_count"]["arxiv"] > 0
+
+
+async def test_a_stored_source_error_is_short_and_has_no_api_key(session, worker, monkeypatch):
+    from app.core import workspace_search as core_module
+
+    async def broken_page(*_args, **_kwargs):
+        raise httpx.ConnectError("Client error '429' for url 'https://x/api?key=SECRET&q=a'" + "x" * 300)
+
+    monkeypatch.setitem(core_module._PAGE_FUNCS, "arxiv", broken_page)
+    reloaded = await _run_with_clock_jumping_past_cooldowns(session, monkeypatch, ["arxiv"],
+                                                            discovery_fake.transport())
+    stored = reloaded.stats_json["per_source_error"]["arxiv"]
+    assert len(stored) <= 200 and "SECRET" not in stored and "429" in stored

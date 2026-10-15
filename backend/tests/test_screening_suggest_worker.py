@@ -460,3 +460,44 @@ async def test_a_capped_start_scores_only_the_best_suggest_total_hits(session, w
     llm = worker(ScriptedLLM([J("include")]))
     await worker_module.suggest_screening({}, str(workspace.id))
     assert len(llm.calls) == 1
+
+
+async def _run_until_clock_passes_deadline(session, worker, monkeypatch, *, stop=False):
+    workspace, _ = await _running(session, [("a", None), ("b", None), ("c", None)])
+    workspace.suggest_total = 3
+    await session.flush()
+    now = [0.0]
+    monkeypatch.setattr(worker_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    async def after_first(call):
+        if stop:
+            workspace.suggest_status = "stopping"
+            await session.flush()
+        else:
+            now[0] = 10**9
+
+    worker(ScriptedLLM([J("include")] * 3, on_call=after_first))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    await session.refresh(workspace)
+    return workspace
+
+
+async def test_a_job_that_hits_its_time_limit_says_so_with_done_and_total(session, worker, monkeypatch):
+    workspace = await _run_until_clock_passes_deadline(session, worker, monkeypatch)
+    assert workspace.suggest_done == 1
+    assert "4-hour limit after 1 of 3" in workspace.suggest_error
+    assert workspace.suggest_error.endswith("press Suggest to continue with the rest.")
+    assert "press Suggest to continue" in workspace.suggest_error
+
+
+async def test_a_stop_leaves_no_time_limit_error(session, worker, monkeypatch):
+    workspace = await _run_until_clock_passes_deadline(session, worker, monkeypatch, stop=True)
+    assert workspace.suggest_error is None
+
+
+async def test_a_normal_finish_leaves_no_error(session, worker):
+    workspace, _ = await _running(session, [("a", None), ("b", None)])
+    worker(ScriptedLLM([J("include"), J("include")]))
+    await worker_module.suggest_screening({}, str(workspace.id))
+    await session.refresh(workspace)
+    assert workspace.suggest_error is None
