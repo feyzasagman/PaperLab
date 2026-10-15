@@ -94,6 +94,8 @@ export async function startTracker(
   }
   const tick = () => {
     if (stopped) return
+    // Scheduled first, so a throw from onFrame can't end tracking.
+    frame = requestAnimationFrame(tick)
     // Only a new camera frame is worth reading: the screen redraws faster than most webcams film.
     if (video.currentTime !== lastFrameTime) {
       lastFrameTime = video.currentTime
@@ -113,7 +115,6 @@ export async function startTracker(
       }
       if (hands) onFrame(hands, now)
     }
-    frame = requestAnimationFrame(tick)
   }
   frame = requestAnimationFrame(tick)
   return stop

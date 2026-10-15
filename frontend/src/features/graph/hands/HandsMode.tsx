@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Hand, Point } from './gestures'
-import { dwellStep, handStep, initialDwell, initialHandState, type HandMode } from './handControl'
+import { dwellStep, handStep, initialDwell, initialHandState, REARM, type HandMode } from './handControl'
 import { startTracker, TrackerError, type TrackerProblem } from './handTracker'
 
 export type HandsModeProps = {
@@ -51,6 +51,7 @@ export default function HandsMode(props: HandsModeProps) {
   useEffect(() => {
     let hands = initialHandState()
     let dwell = initialDwell()
+    let opened: Point | null = null
     let stop: (() => void) | null = null
     let gone = false
     const onFrame = (seen: Hand[], now: number) => {
@@ -62,14 +63,24 @@ export default function HandsMode(props: HandsModeProps) {
       if (moves.zoom !== null) onZoom(moves.zoom)
       if (!moves.pointer) {
         dwell = initialDwell()
+        opened = null
         setPointer(null)
         return
       }
       const paper = pickAt(moves.pointer.x, moves.pointer.y)
+      if (opened && Math.hypot(moves.pointer.x - opened.x, moves.pointer.y - opened.y) > REARM) opened = null
+      if (opened) {
+        dwell = initialDwell()
+        setPointer({ at: moves.pointer, title: paper?.title ?? null, progress: 0 })
+        return
+      }
       const held = dwellStep(dwell, paper?.id ?? null, now)
       dwell = held.dwell
       setPointer({ at: moves.pointer, title: paper?.title ?? null, progress: held.progress })
-      if (held.selected) onSelect(held.selected)
+      if (held.selected) {
+        opened = moves.pointer
+        onSelect(held.selected)
+      }
     }
     startTracker(video.current!, onFrame, (problem) => {
       if (!gone) setProblem(problem)

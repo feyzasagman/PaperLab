@@ -122,6 +122,9 @@ export function handStep(state: HandState, hands: readonly Hand[]): [HandState, 
 /** Holding the pointer on one paper this long opens it. */
 export const DWELL_MS = 1000
 
+/** After a paper opens, the pointer must move this far (a share of the view) before holding still can open another: the camera's fly to the opened paper slides others under a still pointer. */
+export const REARM = 0.05
+
 export type Dwell = { id: string | null; since: number; done: boolean }
 export const initialDwell = (): Dwell => ({ id: null, since: 0, done: false })
 

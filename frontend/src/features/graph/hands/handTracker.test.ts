@@ -158,3 +158,27 @@ it('leaves a second start on the same element running when the first one stops',
   expect(element.srcObject).toBe(streamB)
   expect(stopB).not.toHaveBeenCalled()
 })
+
+it('keeps tracking after the frame callback throws', async () => {
+  // The browser reports a throw in a frame callback and carries on; this stub does the same, so the test sees it.
+  const thrown: unknown[] = []
+  vi.stubGlobal('requestAnimationFrame', (run: FrameRequestCallback) =>
+    setTimeout(() => {
+      try {
+        run(0)
+      } catch (error) {
+        thrown.push(error)
+      }
+    }, 0) as unknown as number,
+  )
+  let t = 0
+  const element = video()
+  Object.defineProperty(element, 'currentTime', { get: () => ++t, configurable: true })
+  const onFrame = vi.fn().mockImplementationOnce(() => {
+    throw new Error('boom')
+  })
+  const stop = await startTracker(element, onFrame)
+  await vi.waitFor(() => expect(onFrame.mock.calls.length).toBeGreaterThan(1))
+  expect(thrown).toHaveLength(1)
+  stop()
+})

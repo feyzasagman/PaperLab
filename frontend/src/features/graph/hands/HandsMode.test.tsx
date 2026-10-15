@@ -85,3 +85,18 @@ it('says the camera failed when the start fails for an unknown reason', async ()
   render(<HandsMode {...props()} />)
   expect(await screen.findByText(PROBLEM_TEXT.failed)).toBeInTheDocument()
 })
+
+it('opens one paper per hold: a neighbour sliding under a still pointer waits for the pointer to move', async () => {
+  const p = props()
+  let calls = 0
+  p.pickAt = vi.fn(() => (++calls <= 15 ? { id: 'p1', title: 'Alpha' } : { id: 'p2', title: 'Beta' }))
+  render(<HandsMode {...p} />)
+  await vi.waitFor(() => expect(tracker.onFrame).not.toBeNull())
+  feed(repeat([f.point], 30))
+  expect(p.onSelect).toHaveBeenCalledTimes(1)
+  expect(p.onSelect).toHaveBeenCalledWith('p1')
+  const moved = f.point.map((q) => ({ x: q.x - 0.1, y: q.y }))
+  feed(repeat([moved], 20), 5000)
+  expect(p.onSelect).toHaveBeenCalledTimes(2)
+  expect(p.onSelect).toHaveBeenLastCalledWith('p2')
+})
