@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { APIRequestContext, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 
 // Parallel-safe (D51): every assertion is scoped to this test's own workspaces, so other specs' papers and the
@@ -288,5 +288,103 @@ test.describe('the graph views', () => {
     await expect(page.locator('[data-view="matrix"]')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Papers', exact: true })).toBeVisible()
     await expect(page.locator('.graph-paper').first()).toBeVisible()
+  })
+
+  /** Two linked papers in this test's own workspace, on the 3D view; null when this browser has no WebGL 2. */
+  async function open3d(page: Page, request: APIRequestContext, ids: string[], workspaceId: string, workspaceName: string) {
+    for (const id of ids) {
+      expect((await request.put(`/api/workspaces/${workspaceId}/papers/${id}`)).status()).toBe(204)
+    }
+    const drawn = await request.post('/api/links', { data: { from_paper: ids[0], to_paper: ids[1], label: 'builds on' } })
+    expect(drawn.status()).toBe(201)
+    await page.goto('/#/graph')
+    await scopeTo(page, workspaceName)
+    await page.getByRole('checkbox', { name: /^Your links/ }).check()
+    await page.getByRole('tablist', { name: 'Graph view' }).getByRole('tab', { name: '3D' }).click()
+    await expect(page.locator('[data-view="3d"][data-ready="true"]')).toBeVisible({ timeout: 20_000 })
+    if (await page.getByText(WEBGL_OFF).count()) return null
+    const view = page.getByRole('group', { name: '3D graph' })
+    await expect(view).toHaveAttribute('data-fitted', 'true', { timeout: 20_000 })
+    return view
+  }
+
+  test('the 3D view moves by its buttons and keys, and Reset frames the papers again', async ({
+    page,
+    request,
+    paperId,
+    secondPaperId,
+    workspaceId,
+    workspaceName,
+  }) => {
+    // Reduced motion: no entrance and no spin, so the camera moves only when this test moves it.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const view = await open3d(page, request, [paperId, secondPaperId], workspaceId, workspaceName)
+    test.skip(view === null, 'this browser has no WebGL 2')
+    const read = async (name: string) => Number(await view!.getAttribute(name))
+    const distance = () => read('data-camera-distance')
+    const azimuth = () => read('data-camera-azimuth')
+    // The first fit glides for 400 ms: wait until two reads 200 ms apart agree.
+    await expect
+      .poll(async () => {
+        const before = await distance()
+        await page.waitForTimeout(200)
+        return before > 0 && before === (await distance())
+      })
+      .toBe(true)
+    const fitted = await distance()
+    await expect(view!).toHaveAttribute('data-auto-rotate', 'false')
+    await expect(page.getByText('Drag to rotate · Right-drag to move · Scroll to zoom · Click a paper to select it')).toBeVisible()
+
+    const buttons = page.getByRole('group', { name: 'Move the 3D view' })
+    await buttons.getByRole('button', { name: 'Zoom in' }).click()
+    await expect.poll(distance).toBeLessThan(fitted * 0.85)
+    // The how-to line goes at the first move and doesn't come back.
+    await expect(page.getByText(/^Drag to rotate/)).toHaveCount(0)
+    await expect.poll(distance).toBeGreaterThan(fitted * 0.75) // one step, not a runaway
+
+    // Keys work while the 3D group has focus: a left arrow turns the view a sixteenth of a turn at the same distance.
+    const near = await distance()
+    const startAngle = await azimuth()
+    await view!.focus()
+    await page.keyboard.press('ArrowLeft')
+    const turned = async () => (((await azimuth()) - startAngle + 540) % 360) - 180
+    await expect.poll(turned).toBeCloseTo(22.5, 0)
+    expect(Math.abs((await distance()) - near)).toBeLessThan(0.5)
+    // The arrow moved the view, not the page.
+    expect(await page.evaluate(() => window.scrollY)).toBe(0)
+
+    // Zoom out undoes zoom in; 0 is Reset, which frames the papers at the first fit's distance again.
+    await buttons.getByRole('button', { name: 'Zoom out' }).click()
+    await expect.poll(async () => Math.abs((await distance()) - fitted) / fitted).toBeLessThan(0.02)
+    await buttons.getByRole('button', { name: 'Zoom in' }).click()
+    await buttons.getByRole('button', { name: 'Zoom in' }).click()
+    await expect.poll(distance).toBeLessThan(fitted * 0.7)
+    await view!.focus()
+    await page.keyboard.press('0')
+    await expect.poll(async () => Math.abs((await distance()) - fitted) / fitted).toBeLessThan(0.02)
+  })
+
+  test('the 3D view spins gently until the first move, then stays still', async ({
+    page,
+    request,
+    paperId,
+    secondPaperId,
+    workspaceId,
+    workspaceName,
+  }) => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const view = await open3d(page, request, [paperId, secondPaperId], workspaceId, workspaceName)
+    test.skip(view === null, 'this browser has no WebGL 2')
+    await expect(view!).toHaveAttribute('data-auto-rotate', 'true')
+    const angle = async () => Number(await view!.getAttribute('data-camera-azimuth'))
+    const first = await angle()
+    await expect.poll(angle).not.toBe(first) // it really turns
+
+    await page.getByRole('group', { name: 'Move the 3D view' }).getByRole('button', { name: 'Rotate right' }).click()
+    await expect(view!).toHaveAttribute('data-auto-rotate', 'false')
+    await page.waitForTimeout(600) // the button's own 400 ms glide ends
+    const settled = await angle()
+    await page.waitForTimeout(1000)
+    expect(await angle()).toBe(settled)
   })
 })
