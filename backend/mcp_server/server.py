@@ -393,6 +393,7 @@ async def verify_claim(
     from the paper; evidence_level tells how much text was available (full_text, abstract_only or metadata_only),
     and cannot_verify means there was no text to check, never a guess. confidence=low means the quote couldn't be
     found in the paper (or none was given): tell the owner the verdict is unconfirmed and show no quote as evidence.
+    If quote_page_start is set, the quote begins on that page: cite pages quote_page_start-quote_page.
     save=true keeps the check as an AI note on
     the paper. A remote default model is refused unless the owner agreed and you pass allow_remote=true."""
     async with sessions() as session:
@@ -417,7 +418,9 @@ async def verify_claims(
     against Y, the source read; `via` names X. Up to 30 citations per call: send a note with more in parts of at most
     30, each with the reference list appended. Verdicts are AI judgements backed by quotes; confidence=low means the
     quote couldn't be found in the paper (or none was given): tell the owner the verdict is unconfirmed and show no
-    quote as evidence. save=true keeps each as an AI note. A remote default model is refused unless the owner agreed
+    quote as evidence.
+    If quote_page_start is set, the quote begins on that page: cite pages quote_page_start-quote_page.
+    save=true keeps each as an AI note. A remote default model is refused unless the owner agreed
     and you pass allow_remote=true."""
     async with sessions() as session:
         return await pipeline.verify_claims(session, text, workspace, save, allow_remote)

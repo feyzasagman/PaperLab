@@ -157,7 +157,12 @@ async def test_every_returned_quote_is_a_fold_substring_of_a_returned_passage(se
                 session, "c", paper_id=paper.id, llm=Scripted(reply(passage=passage, quote=attempt))
             )
             if check.quote is not None:
-                assert notes.fold(check.quote).replace("- ", "-") in quotes.fold(texts[check.quote_chunk_id])
+                kept = notes.fold(check.quote).replace("- ", "-")
+                own = quotes.fold(texts[check.quote_chunk_id])
+                before = quotes.fold(" ".join(c.text for c in chunks if c.id != check.quote_chunk_id))
+                assert kept in own or (kept in f"{before} {own}" and kept not in before), (
+                    "a kept quote is a fold-substring of its passage, or of its lead + passage while overlapping it"
+                )
                 assert len(check.quote.split()) >= 3 and len(check.quote) <= 300
             else:
                 assert check.confidence == "low" or attempt == ""
@@ -285,6 +290,54 @@ async def test_a_previous_chunk_that_ends_cleanly_adds_no_context(session, monke
     llm = Scripted(reply("not_addressed"))
     await claims.verify_claim(session, "Something holds here.", paper_id=paper.id, llm=llm)
     assert "It ends cleanly" not in llm.prompts[0]
+
+
+LEAD_P2 = (
+    "Intro sentence here. In the standard definition, effective is often substituted with the terms useful, valuable,"
+)
+LEAD_P3 = "adaptive, fitting, or appropriate (Abraham, 2018). More text follows here."
+SPANNING = "effective is often substituted with the terms useful, valuable, adaptive, fitting, or appropriate"
+
+
+async def test_a_quote_running_from_the_lead_into_its_passage_is_kept(session, monkeypatch):
+    paper, last = await chunks_on_pages(session, (2, LEAD_P2), (3, LEAD_P3))
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("supported", 1, SPANNING)))
+    assert check.quote == SPANNING and check.quote_page == 3 and check.confidence == "high"
+    assert (check.quote_page_start, check.quote_page) == (2, 3)
+
+
+async def test_a_quote_inside_its_passage_has_no_start_page(session, monkeypatch):
+    paper, last = await chunks_on_pages(session, (2, LEAD_P2), (3, LEAD_P3))
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    quote = "adaptive, fitting, or appropriate (Abraham, 2018)"
+    check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("supported", 1, quote)))
+    assert check.quote == quote and check.quote_page_start is None
+
+
+async def test_a_spanning_quote_with_its_lead_on_the_same_page_has_no_start_page(session, monkeypatch):
+    paper, last = await chunks_on_pages(session, (3, LEAD_P2), (3, LEAD_P3))
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("supported", 1, SPANNING)))
+    assert check.quote == SPANNING and check.quote_page == 3 and check.quote_page_start is None
+
+
+async def test_a_quote_wholly_inside_the_lead_is_still_dropped(session, monkeypatch):
+    paper, last = await chunks_on_pages(session, (2, LEAD_P2), (3, LEAD_P3))
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    quote = "effective is often substituted with the terms useful, valuable"
+    check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("supported", 1, quote)))
+    assert check.quote is None and check.confidence == "low"
+
+
+async def test_saving_a_spanning_quote_writes_the_note(session, monkeypatch):
+    paper, last = await chunks_on_pages(session, (2, LEAD_P2), (3, LEAD_P3))
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    llm = Scripted(reply("supported", 1, SPANNING, reason="Defined."))
+    check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=llm, save=True)
+    note = await saved(session, paper.id, check.note_id)
+    assert note.body == "Claim: c\nVerdict: Supported. Defined."
+    assert note.anchors == []
 
 
 async def chunks_on_pages(session, *pages_and_texts):
