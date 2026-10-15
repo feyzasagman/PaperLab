@@ -1,4 +1,4 @@
-import { Minus, Plus, RotateCcw, RotateCw, Scan, type LucideIcon } from 'lucide-react'
+import { Hand, Minus, Plus, RotateCcw, RotateCw, Scan, type LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { CameraAction } from './cameraMoves'
 
@@ -16,7 +16,14 @@ export const HINT = 'Drag to rotate · Right-drag to move · Scroll to zoom · C
  * The 3D view's on-screen moves, and a one-line how-to until the owner first moves the view. It only says which
  * move was asked for; the view decides what that does to the camera.
  */
-export function CameraControls({ onAction, showHint }: { onAction: (action: CameraAction) => void; showHint: boolean }) {
+type Props = {
+  onAction: (action: CameraAction) => void
+  showHint: boolean
+  /** Hands mode's on/off switch, when the view offers it. */
+  hands?: { on: boolean; onToggle: () => void }
+}
+
+export function CameraControls({ onAction, showHint, hands }: Props) {
   return (
     <>
       {showHint && (
@@ -35,6 +42,18 @@ export function CameraControls({ onAction, showHint }: { onAction: (action: Came
             <Icon aria-hidden />
           </Button>
         ))}
+        {hands && (
+          <Button
+            variant={hands.on ? 'secondary' : 'ghost'}
+            size="icon-sm"
+            aria-label="Hands mode"
+            aria-pressed={hands.on}
+            title="Hands mode"
+            onClick={hands.onToggle}
+          >
+            <Hand aria-hidden />
+          </Button>
+        )}
       </div>
     </>
   )
