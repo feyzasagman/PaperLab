@@ -58,6 +58,7 @@ class ClaimCheck:
     output_id: uuid.UUID | None = None
     note_id: uuid.UUID | None = None
     paper_status: str | None = None  # set when the paper is still being ingested (reason not_ready)
+    quote_page_start: int | None = None  # page where a quote starts, when it began on an earlier page than quote_page
 
 
 async def _paper(session: AsyncSession, paper_id: uuid.UUID | None, doi: str | None) -> Paper:
@@ -82,41 +83,44 @@ def _dangles(text: str) -> bool:
     return not text.rstrip().rstrip("\"'”’)]").rstrip().endswith((".", "!", "?", ":"))
 
 
-async def _predecessor(session, chunk) -> str:
+async def _predecessor(session, chunk) -> tuple[str, int | None]:
     """The text a lower-case-starting chunk continues: the chunk before it if that ends mid-sentence, else the last
-    chunk of the previous page (a sidebar or figure caption can sit between the halves), else nothing."""
+    chunk of the previous page (a sidebar or figure caption can sit between the halves), else nothing
+    as (text, page)."""
     ordinal = select(Chunk.ordinal).where(Chunk.id == chunk.id).scalar_subquery()
     queries = (
-        select(Chunk.text).where(Chunk.paper_id == chunk.paper_id, Chunk.ordinal == ordinal - 1),
-        select(Chunk.text)
+        select(Chunk.text, Chunk.page).where(Chunk.paper_id == chunk.paper_id, Chunk.ordinal == ordinal - 1),
+        select(Chunk.text, Chunk.page)
         .where(Chunk.paper_id == chunk.paper_id, Chunk.page == chunk.page - 1)
         .order_by(Chunk.ordinal.desc())
         .limit(1),
     )
     for query in queries:
-        before = await session.scalar(query) or ""
-        if before.strip() and _dangles(before):
-            return before
-    return ""
+        row = (await session.execute(query)).first()
+        if row and row.text.strip() and _dangles(row.text):
+            return row.text, row.page
+    return "", None
 
 
-async def _leads(session, found) -> list[str]:
+async def _leads(session, found) -> tuple[list[str], list[int | None]]:
     """For each passage that starts mid-sentence (its first letter is lower-case), the start of that sentence: the
     text after the last sentence end of its predecessor chunk. Chunks never cross a page, so a sentence over a page
     break is split, and its first half can hold the negation ("none of" | "the LLMs … correlate positively", pilot 2
-    N1). Context only: quotes are still taken from the passage itself."""
-    leads = []
+    N1). Also the page each lead came from. Quotes are still taken from the passage itself."""
+    leads, pages = [], []
     for chunk in found:
-        before = await _predecessor(session, chunk) if chunk.text.lstrip()[:1].islower() else ""
+        before, page = await _predecessor(session, chunk) if chunk.text.lstrip()[:1].islower() else ("", None)
         ends = list(_SENTENCE_END.finditer(before))
         leads.append((before[ends[-1].end() :] if ends else before).strip()[-LEAD_CHARS:])
-    return leads
+        pages.append(page)
+    return leads, pages
 
 
 async def _passages(
     session, paper: Paper, claim: str, quoted_text: str | None
-) -> tuple[str, list[dict], list[str], list[str]]:
-    """(evidence level, passage descriptions, passage texts, sentence starts): the best chunks, else the abstract."""
+) -> tuple[str, list[dict], list[str], list[str], list[int | None]]:
+    """(evidence level, passage descriptions, passage texts, sentence starts, their pages):
+    the best chunks, else the abstract."""
     has_chunks = paper.status == PaperStatus.READY and await session.scalar(
         select(func.count()).select_from(Chunk).where(Chunk.paper_id == paper.id)
     )
@@ -125,15 +129,17 @@ async def _passages(
             session, f"{claim} {quoted_text}" if quoted_text else claim, paper_ids=[paper.id], k=PASSAGES
         )
         if found:
+            leads, lead_pages = await _leads(session, found)
             return (
                 "full_text",
                 [{"chunk_id": c.id, "page": c.page, "section": c.section} for c in found],
                 [c.text for c in found],
-                await _leads(session, found),
+                leads,
+                lead_pages,
             )
     if (paper.abstract or "").strip():
-        return "abstract_only", [{"chunk_id": None, "page": None, "section": None}], [paper.abstract], [""]
-    return "metadata_only", [], [], []
+        return "abstract_only", [{"chunk_id": None, "page": None, "section": None}], [paper.abstract], [""], [None]
+    return "metadata_only", [], [], [], []
 
 
 def _prompt(claim: str, quoted_text: str | None, texts: list[str], passages: list[dict], leads: list[str]) -> str:
@@ -151,16 +157,17 @@ def _prompt(claim: str, quoted_text: str | None, texts: list[str], passages: lis
     return PROMPT_TEMPLATE.format(claim=claim, passages=numbered, quoted_text=quoted)
 
 
-def _pick_quote(reply: _Reply, texts: list[str], leads: list[str]) -> tuple[str | None, int | None, bool]:
-    """(kept quote, 0-based passage index, a quote was asked for but dropped). The named passage is tried first
+def _pick_quote(reply: _Reply, texts: list[str], leads: list[str]) -> tuple[str | None, int | None, bool, bool]:
+    """(kept quote, 0-based passage index, a quote was asked for but dropped,
+    it ran from the lead). The named passage is tried first
     (a number outside the passages counts as none), then every passage; the quote's passage wins over the named one.
     A quote that starts in a passage's marked lead and ends in the passage is kept too;
     one wholly in the lead is not."""
     if not reply.quote.strip():
-        return None, None, False
+        return None, None, False, False
     found = quotes.locate(reply.quote, reply.passage, texts)
     if found:
-        return found[0], found[1], False
+        return found[0], found[1], False, False
     named = reply.passage - 1 if reply.passage is not None and 1 <= reply.passage <= len(texts) else None
     order = ([named] if named is not None else []) + [i for i in range(len(texts)) if i != named]
     for i in order:
@@ -168,8 +175,8 @@ def _pick_quote(reply: _Reply, texts: list[str], leads: list[str]) -> tuple[str 
             continue
         kept, _ = quotes.check_quotes([reply.quote], [f"{leads[i]} {texts[i]}"], 1)
         if kept and quotes.fold(kept[0][0]) not in quotes.fold(leads[i]):
-            return kept[0][0], i, False
-    return None, None, True
+            return kept[0][0], i, False, True
+    return None, None, True, False
 
 
 async def _write_output(session, paper, claim, content: dict, passages, model, connection_name) -> uuid.UUID:
@@ -216,7 +223,7 @@ async def verify_claim(
     if not claim.strip():
         raise InvalidInput("empty_claim", detail="The claim is empty.")
     paper = await _paper(session, paper_id, doi)
-    level, passages, texts, leads = await _passages(session, paper, claim, quoted_text)
+    level, passages, texts, leads, lead_pages = await _passages(session, paper, claim, quoted_text)
     base = {"claim": claim, "paper_id": paper.id, "paper_title": paper.title, "evidence_level": level}
     if level == "metadata_only":
         if paper.status not in (PaperStatus.READY, PaperStatus.FAILED):  # still ingesting: text may come
@@ -232,8 +239,9 @@ async def verify_claim(
         return ClaimCheck(
             **base, verdict="cannot_verify", reason="model_error", passages=passages, model=model, output_id=output_id
         )
-    quote, index, dropped = _pick_quote(reply, texts, leads)
+    quote, index, dropped, spans = _pick_quote(reply, texts, leads)
     chosen = passages[index] if index is not None else {}
+    start = lead_pages[index] if spans and lead_pages[index] != chosen.get("page") else None
     low = dropped or (reply.verdict in CHECKED and quote is None)
     check = ClaimCheck(
         **base,
@@ -241,6 +249,7 @@ async def verify_claim(
         reason=reply.reason.strip(),
         quote=quote,
         quote_page=chosen.get("page"),
+        quote_page_start=start,
         quote_section=chosen.get("section"),
         quote_chunk_id=chosen.get("chunk_id"),
         passages=passages,

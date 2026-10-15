@@ -304,6 +304,22 @@ async def test_a_quote_running_from_the_lead_into_its_passage_is_kept(session, m
     monkeypatch.setattr(retrieval, "retrieve", only(last))
     check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("supported", 1, SPANNING)))
     assert check.quote == SPANNING and check.quote_page == 3 and check.confidence == "high"
+    assert (check.quote_page_start, check.quote_page) == (2, 3)
+
+
+async def test_a_quote_inside_its_passage_has_no_start_page(session, monkeypatch):
+    paper, last = await chunks_on_pages(session, (2, LEAD_P2), (3, LEAD_P3))
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    quote = "adaptive, fitting, or appropriate (Abraham, 2018)"
+    check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("supported", 1, quote)))
+    assert check.quote == quote and check.quote_page_start is None
+
+
+async def test_a_spanning_quote_with_its_lead_on_the_same_page_has_no_start_page(session, monkeypatch):
+    paper, last = await chunks_on_pages(session, (3, LEAD_P2), (3, LEAD_P3))
+    monkeypatch.setattr(retrieval, "retrieve", only(last))
+    check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=Scripted(reply("supported", 1, SPANNING)))
+    assert check.quote == SPANNING and check.quote_page == 3 and check.quote_page_start is None
 
 
 async def test_a_quote_wholly_inside_the_lead_is_still_dropped(session, monkeypatch):
@@ -321,6 +337,7 @@ async def test_saving_a_spanning_quote_writes_the_note(session, monkeypatch):
     check = await claims.verify_claim(session, "c", paper_id=paper.id, llm=llm, save=True)
     note = await saved(session, paper.id, check.note_id)
     assert note.body == "Claim: c\nVerdict: Supported. Defined."
+    assert note.anchors == []
 
 
 async def chunks_on_pages(session, *pages_and_texts):
