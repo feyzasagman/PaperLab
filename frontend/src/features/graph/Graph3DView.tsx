@@ -210,8 +210,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
     [fit, stopSpin, setTouched],
   )
 
-  // Hands mode moves the camera straight to each frame's pose: frames come about thirty times a second, too often to
-  // glide between, and each step is small.
+  // Hands mode sets the camera straight to each frame's pose: frames come ~30 times a second, too often to glide.
   const nudge = useCallback(
     (step: (camera: Vec3, target: Vec3) => Vec3) => {
       const graph = graphRef.current
