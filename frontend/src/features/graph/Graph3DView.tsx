@@ -218,6 +218,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
     const { x = 0, y = 0, z = 0 } = node
     const away = 1 + 190 / Math.max(Math.hypot(x, y, z), 1)
     stopSpin()
+    aim.current = null
     graph.cameraPosition({ x: x * away, y: y * away, z: z * away }, { x, y, z }, 900)
   }, [focusId, data, stopSpin])
 
@@ -237,7 +238,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
             ref={view}
             role="group"
             aria-label="3D graph"
-            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown + - 0"
+            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Plus - 0"
             tabIndex={0}
             data-auto-rotate="false"
             onKeyDown={(event) => {

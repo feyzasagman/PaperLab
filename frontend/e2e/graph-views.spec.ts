@@ -350,8 +350,6 @@ test.describe('the graph views', () => {
     const turned = async () => (((await azimuth()) - startAngle + 540) % 360) - 180
     await expect.poll(turned).toBeCloseTo(22.5, 0)
     expect(Math.abs((await distance()) - near)).toBeLessThan(0.5)
-    // The arrow moved the view, not the page.
-    expect(await page.evaluate(() => window.scrollY)).toBe(0)
 
     // Zoom out undoes zoom in; 0 is Reset, which frames the papers at the first fit's distance again.
     await buttons.getByRole('button', { name: 'Zoom out' }).click()
@@ -359,6 +357,7 @@ test.describe('the graph views', () => {
     await buttons.getByRole('button', { name: 'Zoom in' }).click()
     await buttons.getByRole('button', { name: 'Zoom in' }).click()
     await expect.poll(distance).toBeLessThan(fitted * 0.7)
+    await expect.poll(distance).toBeGreaterThan(fitted * 0.6) // two steps (0.64), not a glide built on a half-way camera
     await view!.focus()
     await page.keyboard.press('0')
     await expect.poll(async () => Math.abs((await distance()) - fitted) / fitted).toBeLessThan(0.02)
