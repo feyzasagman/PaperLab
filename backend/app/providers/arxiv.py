@@ -13,6 +13,9 @@ import httpx
 BASE_URL = "https://export.arxiv.org"
 TIMEOUT = httpx.Timeout(10.0)
 MAX_TITLE_WORDS = 12
+# ponytail: a search run's OR query never runs dry, so paging stops here; past this arXiv's relevance order is noise.
+# Raise it if runs show relevant papers still arriving on the last page.
+MAX_SEARCH_RESULTS = 200
 NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 # arXiv's title index leaves these out, so `ti:of` matches nothing and empties the whole AND query (probed
 # 2026-09-17, each against `ti:learning`). CORE's parser reads and/or/not, in any case, as operators and answers 500.
@@ -58,15 +61,26 @@ async def get(http: httpx.AsyncClient, arxiv_id: str) -> dict | None:
     return entries[0] if entries else None
 
 
-async def search_page(http: httpx.AsyncClient, title: str, page_size: int, cursor: int) -> tuple[list[dict], int | None]:
-    """One page of arXiv results. `cursor` is `start`; returns (entries, next_start_or_None)."""
-    words = title_words(title)
+async def search_page(
+    http: httpx.AsyncClient, topic: str, page_size: int, cursor: int
+) -> tuple[list[dict], int | None]:
+    """One page of a search run's arXiv results: any word of `topic` in any field, best first. `cursor` is `start`;
+    returns (entries, next_start_or_None).
+
+    Not search's every-word-in-the-title form: for "mode collapse RLHF diversity" that gave 0, and every word in any
+    field gave 5 and missed the two papers a reader wants, which this form ranks in its top 8 (probed 2026-10-15)."""
+    words = title_words(topic)
     if not words:
         return [], None
-    query = " AND ".join(f"ti:{word}" for word in words)
-    response = await http.get("/api/query", params={"search_query": query, "start": cursor, "max_results": page_size})
+    query = " OR ".join(f"all:{word}" for word in words)
+    params = {
+        "search_query": query, "start": cursor, "max_results": page_size,
+        "sortBy": "relevance", "sortOrder": "descending",
+    }  # fmt: skip
+    response = await http.get("/api/query", params=params)
     entries = _entries(response.raise_for_status())
-    next_cursor = cursor + page_size if len(entries) == page_size else None
+    more = len(entries) == page_size and cursor + page_size < MAX_SEARCH_RESULTS
+    next_cursor = cursor + page_size if more else None
     return entries, next_cursor
 
 
