@@ -103,11 +103,13 @@ export function GraphPanel({
   // Moves focus so a screen reader announces what just appeared: to the heading when a paper becomes focused, or
   // (after "Clear focus", which records the paper it cleared) back to that paper's own button. Depends on the
   // focused paper's *identity* only: a refetch that returns a new object for the same id must not steal focus again.
+  // Not when the owner is already in the stepping buttons or the 3D view (Next, [ ], the tour): moving focus there would break their flow, so the position line announces instead.
   useEffect(() => {
     const previous = shownId.current
     shownId.current = focused?.id ?? null
     if (focused !== null) {
-      connectionsHeading.current?.focus()
+      const keep = document.activeElement?.closest('[role="group"][aria-label="Step through linked papers"], [data-view="3d"]')
+      if (!keep) connectionsHeading.current?.focus()
     } else if (clearedId.current) {
       buttonRefs.current.get(clearedId.current)?.focus()
       clearedId.current = null
@@ -173,8 +175,11 @@ export function GraphPanel({
                   <ChevronRight aria-hidden />
                 </Button>
               </div>
-              {stepping.from !== null && (
-                <p className="text-xs text-muted-foreground">{`Linked to ${stepping.from}: ${stepping.position} of ${stepping.count}`}</p>
+              {stepping.from !== null && stepping.position > 0 && (
+                <p aria-live="polite" className="text-xs text-muted-foreground">
+                  <span className="sr-only">{`${focused.title}. `}</span>
+                  <span>{`Linked to ${stepping.from}: ${stepping.position} of ${stepping.count}`}</span>
+                </p>
               )}
             </div>
           )}

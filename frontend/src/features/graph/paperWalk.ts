@@ -39,7 +39,7 @@ export type TourOrder = 'links' | 'years'
  */
 export function tourByLinks(nodes: readonly GraphNode[], links: GraphLink[], start: string | null): string[] {
   const counts = degrees(links)
-  const known = start !== null && nodes.some((node) => node.id === start)
+  const known = start !== null && nodes.some((node) => node.id === start) && (counts.get(start) ?? 0) > 0
   const first = known ? start : [...nodes].sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0))[0]?.id
   if (first === undefined) return []
   const visited = [first]

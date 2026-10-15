@@ -71,6 +71,8 @@ test.describe('stepping and the tour', () => {
     await view.focus()
     await page.keyboard.press(']')
     await expect(panel.getByText(`Linked to ${alpha}: 1 of 2`)).toBeVisible()
+    await page.keyboard.press(']') // focus stays in the 3D group, so a second press still steps
+    await expect(panel.getByText(`Linked to ${alpha}: 2 of 2`)).toBeVisible()
   })
 
   test('the tour opens linked papers one after another and stops when the owner picks a paper', async ({
@@ -106,6 +108,7 @@ test.describe('stepping and the tour', () => {
 
     // Again, but the owner picks a paper mid-tour: the tour stops and leaves the camera there.
     await tour.getByRole('button', { name: 'Tour' }).click()
+    await expect(tour.getByRole('button', { name: 'Tour' })).toHaveAttribute('aria-pressed', 'true')
     await page.locator(`.graph-paper[data-paper-id="${paperId}"]`).click()
     await expect(tour.getByRole('button', { name: 'Tour' })).toHaveAttribute('aria-pressed', 'false')
     await page.waitForTimeout(3_500) // longer than one tour stop

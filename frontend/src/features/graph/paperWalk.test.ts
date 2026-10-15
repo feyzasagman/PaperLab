@@ -51,6 +51,7 @@ const tourLinks = [
 
 it('tours by links breadth first from the open paper, or from the most linked one, each paper once', () => {
   expect(tourByLinks(nodes, tourLinks, 'a')).toEqual(['a', 'b', 'd', 'c'])
+  expect(tourByLinks(nodes, tourLinks, 'e')[0]).toBe('b') // a real paper with no links falls back like an unknown one
   expect(tourByLinks(nodes, tourLinks, null)).toEqual(['b', 'a', 'c', 'd']) // b and d tie on 3 links; b is listed first
   expect(tourByLinks(nodes, tourLinks, 'gone')).toEqual(['b', 'a', 'c', 'd'])
   expect(tourByLinks([], [], null)).toEqual([])

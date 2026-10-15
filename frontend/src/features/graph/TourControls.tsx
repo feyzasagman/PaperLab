@@ -2,7 +2,7 @@ import { Pause, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { TourOrder } from './paperWalk'
 
-export const TOUR_ORDERS: Record<TourOrder, string> = { links: 'Follow links', years: 'Oldest first' }
+const TOUR_ORDERS: Record<TourOrder, string> = { links: 'Follow links', years: 'Oldest first' }
 
 type Props = {
   running: boolean

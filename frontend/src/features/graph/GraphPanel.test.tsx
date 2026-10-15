@@ -36,3 +36,18 @@ it('offers no stepping for a paper with no links, and no position line before th
   expect(screen.getByRole('group', { name: 'Step through linked papers' })).toBeInTheDocument()
   expect(screen.queryByText(/^Linked to/)).toBeNull()
 })
+
+it('keeps keyboard focus on Next while stepping, and announces the paper that opened', () => {
+  const step = { from: 'Alpha', position: 1, count: 2 }
+  const { rerender } = render(<GraphPanel {...base} focused={nodes[1]} stepping={step} onStep={() => {}} />)
+  const next = screen.getByRole('button', { name: 'Next linked paper' })
+  next.focus()
+  rerender(<GraphPanel {...base} focused={nodes[2]} stepping={{ ...step, position: 2 }} onStep={() => {}} />)
+  expect(document.activeElement).toBe(next)
+  expect(screen.getByText('Gamma.')).toBeInTheDocument()
+})
+
+it('hides the position line when the open paper is no longer in the order', () => {
+  render(<GraphPanel {...base} focused={nodes[1]} stepping={{ from: 'Alpha', position: 0, count: 2 }} onStep={() => {}} />)
+  expect(screen.queryByText(/^Linked to/)).toBeNull()
+})
