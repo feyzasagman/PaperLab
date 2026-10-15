@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useSearchRun, useStartSearchRun, useStopSearchRun } from '@/api/queries'
 import { Scene3D } from '@/features/scene3d/Scene3D'
 import type { SearchRunStatus } from '@/features/scene3d/poses'
+import { SOURCE_NAMES } from '@/features/discovery/candidateMeta'
 import { SearchControls } from './SearchControls'
 import { HitTable } from './HitTable'
 import { SavedSearches } from './SavedSearches'
@@ -38,6 +39,7 @@ export function SearchTab({
       <SavedSearches workspaceId={workspaceId} currentQuery={query} onRunStarted={onRunIdChange} />
       <ScreeningAssist workspaceId={workspaceId} />
       {run.data && (
+        <>
         <div className="flex items-center gap-2 border-b px-3 py-1 text-sm text-muted-foreground">
           <Scene3D
             load={loadSearchRunScene}
@@ -54,6 +56,15 @@ export function SearchTab({
             </span>
           )}
         </div>
+        {((run.data.stats_json?.failed_sources as string[] | undefined) ?? []).map((id) => {
+          const error = (run.data.stats_json?.per_source_error as Record<string, string> | undefined)?.[id]
+          return (
+            <div key={id} className="border-b px-3 py-1 text-sm text-muted-foreground">
+              {SOURCE_NAMES[id as keyof typeof SOURCE_NAMES] ?? id} didn't answer{error ? `: ${error}` : ''}
+            </div>
+          )
+        })}
+        </>
       )}
       <HitTable workspaceId={workspaceId} run={run.data} />
     </div>

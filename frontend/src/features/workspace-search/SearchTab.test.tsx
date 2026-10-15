@@ -160,3 +160,18 @@ test('a run stopped by its time limit says so and how many sources were not fini
   renderWithClient(<SearchTab workspaceId="ws-1" runId="run-2" onRunIdChange={vi.fn()} />)
   await waitFor(() => expect(screen.getByText('Stopped early after 29 min — 4 sources not finished')).toBeInTheDocument())
 })
+
+test('a source that did not answer is named with its error, even when the run was not cut short', async () => {
+  const failedRun = {
+    id: 'run-3', workspace_id: 'ws-1', query_text: 'q', filters_json: {}, sources_json: ['semantic_scholar', 'arxiv'],
+    status: 'exhausted', started_at: '2026-09-24T00:00:00Z', stopped_at: null,
+    stats_json: {
+      failed_sources: ['semantic_scholar', 'arxiv'],
+      per_source_error: { semantic_scholar: '429 Too Many Requests' },
+    },
+  } as never
+  vi.mocked(api.getSearchRun).mockResolvedValue(failedRun)
+  renderWithClient(<SearchTab workspaceId="ws-1" runId="run-3" onRunIdChange={vi.fn()} />)
+  await waitFor(() => expect(screen.getByText("Semantic Scholar didn't answer: 429 Too Many Requests")).toBeInTheDocument())
+  expect(screen.getByText("arXiv didn't answer")).toBeInTheDocument()
+})
