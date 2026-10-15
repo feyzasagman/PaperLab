@@ -78,6 +78,48 @@ async def test_arxiv_next_cursor_when_page_is_short(monkeypatch):
     assert next_cursor is None  # page is short, no more data
 
 
+def _capture_arxiv(monkeypatch, entries: int) -> list[dict]:
+    """Every search_page request's params; each answer holds `entries` papers."""
+    seen = []
+    feed = "".join(
+        f"<entry><id>https://arxiv.org/abs/2301.{i:05d}v1</id><title>Paper {i}</title></entry>" for i in range(entries)
+    )
+
+    async def fake_get(self, url, params=None, **kwargs):
+        seen.append(params)
+        request = httpx.Request("GET", url, params=params)
+        return httpx.Response(200, text=f"<feed xmlns='http://www.w3.org/2005/Atom'>{feed}</feed>", request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    return seen
+
+
+async def test_arxiv_search_page_matches_any_word_in_any_field_best_first(monkeypatch):
+    seen = _capture_arxiv(monkeypatch, 0)
+    async with httpx.AsyncClient() as http:
+        await arxiv.search_page(http, "mode collapse RLHF diversity", page_size=20, cursor=0)
+        await arxiv.search_page(http, "(mode) OR collapse", page_size=20, cursor=0)
+    assert seen[0]["search_query"] == "all:mode OR all:collapse OR all:rlhf OR all:diversity"
+    assert (seen[0]["sortBy"], seen[0]["sortOrder"]) == ("relevance", "descending")
+    assert seen[1]["search_query"] == "all:mode OR all:collapse"  # no parentheses or operators reach arXiv
+
+
+async def test_arxiv_search_page_stops_at_the_result_cap(monkeypatch):
+    _capture_arxiv(monkeypatch, 20)
+    async with httpx.AsyncClient() as http:
+        _, before_cap = await arxiv.search_page(http, "learning", page_size=20, cursor=arxiv.MAX_SEARCH_RESULTS - 40)
+        _, at_cap = await arxiv.search_page(http, "learning", page_size=20, cursor=arxiv.MAX_SEARCH_RESULTS - 20)
+    assert before_cap == arxiv.MAX_SEARCH_RESULTS - 20
+    assert at_cap is None  # full page, but an OR query never runs dry
+
+
+async def test_arxiv_search_page_of_stopwords_sends_nothing(monkeypatch):
+    seen = _capture_arxiv(monkeypatch, 0)
+    async with httpx.AsyncClient() as http:
+        assert await arxiv.search_page(http, "the of and", page_size=20, cursor=0) == ([], None)
+    assert seen == []
+
+
 # --- core_ac ------------------------------------
 
 
