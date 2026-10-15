@@ -447,6 +447,20 @@ async def test_get_search_run_and_get_prisma_carry_a_cut_short_run(session, jobs
     assert len(prisma["notes"]) == 1 and "partial" in prisma["notes"][0]
 
 
+async def test_get_prisma_names_a_source_that_did_not_answer(session, jobs):
+    await new_workspace(session, "Failed src")
+    started = result(await call("start_search_run", workspace=f"Failed src {RUN}", query="q", sources=["arxiv"]))
+    run = await session.get(workspace_search.WorkspaceSearchRun, uuid.UUID(started["id"]))
+    run.status, run.stats_json = "exhausted", {"failed_sources": ["semantic_scholar"]}
+    await session.commit()
+    notes = result(await call("get_prisma", workspace=f"Failed src {RUN}"))["notes"]
+    assert notes == ["Semantic Scholar did not answer; identified excludes it."]
+
+    run.stats_json = {}
+    await session.commit()
+    assert result(await call("get_prisma", workspace=f"Failed src {RUN}"))["notes"] == []
+
+
 # --- screening criteria tools (M49) ---
 
 

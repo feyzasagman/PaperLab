@@ -127,7 +127,7 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                 if hit_deadline and workspace.suggest_status == "running":
                     workspace.suggest_error = (
                         f"Stopped at the {SUGGEST_JOB_TIMEOUT // 3600}-hour limit after {workspace.suggest_done} of "
-                        f"{workspace.suggest_total}; start pre-screening again to continue with the rest."
+                        f"{workspace.suggest_total}; press Suggest to continue with the rest."
                     )
                 if (
                     workspace.suggest_status == "running" and time.monotonic() < deadline
