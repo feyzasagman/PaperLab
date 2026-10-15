@@ -78,4 +78,6 @@ export type ViewProps = {
   inFocus: Set<string> | null
   /** Focuses a paper, exactly as choosing it in the panel does. */
   onSelect: (paperId: string) => void
+  /** Steps to the next (1) or previous (-1) linked paper, as the side panel's Next and Previous do; views may ignore it. */
+  onStep?: (step: 1 | -1) => void
 }

@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { GraphControls } from './GraphControls'
 import { GraphPanel } from './GraphPanel'
 import { GraphViews } from './GraphViews'
+import { hopTarget, linkedInOrder } from './paperWalk'
 import { LinkDialog, type LinkDraft } from './LinkDialog'
 import {
   countsLine,
@@ -32,6 +33,9 @@ export function GraphPage() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
   const [layers, setLayers] = useState<LinkKind[]>(DEFAULT_LAYERS)
   const [focusId, setFocusId] = useState<string | null>(null)
+  // The paper stepping started from: Next and Previous go round its linked papers until the owner opens a paper
+  // some other way.
+  const [stepFrom, setStepFrom] = useState<string | null>(null)
   const [hops, setHops] = useState(1)
   const [dialog, setDialog] = useState<{ editing: GraphLink | null } | null>(null)
   const [view, setView] = useState<GraphView>(() => readView(browserStorage()))
@@ -55,6 +59,31 @@ export function GraphPage() {
     () => (focused === null ? null : focusedIds(shown, focused.id, hops)),
     [shown, focused, hops]
   )
+  /** Opens a paper the ordinary way (a click, the list, pointing, the tour), which ends any stepping. */
+  function focus(id: string | null) {
+    setStepFrom(null)
+    setFocusId(id)
+  }
+  const stepOrder = useMemo(() => {
+    const from = stepFrom ?? focused?.id ?? null
+    return from === null ? [] : linkedInOrder(shown, from)
+  }, [shown, stepFrom, focused])
+  function step(direction: 1 | -1) {
+    const from = stepFrom ?? focused?.id ?? null
+    if (from === null) return
+    const next = hopTarget(stepOrder, focused?.id === from ? null : (focused?.id ?? null), direction)
+    if (next === null) return
+    setStepFrom(from)
+    setFocusId(next)
+  }
+  const stepping =
+    focused === null || stepOrder.length === 0
+      ? null
+      : {
+          from: stepFrom === null ? null : (nodes.find((node) => node.id === stepFrom)?.title ?? null),
+          position: stepOrder.indexOf(focused.id) + 1,
+          count: stepOrder.length,
+        }
 
   function chooseView(next: GraphView) {
     setView(next)
@@ -138,7 +167,7 @@ export function GraphPage() {
               workspaceId={workspaceId}
               onWorkspace={(id) => {
                 setWorkspaceId(id)
-                setFocusId(null)
+                focus(null)
               }}
               legend={legend}
               hops={hops}
@@ -166,7 +195,8 @@ export function GraphPage() {
                 focusId={focused?.id ?? null}
                 hops={hops}
                 inFocus={inFocus}
-                onSelect={setFocusId}
+                onSelect={focus}
+                onStep={step}
               />
             )}
           </div>
@@ -178,8 +208,10 @@ export function GraphPage() {
               links={shown}
               focused={focused}
               hops={hops}
-              onFocus={setFocusId}
-              onClear={() => setFocusId(null)}
+              onFocus={focus}
+              onClear={() => focus(null)}
+              stepping={stepping}
+              onStep={step}
               onAddLink={() => setDialog({ editing: null })}
               onEditLink={(link) => setDialog({ editing: link })}
               onRemoveLink={remove}

@@ -1,7 +1,7 @@
 import { fingertip, gestureOf, palmCentre, type Hand, type Point } from './gestures'
 
 /** What the hands are doing, once it has held for a few frames. */
-export type HandMode = 'none' | 'point' | 'palm' | 'two-palms' | 'fist' | 'other'
+export type HandMode = 'none' | 'point' | 'two' | 'palm' | 'two-palms' | 'fist' | 'other'
 
 /** What one camera frame asks of the view. Pointer x/y run 0–1 across and down the 3D view, mirrored like a selfie. */
 export type HandMoves = {
@@ -9,6 +9,8 @@ export type HandMoves = {
   pointer: Point | null
   turn: { azimuth: number; polar: number } | null
   zoom: number | null
+  /** A two-finger flick: 1 is to the owner's right (the next linked paper), -1 to the left. */
+  hop: 1 | -1 | null
 }
 
 export type HandState = {
@@ -18,6 +20,9 @@ export type HandState = {
   pointer: Point | null
   anchor: Point | null
   spread: number | null
+  hopFrom: number | null
+  hopLast: number | null
+  hopArmed: boolean
 }
 
 // ponytail: every constant below is a calibration knob, tuned on MediaPipe's test photos and a laptop webcam.
@@ -48,6 +53,9 @@ export const initialHandState = (): HandState => ({
   pointer: null,
   anchor: null,
   spread: null,
+  hopFrom: null,
+  hopLast: null,
+  hopArmed: true,
 })
 
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value))
@@ -70,9 +78,9 @@ export function handStep(state: HandState, hands: readonly Hand[]): [HandState, 
   const switched = streak >= STABLE_FRAMES && seen !== state.mode
   const mode = streak >= STABLE_FRAMES ? seen : state.mode
   const base: HandState = switched
-    ? { mode, candidate: seen, streak, pointer: null, anchor: null, spread: null }
+    ? { mode, candidate: seen, streak, pointer: null, anchor: null, spread: null, hopFrom: null, hopLast: null, hopArmed: true }
     : { ...state, candidate: seen, streak }
-  const still: HandMoves = { mode, pointer: null, turn: null, zoom: null }
+  const still: HandMoves = { mode, pointer: null, turn: null, zoom: null, hop: null }
   // The view acts only while the frame shows the gesture that is in force.
   if (seen !== mode) return [base, { ...still, pointer: mode === 'point' ? base.pointer : null }]
 
@@ -102,6 +110,20 @@ export function handStep(state: HandState, hands: readonly Hand[]): [HandState, 
     return [{ ...base, anchor: here }, { ...still, turn }]
   }
 
+  if (mode === 'two') {
+    const x = 1 - palmCentre(hands[0]).x
+    const from = base.hopFrom
+    // A jump between two frames is a lost-and-found hand, not a flick: start over from where it is now.
+    if (from === null || base.hopLast === null || Math.abs(x - base.hopLast) > JUMP) {
+      return [{ ...base, hopFrom: x, hopLast: x, hopArmed: true }, still]
+    }
+    const moved = x - from
+    const next = { ...base, hopLast: x }
+    if (!base.hopArmed) return [Math.abs(moved) < HOP_REARM ? { ...next, hopArmed: true } : next, still]
+    if (Math.abs(moved) < HOP_DISTANCE) return [next, still]
+    return [{ ...next, hopArmed: false }, { ...still, hop: moved > 0 ? 1 : -1 }]
+  }
+
   if (mode === 'two-palms') {
     const a = palmCentre(hands[0])
     const b = palmCentre(hands[1])
@@ -118,6 +140,13 @@ export function handStep(state: HandState, hands: readonly Hand[]): [HandState, 
 
   return [base, still]
 }
+
+/**
+ * A two-finger flick counts once the hand has moved this far sideways (a share of the picture) from where the gesture
+ * began; the next one waits until the hand comes back within HOP_REARM of there.
+ */
+export const HOP_DISTANCE = 0.12
+export const HOP_REARM = 0.06
 
 /** Holding the pointer on one paper this long opens it. */
 export const DWELL_MS = 1000

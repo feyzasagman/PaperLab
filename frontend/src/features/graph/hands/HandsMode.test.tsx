@@ -23,7 +23,7 @@ vi.mock('./handTracker', async (importOriginal) => {
 import { TrackerError } from './handTracker'
 import HandsMode, { MODE_TEXT, PROBLEM_TEXT } from './HandsMode'
 
-const f = fixtures as unknown as Record<'point' | 'palm', Hand> & { twoPalms: Hand[] }
+const f = fixtures as unknown as Record<'point' | 'palm' | 'victory', Hand> & { twoPalms: Hand[] }
 const props = () => ({ onTurn: vi.fn(), onZoom: vi.fn(), onSelect: vi.fn(), pickAt: vi.fn(() => ({ id: 'p1', title: 'Alpha' })) })
 const feed = (frames: Hand[][], from = 0) =>
   act(() => frames.forEach((hands, i) => tracker.onFrame!(hands, from + i * 100)))
@@ -99,4 +99,15 @@ it('opens one paper per hold: a neighbour sliding under a still pointer waits fo
   feed(repeat([moved], 20), 5000)
   expect(p.onSelect).toHaveBeenCalledTimes(2)
   expect(p.onSelect).toHaveBeenLastCalledWith('p2')
+})
+
+it('hops to the next linked paper on a two-finger flick to the right', async () => {
+  const onHop = vi.fn()
+  render(<HandsMode {...props()} onHop={onHop} />)
+  await vi.waitFor(() => expect(tracker.onFrame).not.toBeNull())
+  const moved = (dx: number) => [f.victory.map((q) => ({ x: q.x + dx, y: q.y }))]
+  feed([0, 0, 0, -0.13].map(moved))
+  expect(screen.getByRole('status')).toHaveTextContent(MODE_TEXT.two)
+  expect(onHop).toHaveBeenCalledTimes(1)
+  expect(onHop).toHaveBeenCalledWith(1)
 })

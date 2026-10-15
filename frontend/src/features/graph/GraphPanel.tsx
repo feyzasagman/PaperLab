@@ -1,5 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react'
-import { Link2, Pencil, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Link2, Pencil, Trash2 } from 'lucide-react'
 import type { GraphLink, GraphNode } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { readerHref } from '@/lib/route'
@@ -18,6 +18,10 @@ type Props = {
   onEditLink: (link: GraphLink) => void
   /** Whether the owner confirmed the removal, so the panel knows whether to move focus. */
   onRemoveLink: (link: GraphLink) => boolean
+  /** Next and Previous round the linked papers of the paper stepping started from; null when there are none. */
+  stepping: { from: string | null; position: number; count: number } | null
+  /** One step: 1 next, -1 previous. */
+  onStep: (step: 1 | -1) => void
 }
 
 type ButtonRefs = { current: Map<string, HTMLButtonElement> }
@@ -85,6 +89,8 @@ export function GraphPanel({
   onAddLink,
   onEditLink,
   onRemoveLink,
+  stepping,
+  onStep,
 }: Props) {
   const byId = new Map(nodes.map((node) => [node.id, node]))
   const degree = degrees(links)
@@ -97,11 +103,13 @@ export function GraphPanel({
   // Moves focus so a screen reader announces what just appeared: to the heading when a paper becomes focused, or
   // (after "Clear focus", which records the paper it cleared) back to that paper's own button. Depends on the
   // focused paper's *identity* only: a refetch that returns a new object for the same id must not steal focus again.
+  // Not when the owner is already in the stepping buttons or the 3D view (Next, [ ], the tour): moving focus there would break their flow, so the position line announces instead.
   useEffect(() => {
     const previous = shownId.current
     shownId.current = focused?.id ?? null
     if (focused !== null) {
-      connectionsHeading.current?.focus()
+      const keep = document.activeElement?.closest('[role="group"][aria-label="Step through linked papers"], [data-view="3d"]')
+      if (!keep) connectionsHeading.current?.focus()
     } else if (clearedId.current) {
       buttonRefs.current.get(clearedId.current)?.focus()
       clearedId.current = null
@@ -154,6 +162,27 @@ export function GraphPanel({
             <Link2 aria-hidden />
             Link to another paper…
           </Button>
+
+          {stepping && (
+            <div className="flex flex-col gap-1">
+              <div role="group" aria-label="Step through linked papers" className="flex gap-1">
+                <Button variant="outline" size="sm" aria-label="Previous linked paper" onClick={() => onStep(-1)}>
+                  <ChevronLeft aria-hidden />
+                  Previous
+                </Button>
+                <Button variant="outline" size="sm" aria-label="Next linked paper" onClick={() => onStep(1)}>
+                  Next
+                  <ChevronRight aria-hidden />
+                </Button>
+              </div>
+              {stepping.from !== null && stepping.position > 0 && (
+                <p aria-live="polite" className="text-xs text-muted-foreground">
+                  <span className="sr-only">{`${focused.title}. `}</span>
+                  <span>{`Linked to ${stepping.from}: ${stepping.position} of ${stepping.count}`}</span>
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
             {connections.length === 0 && (

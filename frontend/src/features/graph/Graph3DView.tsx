@@ -7,17 +7,17 @@ import { carryPositions, degrees, FADED, nodeLabel, sizedNodes, tooltipFor, with
 import { useBoxSize } from './useBoxSize'
 import { emphasis, labelledIds, linkState, shortTitle } from './paperModel'
 import { hasWebGL, WEBGL_FAILED, WEBGL_OFF, type ViewProps } from './viewModel'
-import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CameraControls } from './CameraControls'
+import { TourControls } from './TourControls'
+import { useTour } from './useTour'
+import { hopKey, tourByLinks, tourByYear, type TourOrder } from './paperWalk'
+import { orbitOf, useHandsCamera } from './useHandsCamera'
 import {
   cameraTarget,
   keyAction,
   MAX_DISTANCE,
   MIN_DISTANCE,
   MOVE_MS,
-  orbited,
-  tilted,
-  zoomed,
   type CameraAction,
   type Vec3,
 } from './cameraMoves'
@@ -76,9 +76,6 @@ const ACTIVE_LINK = '#eab308'
 /** A slow spin once the layout settles, so the map reads as 3D: about one turn in 100 s. */
 const AUTO_ROTATE_SPEED = 0.6
 
-/** The orbit controls behind a graph handle; undefined until the canvas has mounted. */
-const orbitOf = (graph: { controls(): object } | undefined) => graph?.controls() as OrbitControls | undefined
-
 // Loaded the first time Hands mode is turned on, never before: the hand tracker is a large download most owners never
 // need, and a static import would break the 3D view wherever it isn't installed yet. A failed load says so in place.
 const HandsMode = lazy(() =>
@@ -91,9 +88,6 @@ const HandsMode = lazy(() =>
   })),
 )
 
-/** Hands mode picks the paper drawn nearest its pointer, within this many pixels. */
-const PICK_RADIUS = 48
-
 /** react-force-graph-3d writes x/y/z and velocities onto the objects it is given, so it gets its own copies. */
 type Node3D = SizedNode & { x?: number; y?: number; z?: number }
 type Link3D = {
@@ -104,7 +98,7 @@ type Link3D = {
 }
 
 /** Which clusters overlap in 2D (spec §5.2): free physics in three dimensions, orbit by dragging, zoom by scrolling. */
-export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onSelect }: ViewProps) {
+export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onSelect, onStep }: ViewProps) {
   const [Graph, setGraph] = useState<typeof import('react-force-graph-3d').default | null>(null)
   const [papers, setPapers] = useState<typeof import('./paperNodes') | null>(null)
   const [failed, setFailed] = useState(false)
@@ -124,6 +118,9 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
   // Where the last button or key press is sending the camera, until its glide ends: a second press during the glide
   // builds on that goal, not on the camera's half-way pose (which orbits through odd distances).
   const aim = useRef<{ until: number; position: Vec3; lookAt: Vec3 } | null>(null)
+  const tour = useTour(onSelect, focusId)
+  const { stop: stopTour, running: tourRunning, start: startTour } = tour
+  const [tourOrder, setTourOrder] = useState<TourOrder>('links')
   const [handsOn, setHandsOn] = useState(false)
 
   useEffect(() => {
@@ -188,6 +185,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
   const move = useCallback(
     (action: CameraAction) => {
       stopSpin()
+      stopTour()
       setTouched(true)
       const graph = graphRef.current
       if (!graph) return
@@ -207,64 +205,31 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
       aim.current = { until: performance.now() + MOVE_MS, position, lookAt }
       graph.cameraPosition(position, lookAt, MOVE_MS)
     },
-    [fit, stopSpin, setTouched],
+    [fit, stopSpin, stopTour, setTouched],
   )
 
-  // Hands mode sets the camera straight to each frame's pose: frames come ~30 times a second, too often to glide.
-  const nudge = useCallback(
-    (step: (camera: Vec3, target: Vec3) => Vec3) => {
-      const graph = graphRef.current
-      const target = orbitOf(graph)?.target
-      if (!graph || !target) return
-      aim.current = null
-      const { x, y, z } = graph.camera().position
-      const lookAt: Vec3 = { x: target.x, y: target.y, z: target.z }
-      graph.cameraPosition(step({ x, y, z }, lookAt), lookAt, 0)
-    },
-    [],
-  )
-  const turnBy = useCallback(
-    (azimuth: number, polar: number) => nudge((camera, target) => tilted(orbited(camera, target, azimuth), target, polar)),
-    [nudge],
-  )
-  const zoomBy = useCallback((factor: number) => nudge((camera, target) => zoomed(camera, target, factor)), [nudge])
-
-  // The paper drawn nearest a point of the view (x/y 0–1 across and down), if one is within PICK_RADIUS pixels.
-  const pickAt = useCallback(
-    (x: number, y: number) => {
-      const graph = graphRef.current
-      const target = orbitOf(graph)?.target
-      if (!graph || !target) return null
-      const cam = graph.camera().position
-      let best: { id: string; title: string } | null = null
-      let nearestDepth = Infinity
-      for (const node of data.nodes) {
-        if (node.x === undefined) continue
-        // A paper behind the camera still projects onto the screen, so only papers in front of it count, and of those
-        // under the pointer the nearest wins: it hides the ones behind.
-        const ahead =
-          (node.x - cam.x) * (target.x - cam.x) +
-          ((node.y ?? 0) - cam.y) * (target.y - cam.y) +
-          ((node.z ?? 0) - cam.z) * (target.z - cam.z)
-        if (ahead <= 0) continue
-        const at = graph.graph2ScreenCoords(node.x, node.y ?? 0, node.z ?? 0)
-        const gap = Math.hypot(at.x - x * size.width, at.y - y * size.height)
-        if (gap < PICK_RADIUS && ahead < nearestDepth) {
-          nearestDepth = ahead
-          best = { id: node.id, title: node.title }
-        }
-      }
-      return best
-    },
-    [data, size],
-  )
+  const getGraph = useCallback(() => graphRef.current, [])
+  const handsMoved = useCallback(() => {
+    aim.current = null
+    stopTour()
+  }, [stopTour])
+  const { turnBy, zoomBy, pickAt } = useHandsCamera(getGraph, data.nodes, size, handsMoved)
 
   // Turning Hands mode on counts as the owner taking over: the spin stops and the how-to line goes.
   const toggleHands = useCallback(() => {
     stopSpin()
+    stopTour()
     setTouched(true)
     setHandsOn((on) => !on)
-  }, [stopSpin, setTouched, setHandsOn])
+  }, [stopSpin, stopTour, setTouched, setHandsOn])
+
+  // The tour counts as the owner taking over too: the spin stops and the how-to line goes.
+  const toggleTour = useCallback(() => {
+    if (tourRunning) return stopTour()
+    stopSpin()
+    setTouched(true)
+    startTour(tourOrder === 'links' ? tourByLinks(nodes, links, focusId) : tourByYear(nodes))
+  }, [tourRunning, startTour, stopTour, stopSpin, setTouched, tourOrder, nodes, links, focusId])
 
   // OrbitControls is ready once the canvas has mounted. The scroll wheel gets the same limits as the buttons, and
   // every camera change (a drag, a glide, the spin) is written onto the group for the E2E tests to read.
@@ -283,6 +248,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
     const takeOver = () => {
       aim.current = null
       stopSpin()
+      stopTour()
       setTouched(true)
     }
     controls.addEventListener('change', show)
@@ -291,7 +257,7 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
       controls.removeEventListener('change', show)
       controls.removeEventListener('start', takeOver)
     }
-  }, [canvasReady, stopSpin])
+  }, [canvasReady, stopSpin, stopTour])
 
   // Selecting a paper flies the camera to it, so it sits in the middle of the view, close enough to read its name.
   useEffect(() => {
@@ -321,10 +287,16 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
             ref={view}
             role="group"
             aria-label="3D graph"
-            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Plus - 0"
+            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Plus - 0 [ ]"
             tabIndex={0}
             data-auto-rotate="false"
             onKeyDown={(event) => {
+              const hop = hopKey(event)
+              if (hop !== null && onStep) {
+                event.preventDefault()
+                onStep(hop)
+                return
+              }
               const action = keyAction(event)
               if (!action) return
               event.preventDefault() // arrows turn the view, not the page
@@ -387,9 +359,10 @@ export function Graph3DView({ nodes, links, theme, colors, focusId, inFocus, onS
             {canvasReady && (
               <CameraControls onAction={move} showHint={!touched} hands={{ on: handsOn, onToggle: toggleHands }} />
             )}
+            {canvasReady && <TourControls running={tour.running} order={tourOrder} onOrder={setTourOrder} onToggle={toggleTour} />}
             {canvasReady && handsOn && (
               <Suspense fallback={null}>
-                <HandsMode onTurn={turnBy} onZoom={zoomBy} pickAt={pickAt} onSelect={onSelect} />
+                <HandsMode onTurn={turnBy} onZoom={zoomBy} pickAt={pickAt} onSelect={onSelect} onHop={onStep} />
               </Suspense>
             )}
           </div>
