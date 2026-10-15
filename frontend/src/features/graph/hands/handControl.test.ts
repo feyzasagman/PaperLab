@@ -3,7 +3,7 @@ import { palmCentre, type Hand } from './gestures'
 import { dwellStep, EDGE, handStep, initialDwell, initialHandState, STABLE_FRAMES, TURN_GAIN, TURN_STEP_LIMIT, ZOOM_STEP_LIMIT, type HandMoves, type HandState } from './handControl'
 import fixtures from './handFixtures.json'
 
-const f = fixtures as unknown as Record<'point' | 'fist' | 'palm', Hand> & { twoPalms: Hand[] }
+const f = fixtures as unknown as Record<'point' | 'fist' | 'palm' | 'victory', Hand> & { twoPalms: Hand[] }
 const run = (frames: Hand[][], start: HandState = initialHandState()) => {
   let state = start
   const moves: HandMoves[] = []
@@ -26,7 +26,7 @@ const spread = (hands: Hand[], k: number): Hand[] => {
 it('acts on a gesture only once it has held for STABLE_FRAMES frames', () => {
   expect(run(repeat([f.point], STABLE_FRAMES - 1)).at(-1)!.mode).toBe('none')
   expect(run(repeat([f.point], STABLE_FRAMES)).at(-1)!.mode).toBe('point')
-  expect(run(repeat([], 4)).at(-1)).toEqual({ mode: 'none', pointer: null, turn: null, zoom: null })
+  expect(run(repeat([], 4)).at(-1)).toEqual({ mode: 'none', pointer: null, turn: null, zoom: null, hop: null })
 })
 
 it('ignores one misread frame in the middle of a gesture, keeping the pointer where it was', () => {
@@ -115,4 +115,27 @@ it('starts the hold again when the pointer leaves a paper and comes back', () =>
   step = dwellStep(step.dwell, 'a', 1900)
   expect(step.selected).toBeNull()
   expect(dwellStep(step.dwell, 'a', 2000).selected).toBe('a')
+})
+
+const two = (dx: number): Hand[] => [shifted(f.victory, dx)]
+
+it('a two-finger flick hops once: right is next, left is previous, and the hand must come back before the next', () => {
+  // Raw x down is the hand moving to the owner's right in the mirrored picture.
+  const moves = run([two(0), two(0), two(0), two(-0.05), two(-0.1), two(-0.13), two(-0.14), two(-0.03), two(0.04), two(0.09), two(0.13)])
+  expect(moves[2].mode).toBe('two')
+  expect(moves.slice(0, 5).map((m) => m.hop)).toEqual([null, null, null, null, null])
+  expect(moves[5].hop).toBe(1)
+  expect(moves[6].hop).toBeNull() // still out there: one flick, one hop
+  expect(moves[7].hop).toBeNull() // back near where it began: armed again, nothing fires
+  expect(moves[10].hop).toBe(-1)
+})
+
+it('ignores a small sideways drift and a jump of a lost-and-found hand', () => {
+  expect(run([two(0), two(0), two(0), two(-0.08)]).at(-1)!.hop).toBeNull()
+  expect(run([two(0), two(0), two(0), two(-0.3)]).at(-1)!.hop).toBeNull()
+})
+
+it('never hops while an open hand turns the view', () => {
+  const moves = run([[f.palm], [f.palm], [f.palm], [shifted(f.palm, -0.2)]])
+  expect(moves.every((m) => m.hop === null)).toBe(true)
 })

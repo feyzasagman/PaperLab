@@ -2,7 +2,7 @@
 export type Point = { x: number; y: number }
 /** The tracker's 21 landmarks for one hand: 0 is the wrist, 8 the index fingertip (MediaPipe's hand model). */
 export type Hand = readonly Point[]
-export type Gesture = 'point' | 'palm' | 'fist' | 'other'
+export type Gesture = 'point' | 'two' | 'palm' | 'fist' | 'other'
 
 const WRIST = 0
 const INDEX_TIP = 8
@@ -28,10 +28,14 @@ export function straightFingers(hand: Hand): boolean[] {
   return FINGERS.map(([joint, tip]) => distance(hand[WRIST], hand[tip]) > distance(hand[WRIST], hand[joint]) * STRAIGHT)
 }
 
-/** Only the index straight is pointing; all four straight is an open hand; none is a fist (a thumbs-up counts). */
+/**
+ * Only the index straight is pointing; index and middle only is two fingers; all four straight is an open hand; none is
+ * a fist (a thumbs-up counts).
+ */
 export function gestureOf(hand: Hand): Gesture {
   const [index, ...others] = straightFingers(hand)
   if (index && others.every((straight) => !straight)) return 'point'
+  if (index && others[0] && !others[1] && !others[2]) return 'two'
   if (index && others.every(Boolean)) return 'palm'
   if (!index && others.every((straight) => !straight)) return 'fist'
   return 'other'

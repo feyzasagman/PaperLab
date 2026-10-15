@@ -9,12 +9,15 @@ export type HandsModeProps = {
   /** The paper drawn under a point of the view (x/y 0–1 across and down), or null. */
   pickAt: (x: number, y: number) => { id: string; title: string } | null
   onSelect: (id: string) => void
+  /** A two-finger flick: 1 steps to the next linked paper, -1 to the previous. */
+  onHop?: (step: 1 | -1) => void
 }
 
 export const MODE_TEXT: Record<HandMode | 'starting', string> = {
   starting: 'Starting the camera…',
   none: 'Show your hand to the camera',
   point: 'Pointing: hold still on a paper to open it',
+  two: 'Two fingers: flick left or right to go to the previous or next linked paper',
   palm: 'Open hand: move it to turn the view',
   'two-palms': 'Two open hands: move them apart to zoom in, together to zoom out',
   fist: 'Fist: paused',
@@ -29,7 +32,7 @@ export const PROBLEM_TEXT: Record<TrackerProblem, string> = {
 }
 
 export const GESTURES =
-  'Point to aim · Hold on a paper to open it · Open hand to turn · Two open hands to zoom · Fist to pause. The camera picture stays on this computer.'
+  'Point to aim · Hold on a paper to open it · Two fingers and flick to hop between linked papers · Open hand to turn · Two open hands to zoom · Fist to pause. The camera picture stays on this computer.'
 
 type Pointer = { at: Point; title: string | null; progress: number }
 
@@ -58,9 +61,10 @@ export default function HandsMode(props: HandsModeProps) {
       const [next, moves] = handStep(hands, seen)
       hands = next
       setMode(moves.mode)
-      const { onTurn, onZoom, pickAt, onSelect } = latest.current
+      const { onTurn, onZoom, pickAt, onSelect, onHop } = latest.current
       if (moves.turn) onTurn(moves.turn.azimuth, moves.turn.polar)
       if (moves.zoom !== null) onZoom(moves.zoom)
+      if (moves.hop) onHop?.(moves.hop)
       if (!moves.pointer) {
         dwell = initialDwell()
         opened = null

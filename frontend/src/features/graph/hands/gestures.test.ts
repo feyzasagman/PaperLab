@@ -10,7 +10,7 @@ it('reads real hands from MediaPipe test photos', () => {
   expect(gestureOf(f.palm)).toBe('palm')
   // One of these two palms is upside down: straightness is measured from the wrist, whichever way the hand faces.
   expect(f.twoPalms.map(gestureOf)).toEqual(['palm', 'palm'])
-  expect(gestureOf(f.victory)).toBe('other')
+  expect(gestureOf(f.victory)).toBe('two')
   expect(gestureOf(f.thumbUp)).toBe('fist') // the thumb never decides
 })
 
