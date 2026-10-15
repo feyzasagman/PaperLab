@@ -19,7 +19,7 @@ from app.models import Chunk, LLMOutput, Paper, PaperStatus
 from app.providers.base import LLMError, LLMUnavailable
 from app.providers.llm import build_llm
 
-CLAIM_PROMPT_VERSION = 1
+CLAIM_PROMPT_VERSION = 2
 PASSAGES = 6
 SYSTEM_PROMPT, PROMPT_TEMPLATE = prompts.load("claim_check", CLAIM_PROMPT_VERSION).split("\n<!-- prompt -->\n")
 OUTPUT_KIND = "claim_check"
@@ -440,6 +440,9 @@ async def verify_claims(
                         claim, citation, error="paper_not_in_workspace", doi=entry_doi, candidates=elsewhere.titles
                     )
                 )
+                continue
+            if elsewhere.unnamed:  # held, but its author list may be truncated: not a "not in library" claim
+                items.append(ClaimItem(claim, citation, error="ambiguous_citation", candidates=elsewhere.unnamed))
                 continue
         if not found.paper_ids and entry:
             items.append(ClaimItem(claim, citation, error="paper_not_in_library", doi=entry_doi))

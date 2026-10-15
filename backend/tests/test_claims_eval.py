@@ -20,8 +20,10 @@ class Scripted:
 
     def __init__(self, *replies):
         self.replies = list(replies)
+        self.systems = []
 
     async def stream(self, system, prompt):
+        self.systems.append(system)
         yield self.replies.pop(0)
 
 
@@ -105,11 +107,15 @@ async def test_execute_exit_codes_and_out(session, tmp_path, capsys):
     assert await ev.execute(session, config(cases), Scripted(*(["nope"] * 8)), None, None) == 1
 
 
+# papers added from the research pilot carry one true case each
+PILOT_PAPERS = {"Art or Artifice?", "Why the standard definition of creativity"}
+
+
 def test_config_file_loads_with_enough_cases():
     cfg = ev.load_config(ev.CONFIG)
     assert (cfg.gates.accuracy_min, cfg.gates.overstated_min) == (0.7, 0.6)
-    assert len(cfg.cases) >= 24 and len({c.paper for c in cfg.cases}) >= 6
-    for paper in {c.paper for c in cfg.cases}:
+    assert len(cfg.cases) >= 26 and len({c.paper for c in cfg.cases}) >= 6
+    for paper in {c.paper for c in cfg.cases} - PILOT_PAPERS:
         assert {c.kind for c in cfg.cases if c.paper == paper} == {"true", "overstated", "contradicted", "unrelated"}
     with pytest.raises(ValidationError):
         ev.Case.model_validate({"paper": "x", "claim": "c", "kind": "true", "accepted": ["maybe"]})
@@ -193,3 +199,26 @@ async def test_rows_record_evidence_level_and_confidence(session, tmp_path):
     paper, cases = await seed(session, tmp_path)
     _, rows = await ev.evaluate(session, cases, Scripted(*REPLIES), None)
     assert rows[0]["evidence_level"] == "full_text" and rows[0]["confidence"] == "high"
+
+
+async def test_prompt_version_1_runs_the_old_prompt_and_restores_v2(session, tmp_path, capsys):
+    paper, cases = await seed(session, tmp_path)
+    v2_system = ev.claims.SYSTEM_PROMPT
+    llm = Scripted(*REPLIES)
+    out = tmp_path / "rows.jsonl"
+    assert await ev.execute(session, config(cases), llm, None, out, prompt_version=1) == 0
+    assert all("continues a sentence" not in s for s in llm.systems) and llm.systems
+    assert {json.loads(line)["prompt_version"] for line in out.read_text().splitlines()} == {1}
+    assert "prompt_version=1" in capsys.readouterr().out
+    assert ev.claims.SYSTEM_PROMPT == v2_system and ev.claims.CLAIM_PROMPT_VERSION == 2
+
+
+async def test_an_unknown_prompt_version_is_bad_input(session, tmp_path, capsys):
+    paper, cases = await seed(session, tmp_path)
+    assert await ev.execute(session, config(cases), Scripted(), None, None, prompt_version=99) == 2
+    assert "prompt version 99" in capsys.readouterr().err
+    assert ev.claims.CLAIM_PROMPT_VERSION == 2
+
+
+def test_cli_rejects_a_non_numeric_prompt_version(monkeypatch):
+    assert run_main(monkeypatch, "--prompt-version", "x") == 2

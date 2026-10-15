@@ -58,7 +58,7 @@ async def test_full_text_verdict_with_a_kept_quote_and_its_provenance_row(sessio
     assert {p["chunk_id"] for p in check.passages} == {c.id for c in chunks}
     assert "(page 1, section 1 Introduction)" in llm.prompts[0] and "[6]" not in llm.prompts[0]
     row = await session.get(LLMOutput, check.output_id)
-    assert (row.kind, row.paper_id, row.model, row.prompt_version) == ("claim_check", paper.id, "fake:scripted", 1)
+    assert (row.kind, row.paper_id, row.model, row.prompt_version) == ("claim_check", paper.id, "fake:scripted", 2)
     assert row.source_chunks == [p["chunk_id"] for p in check.passages]
     assert json.loads(row.content)["verdict"] == "supported"
 
@@ -326,3 +326,8 @@ async def test_a_dangling_chunk_just_before_wins_over_the_previous_page(session,
     await claims.verify_claim(session, "No LLM judge correlated positively.", paper_id=paper.id, llm=llm)
     assert "Results show that most of the models fail and then the" in llm.prompts[0]
     assert "On average, we find" not in llm.prompts[0]
+
+
+def test_the_v2_prompt_explains_the_page_break_marker():
+    assert claims.CLAIM_PROMPT_VERSION == 2
+    assert "continues a sentence that began" in claims.SYSTEM_PROMPT

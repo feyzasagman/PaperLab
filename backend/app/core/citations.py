@@ -221,7 +221,27 @@ def _first_author_is(authors: list[str], surname: str) -> bool:
 def _has_surname(author: str, surname: str) -> bool:
     """A library author is the named co-author: whole surname only ("li" never matches "Lili")."""
     name = fold(author).strip()
+    tokens = name.split()
+    if len(tokens) > 1 and tokens[0] == surname and all(_INITIALS.fullmatch(t) for t in tokens[1:]):
+        return True  # "Wang D", "Wang D.K."; a full given name ("WANG Dan") can't be told from "Dan Wang"
     return name == surname or name.endswith(f" {surname}") or name.split(",")[0].strip() == surname
+
+
+_TRUNCATED = re.compile(r"et al|others")
+
+
+def _alpha(name: str) -> str:
+    return re.sub(r"[^a-z ]", "", fold(name)).strip()
+
+
+def _unsure(rows) -> list[str]:
+    """Titles of candidates lacking a named co-author that might only have a truncated author list: a list of two
+    or more names is complete enough to rule the candidate out, unless it ends in "et al." or "others"."""
+    return [
+        r.title
+        for r in rows
+        if len(r.authors or []) < 2 or any(_TRUNCATED.fullmatch(_alpha(a)) for a in r.authors)
+    ]
 
 
 async def match(
@@ -261,12 +281,12 @@ async def match(
             rows = exact or rows
         else:
             if strict_coauthors and not named_in(rows):
-                return Match([], [], unnamed=[rows[0].title])
+                return Match([], [], unnamed=_unsure(rows))
             return Match([rows[0].id], [rows[0].title], library_year=rows[0].year)
         if strict_coauthors and rows:
             named = named_in(rows)  # the reference list had several entries: a lone candidate must still fit
             if not named:
-                return Match([], [], unnamed=[r.title for r in rows])
+                return Match([], [], unnamed=_unsure(rows))
             rows = named
         elif len(rows) > 1 and citation.coauthors:
             rows = named_in(rows) or rows  # narrows an ambiguity, never loses a match
