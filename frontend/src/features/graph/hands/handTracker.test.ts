@@ -10,9 +10,11 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@mediapipe/tasks-vision', () => ({ HandLandmarker: { createFromOptions: mocks.createFromOptions } }))
 
+// By path: the package's exports map has no subpath for the bundle text.
+import bundle from '../../../../node_modules/@mediapipe/tasks-vision/vision_bundle.mjs?raw'
 import { problemOf, startTracker, TrackerError } from './handTracker'
 
-const stream = { getTracks: () => [{ stop: mocks.stopTrack }] } as unknown as MediaStream
+const stream = { getTracks: () => [{ stop: mocks.stopTrack }, { stop: mocks.stopTrack }] } as unknown as MediaStream
 const video = () => document.createElement('video')
 
 beforeEach(() => {
@@ -48,7 +50,7 @@ it('reads the hands on a new camera frame, then stops the camera and the tracker
     numHands: 2,
   })
   stop()
-  expect(mocks.stopTrack).toHaveBeenCalled()
+  expect(mocks.stopTrack).toHaveBeenCalledTimes(2) // every track
   expect(mocks.close).toHaveBeenCalled()
   expect(element.srcObject).toBeNull()
   const calls = onFrame.mock.calls.length
@@ -74,13 +76,73 @@ it('rejects with the reason when the camera is blocked, and never loads the trac
 
 it('turns the camera off again when the tracker cannot load', async () => {
   mocks.createFromOptions.mockRejectedValue(new Error('broken'))
-  const failure = await startTracker(video(), vi.fn()).catch((error: unknown) => error)
+  const element = video()
+  const failure = await startTracker(element, vi.fn()).catch((error: unknown) => error)
   expect((failure as TrackerError).problem).toBe('failed')
-  expect(mocks.stopTrack).toHaveBeenCalled()
+  expect(mocks.stopTrack).toHaveBeenCalledTimes(2)
+  expect(element.srcObject).toBeNull()
 })
 
 it('says there is no camera when the browser offers none', async () => {
   Object.defineProperty(navigator, 'mediaDevices', { value: undefined, configurable: true })
   const failure = await startTracker(video(), vi.fn()).catch((error: unknown) => error)
   expect((failure as TrackerError).problem).toBe('no-camera')
+})
+
+it('uses a hand tracker build that sends nothing to any server', () => {
+  expect(bundle).not.toMatch(/https?:\/\/(?!www\.w3\.org)/)
+})
+
+it('turns the camera off and fails when the video will not play', async () => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockRejectedValue(new Error('no play'))
+  const element = video()
+  const failure = await startTracker(element, vi.fn()).catch((error: unknown) => error)
+  expect((failure as TrackerError).problem).toBe('failed')
+  expect(mocks.stopTrack).toHaveBeenCalledTimes(2)
+  expect(element.srcObject).toBeNull()
+})
+
+it('loads the wasm from the bundled files', async () => {
+  const stop = await startTracker(video(), vi.fn())
+  const files = mocks.createFromOptions.mock.calls[0][0]
+  expect(files.wasmLoaderPath).toMatch(/vision_wasm_internal\.js/)
+  expect(files.wasmBinaryPath).toMatch(/vision_wasm_internal\.wasm/)
+  stop()
+})
+
+it('reads a frame once per new camera frame', async () => {
+  let t = 0
+  const element = video()
+  Object.defineProperty(element, 'currentTime', { get: () => t, configurable: true })
+  const onFrame = vi.fn()
+  const stop = await startTracker(element, onFrame)
+  await vi.waitFor(() => expect(onFrame).toHaveBeenCalledTimes(1))
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(onFrame).toHaveBeenCalledTimes(1) // same camera frame
+  t = 1
+  await vi.waitFor(() => expect(onFrame).toHaveBeenCalledTimes(2))
+  stop()
+})
+
+it('gives up and says so after 30 unreadable frames in a row', async () => {
+  mocks.detectForVideo.mockImplementation(() => {
+    throw new Error('bad frame')
+  })
+  let t = 0
+  const element = video()
+  Object.defineProperty(element, 'currentTime', { get: () => ++t, configurable: true })
+  const onFail = vi.fn()
+  await startTracker(element, vi.fn(), onFail)
+  await vi.waitFor(() => expect(onFail).toHaveBeenCalledWith('failed'))
+  expect(mocks.detectForVideo).toHaveBeenCalledTimes(30)
+  expect(mocks.stopTrack).toHaveBeenCalledTimes(2)
+  expect(mocks.close).toHaveBeenCalledTimes(1)
+  mocks.detectForVideo.mockImplementation(() => ({ landmarks: [[{ x: 0.5, y: 0.5 }]] }))
+})
+
+it('stops only once however often stop is called', async () => {
+  const stop = await startTracker(video(), vi.fn())
+  stop()
+  stop()
+  expect(mocks.close).toHaveBeenCalledTimes(1)
 })

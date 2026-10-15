@@ -14,6 +14,9 @@ export class TrackerError extends Error {
   }
 }
 
+/** Frames in a row the tracker may fail to read before hands mode gives up and says so. */
+const MAX_FAILED_FRAMES = 30
+
 // Bundled with the app (public/models), so hands mode works offline and fetches nothing from anywhere else.
 const MODEL = `${import.meta.env.BASE_URL}models/hand_landmarker.task`
 
@@ -57,7 +60,11 @@ async function loadLandmarker(): Promise<HandLandmarker> {
  * Opens the camera into `video` and calls `onFrame` with the hands seen on every new camera frame. Resolves to a stop
  * function that turns the camera off (its light too) and frees the tracker; rejects with a TrackerError.
  */
-export async function startTracker(video: HTMLVideoElement, onFrame: (hands: Hand[], now: number) => void): Promise<() => void> {
+export async function startTracker(
+  video: HTMLVideoElement,
+  onFrame: (hands: Hand[], now: number) => void,
+  onFail?: (problem: TrackerProblem) => void,
+): Promise<() => void> {
   const stream = await openCamera()
   const cameraOff = () => {
     stream.getTracks().forEach((track) => track.stop())
@@ -74,26 +81,38 @@ export async function startTracker(video: HTMLVideoElement, onFrame: (hands: Han
   }
   let frame = 0
   let lastFrameTime = -1
+  let failedFrames = 0
   let stopped = false
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    cancelAnimationFrame(frame)
+    cameraOff()
+    landmarker.close()
+  }
   const tick = () => {
     if (stopped) return
     // Only a new camera frame is worth reading: the screen redraws faster than most webcams film.
     if (video.currentTime !== lastFrameTime) {
       lastFrameTime = video.currentTime
       const now = performance.now()
+      let hands: Hand[] | null = null
       try {
-        onFrame(landmarker.detectForVideo(video, now).landmarks, now)
+        hands = landmarker.detectForVideo(video, now).landmarks
+        failedFrames = 0
       } catch {
-        // ponytail: a frame the tracker can't read is skipped; the next one usually works.
+        // A frame the tracker can't read is skipped, but a tracker that keeps failing is reported.
+        failedFrames += 1
+        if (failedFrames >= MAX_FAILED_FRAMES) {
+          stop()
+          onFail?.('failed')
+          return
+        }
       }
+      if (hands) onFrame(hands, now)
     }
     frame = requestAnimationFrame(tick)
   }
   frame = requestAnimationFrame(tick)
-  return () => {
-    stopped = true
-    cancelAnimationFrame(frame)
-    cameraOff()
-    landmarker.close()
-  }
+  return stop
 }

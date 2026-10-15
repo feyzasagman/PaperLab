@@ -71,7 +71,9 @@ export default function HandsMode(props: HandsModeProps) {
       setPointer({ at: moves.pointer, title: paper?.title ?? null, progress: held.progress })
       if (held.selected) onSelect(held.selected)
     }
-    startTracker(video.current!, onFrame)
+    startTracker(video.current!, onFrame, (problem) => {
+      if (!gone) setProblem(problem)
+    })
       .then((stopTracker) => {
         if (gone) stopTracker()
         else stop = stopTracker
