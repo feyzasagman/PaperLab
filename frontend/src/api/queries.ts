@@ -497,6 +497,19 @@ export function useStopSearchRun(workspaceId: string) {
   })
 }
 
+/** Continues a stopped, cut-short or paused run from where each source stopped; the run goes back to running. */
+export function useContinueSearchRun(workspaceId: string) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (runId: string) => api.continueSearchRun(workspaceId, runId),
+    onSuccess: (_run, runId) =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: keys.searchRuns(workspaceId) }),
+        client.invalidateQueries({ queryKey: keys.searchRun(workspaceId, runId) }),
+      ]),
+  })
+}
+
 /** One search run; polls while it's still running. `runId` is null before a run has started. */
 export const useSearchRun = (workspaceId: string, runId: string | null) =>
   useQuery({

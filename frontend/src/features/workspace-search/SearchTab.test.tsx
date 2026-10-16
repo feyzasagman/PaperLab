@@ -34,6 +34,7 @@ beforeEach(() => {
   vi.spyOn(api, 'startSearchRun')
   vi.spyOn(api, 'getSearchRun')
   vi.spyOn(api, 'stopSearchRun')
+  vi.spyOn(api, 'continueSearchRun')
   vi.spyOn(api, 'paperSources').mockResolvedValue(enabledSources)
 })
 
@@ -211,4 +212,36 @@ test('a non-string error value is not rendered', async () => {
   vi.mocked(api.getSearchRun).mockResolvedValue(statsRun({ failed_sources: ['arxiv'], per_source_error: { arxiv: { a: 1 } } }))
   renderWithClient(<SearchTab workspaceId="ws-1" runId="run-4" onRunIdChange={vi.fn()} />)
   await waitFor(() => expect(screen.getByText("arXiv didn't answer")).toBeInTheDocument())
+})
+
+const pausedPanelRun = {
+  id: 'run-5', workspace_id: 'ws-1', query_text: 'q', filters_json: {}, sources_json: ['arxiv', 'crossref'],
+  status: 'exhausted', started_at: '2026-09-24T00:00:00Z', stopped_at: null, stats_json: { last_batch_new_hits: 2 },
+  can_continue: true, sources_left: ['arxiv', 'crossref'], paused_sources: ['arxiv', 'crossref'],
+}
+
+test('a paused run says so in plain words and offers Continue, which calls the API', async () => {
+  vi.mocked(api.getSearchRun).mockResolvedValue(pausedPanelRun as never)
+  vi.mocked(api.continueSearchRun).mockResolvedValue({ ...pausedPanelRun, status: 'running', can_continue: false } as never)
+  renderWithClient(<SearchTab workspaceId="ws-1" runId="run-5" onRunIdChange={vi.fn()} />)
+  await waitFor(() =>
+    expect(screen.getByText(/Paused at 200 results per source; Continue fetches more from 2 sources/)).toBeInTheDocument(),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Continue: fetch the next results from 2 sources' }))
+  await waitFor(() => expect(api.continueSearchRun).toHaveBeenCalledWith('ws-1', 'run-5'))
+})
+
+test('no Continue button when the run cannot continue', async () => {
+  vi.mocked(api.getSearchRun).mockResolvedValue({ ...pausedPanelRun, can_continue: false, paused_sources: [] } as never)
+  renderWithClient(<SearchTab workspaceId="ws-1" runId="run-5" onRunIdChange={vi.fn()} />)
+  await waitFor(() => expect(screen.getByText(/exhausted/)).toBeInTheDocument())
+  expect(screen.queryByRole('button', { name: /^Continue/ })).toBeNull()
+})
+
+test('a refused Continue shows its reason inline', async () => {
+  vi.mocked(api.getSearchRun).mockResolvedValue(pausedPanelRun as never)
+  vi.mocked(api.continueSearchRun).mockRejectedValue(new Error('nothing_left_to_fetch'))
+  renderWithClient(<SearchTab workspaceId="ws-1" runId="run-5" onRunIdChange={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: /^Continue/ }))
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/nothing_left_to_fetch/))
 })

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useSearchRun, useStartSearchRun, useStopSearchRun } from '@/api/queries'
+import { useContinueSearchRun, useSearchRun, useStartSearchRun, useStopSearchRun } from '@/api/queries'
 import { Scene3D } from '@/features/scene3d/Scene3D'
 import type { SearchRunStatus } from '@/features/scene3d/poses'
 import { SOURCE_NAMES } from '@/features/discovery/candidateMeta'
@@ -7,6 +7,8 @@ import { SearchControls } from './SearchControls'
 import { HitTable } from './HitTable'
 import { SavedSearches } from './SavedSearches'
 import { RunsList } from './RunsList'
+import { Button } from '@/components/ui/button'
+import { continueLabel, pausedText } from './continueText'
 import { ScreeningAssist } from './ScreeningAssist'
 
 /** The sources that failed on a run, each with its error text when the server gave a string; tolerant of bad shapes. */
@@ -37,6 +39,7 @@ export function SearchTab({
 }) {
   const startRun = useStartSearchRun(workspaceId)
   const stopRun = useStopSearchRun(workspaceId)
+  const continueRun = useContinueSearchRun(workspaceId)
   const run = useSearchRun(workspaceId, runId)
   const [query, setQuery] = useState('')
 
@@ -61,7 +64,7 @@ export function SearchTab({
             fallback={null}
             className="size-8"
           />
-          {run.data.status} · {(run.data.stats_json?.last_batch_new_hits as number | undefined) ?? 0} new in last
+          {pausedText(run.data) ?? run.data.status} · {(run.data.stats_json?.last_batch_new_hits as number | undefined) ?? 0} new in last
           batch
           {run.data.stats_json?.cut_short === true && run.data.stopped_at && (
             <span className="ml-2">
@@ -69,7 +72,24 @@ export function SearchTab({
               {((run.data.stats_json.unfinished_sources as string[] | undefined) ?? []).length} sources not finished
             </span>
           )}
+          {run.data.can_continue && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto"
+              aria-label={continueLabel(run.data.sources_left)}
+              disabled={continueRun.isPending}
+              onClick={() => continueRun.mutate(run.data.id)}
+            >
+              Continue
+            </Button>
+          )}
         </div>
+        {continueRun.error && (
+          <div role="alert" className="border-b px-3 py-1 text-sm text-destructive">
+            {continueRun.error.message}
+          </div>
+        )}
         {failedSources(run.data.stats_json).map(({ id, error }) => (
           <div key={id} className="border-b px-3 py-1 text-sm text-muted-foreground">
             {id} didn't answer{error ? `: ${error}` : ''}
