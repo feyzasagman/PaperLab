@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useSearchRuns } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { plural } from '@/features/charts/chartMeta'
 import { relative } from './schedule'
 
 /** The workspace's recent search runs, collapsed under Saved searches; picking one opens it (its id goes in the URL). */
@@ -34,7 +35,7 @@ export function RunsList({
           >
             <span className="min-w-0 flex-1 truncate font-medium">{r.query_text}</span>
             <span className="text-xs text-muted-foreground">
-              {r.status} · {relative(r.started_at)} · {r.hit_count} hits
+              {r.status} · {relative(r.started_at)} · {plural(r.hit_count, 'new hit')}
             </span>
           </button>
         ))}

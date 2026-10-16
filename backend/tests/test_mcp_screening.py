@@ -402,6 +402,15 @@ async def test_run_prescreen_with_a_remote_model_asks_and_starts_nothing(session
     assert jobs.jobs == [] and workspace.suggest_status == "idle"
 
 
+async def test_run_prescreen_confirm_never_lifts_the_remote_refusal(session, jobs, monkeypatch):
+    _model(monkeypatch, False)
+    workspace, _ = await _pool(session)
+    response = await call("run_prescreen", workspace=workspace.name, confirm=True)
+    assert response.is_error and response.structured_content["error"] == "remote_model_needs_confirm"
+    assert response.structured_content["host"] == "api.example.com"
+    assert jobs.jobs == [] and workspace.suggest_status == "idle"
+
+
 async def test_run_prescreen_errors(session, jobs, monkeypatch):
     _model(monkeypatch, True)
     workspace, _ = await _pool(session, criteria=None)

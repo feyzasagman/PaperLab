@@ -273,8 +273,9 @@ async def run_prescreen(
     """Use to have the default model suggest include, exclude or unsure for each undecided hit. It runs in the
     background. Without run_id it covers every undecided hit in the workspace; above 500 queued hits it is refused
     with prescreen_needs_confirm and the count, so ask the owner, then call again with confirm=true. A remote model
-    is refused with remote_model_needs_confirm, naming the model and the host that would receive the abstracts.
-    Suggestions are never decisions."""
+    is refused with remote_model_needs_confirm, naming the model and the host that would receive the abstracts;
+    confirm=true never lifts that, so ask the owner to pick a local default model or start pre-screening from the
+    web app. Suggestions are never decisions."""
     async with sessions() as session:
         return await pipeline.run_prescreen(session, workspace, run_id, confirm)
 

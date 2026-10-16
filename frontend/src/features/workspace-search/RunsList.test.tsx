@@ -27,7 +27,13 @@ test('opening Runs (2) lists both queries newest first with hit counts', () => {
   expect(toggle.getAttribute('aria-expanded')).toBe('true')
   const rows = screen.getAllByRole('button', { name: /query/ })
   expect(rows.map((r) => r.textContent)).toEqual([expect.stringContaining('newer query'), expect.stringContaining('older query')])
-  expect(screen.getAllByText(/3 hits/)).toHaveLength(2)
+  expect(screen.getAllByText(/3 new hits/)).toHaveLength(2)
+})
+
+test('a run with one hit says "1 new hit"', () => {
+  setup([{ ...run('r1', 'solo query'), hit_count: 1 }])
+  fireEvent.click(screen.getByRole('button', { name: 'Runs (1)' }))
+  expect(screen.getByText(/1 new hit(?!s)/)).toBeTruthy()
 })
 
 test('clicking a row selects that run', () => {
