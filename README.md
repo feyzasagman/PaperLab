@@ -384,7 +384,7 @@ Library:
 - `related_papers`: library papers connected to one, up to three links away;
 - `list_workspaces`: your workspaces, with their names;
 - `create_workspace`: a new workspace;
-- `list_papers`: the papers in a workspace, optionally only those with any or all of some tags;
+- `list_papers`: the papers in a workspace, optionally only those with any or all of some tags, or only those without full text (`full_text=false`);
 - `search_library`, `export_citations`, `list_evidence_cards` and `list_notes` also take `tags` (and `match`: any or all) to scope to a workspace's tags;
 - `list_tags`: a workspace's tags, with paper counts and coverage;
 - `tag_papers` / `untag_papers`: label papers with a tag, or take it off, by id or DOI;
@@ -392,6 +392,7 @@ Library:
 
 Adding papers:
 - `add_paper`: a paper by DOI, arXiv ID or PDF link, free copies only, optionally into a workspace;
+- `add_papers`: up to 50 papers by DOI, arXiv ID or PDF link in one call; each item reports its own status or error;
 - `add_paper_to_workspace`: files a library paper in a workspace;
 - `remove_paper_from_workspace`: takes a paper out of a workspace (it stays in the library).
 
@@ -400,11 +401,12 @@ Systematic search and screening:
 - `get_search_run`: how a search run is going, and what it found;
 - `list_search_runs`: a workspace's search runs, newest first, with status, sources and hit counts;
 - `stop_search_run`: stops a search run that is still going;
-- `list_hits`: a run's results, filtered by your decision, with any AI suggestion;
+- `list_hits`: a run's results, filtered by your decision, with any AI suggestion and each hit's source type, peer-review status, published DOI and venue;
 - `review_hits`: records your screening decisions on hits, with a reason when you exclude, and optional `tags` that land on the paper when it is imported;
 - `run_prescreen`: has your default model suggest include, exclude or unsure for undecided hits (a remote model is refused, naming its host, since your abstracts would leave your machine; a workspace-wide run over 500 hits asks for `confirm`, which never lifts the remote refusal: pick a local default model or start it from the web app);
+- `enrich_hits`: fills peer-review, published DOI and venue, and missing abstracts, for hits found before those existed, from Semantic Scholar in the background (call it again to see how many are left); it also clears the "no abstract" suggestion of undecided hits that now have one, so `run_prescreen` picks them up again;
 - `stop_prescreen`: stops AI pre-screening that is running; the suggestions made so far stay;
-- `get_screening_suggestions`: undecided hits with a suggestion, best score first;
+- `get_screening_suggestions`: undecided hits with a suggestion, best score first, with the same triage fields;
 - `accept_suggestions`: records your decision from the suggestions you pick (also with `tags`);
 - `import_hit`: brings a hit into the library and the workspace (also with `tags`);
 - `snowball`: finds papers a paper cites, or that cite it, as new hits;

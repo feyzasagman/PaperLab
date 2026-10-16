@@ -1599,3 +1599,20 @@ async def test_a_manual_upload_applies_the_tags_given_at_screening(session, clie
     assert resp.status_code == 200
     await session.refresh(hit)
     assert await tags.paper_ids(session, hit.workspace_id, ["Q1"]) == {hit.paper_id}
+
+
+async def test_list_hits_shows_triage_fields(client, session):
+    from screening_pool import make_pool
+
+    from app.models.references import ExternalRef
+
+    workspace, (hit,) = await make_pool(session, [("abstract", None)])
+    ref = await session.get(ExternalRef, hit.external_ref_id)
+    ref.source_type, ref.published_doi, ref.published_venue = "preprint", "10.1/pub", "J. Things 4"
+    await session.commit()
+
+    resp = await client.get(f"/api/workspaces/{workspace.id}/search/hits")
+
+    (item,) = resp.json()["items"]
+    assert (item["source_type"], item["published_doi"], item["published_venue"], item["peer_review"]) == (
+        "preprint", "10.1/pub", "J. Things 4", "false")

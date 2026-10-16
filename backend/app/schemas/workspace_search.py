@@ -95,6 +95,11 @@ class HitOut(BaseModel):
     # Every provider that has ever matched this hit's linked ExternalRef, trust-order first — [] when
     # external_ref_id is None, same as the other linked-ref fields above.
     sources: list[str] = []
+    # M59 triage: what the providers said about where the paper was published; peer_review comes from source_type only.
+    source_type: str | None = None
+    published_doi: str | None = None
+    published_venue: str | None = None
+    peer_review: Literal["true", "false", "unknown"] = "unknown"
     # From the hit's linked SearchRunEligibility row (paper_id, run_id): stage-2 screening verdict, one join away
     # (Task 4). None when no verdict has been recorded yet for this hit's own run.
     stage2_status: str | None = None

@@ -9,7 +9,6 @@ nothing in this process may print.
 
 import functools
 import json
-import re
 import uuid
 from typing import Annotated, Literal
 
@@ -18,7 +17,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
 from app.core import graph, library, notes, pipeline, screening, workspaces
-from app.core.errors import Conflict, DomainError, InvalidInput, NotFound
+from app.core.errors import DomainError, error_code
 from app.db import SessionLocal
 
 # ponytail: the embedding model loads on the first search (seconds). Warm it up in a lifespan if a first search
@@ -28,7 +27,8 @@ mcp = MCPServer(
     instructions=(
         "PaperLab is the owner's research library. Learn workspace names with list_workspaces. "
         "Library: search_library, get_paper, related_papers, list_papers; create_workspace makes a new one; add papers "
-        "by DOI, arXiv ID or PDF link with add_paper (free copies only), file them with add_paper_to_workspace and "
+        "by DOI, arXiv ID or PDF link with add_paper (free copies only; add_papers takes up to 50 at once), "
+        "file them with add_paper_to_workspace and "
         "take them out with remove_paper_from_workspace. "
         "Systematic search: start_search_run, then get_search_run until it finishes "
         "(stop_search_run ends one early; list_search_runs shows a workspace's runs); read results with list_hits, "
@@ -43,6 +43,8 @@ mcp = MCPServer(
         "accepts some. Claims: verify_claim and verify_claims check a claim against the papers it cites, with a "
         "quote as evidence. Evidence cards: generate_evidence_card starts one (about a minute per paper), "
         "get_evidence_card reads it, list_evidence_cards shows a workspace's cards. "
+        "Older hits: enrich_hits fills their peer-review and published-version data and missing abstracts, "
+        "in the background. "
         "Tags: list_tags shows a workspace's tags with counts and coverage, tag_papers / untag_papers label papers in "
         "bulk by id or DOI, rename_tag and delete_tag manage them; list_papers, search_library, export_citations, "
         "list_evidence_cards and list_notes take tags=[…] to scope to them; review_hits, "
@@ -55,8 +57,6 @@ mcp = MCPServer(
 )
 sessions = SessionLocal  # tests point this at their rolled-back session
 READ_ONLY = ToolAnnotations(read_only_hint=True)
-_CODE = re.compile(r"[a-z]+(?:_[a-z]+)+")
-_KINDS = {NotFound: "not_found", InvalidInput: "invalid_input", Conflict: "conflict"}
 
 
 def recoverable(tool):
@@ -68,11 +68,10 @@ def recoverable(tool):
         try:
             return await tool(*args, **kwargs)
         except DomainError as exc:
-            message = str(exc)
-            if _CODE.fullmatch(message):
-                error = {"error": message, **exc.details}
-            else:
-                error = {"error": _KINDS.get(type(exc), "invalid_input"), "detail": message, **exc.details}
+            code = error_code(exc)
+            error = {"error": code, **exc.details}
+            if code != str(exc):
+                error = {"error": code, "detail": str(exc), **exc.details}
             return CallToolResult(
                 content=[TextContent(type="text", text=json.dumps(error))], structured_content=error, is_error=True
             )
@@ -151,13 +150,14 @@ async def create_workspace(name: str, description: str | None = None) -> workspa
 @mcp.tool(annotations=READ_ONLY)
 @recoverable
 async def list_papers(
-    workspace: str, tags: list[str] | None = None, match: Literal["any", "all"] = "any"
+    workspace: str, tags: list[str] | None = None, match: Literal["any", "all"] = "any", full_text: bool | None = None
 ) -> list[pipeline.PaperOut]:
     """Use to see which papers a workspace holds and whether each finished ingesting (status `ready`), newest first.
     Give `tags` to keep only papers carrying any of them (`match` "any") or all of them ("all"); an unknown tag is
-    an error that lists the workspace's tags."""
+    an error that lists the workspace's tags. `full_text` false keeps only the papers without their full text
+    (abstract or metadata only), true only those with it."""
     async with sessions() as session:
-        return await pipeline.list_papers(session, workspace, tags, match)
+        return await pipeline.list_papers(session, workspace, tags, match, full_text)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -235,6 +235,17 @@ async def add_paper(identifier: str, workspace: str | None = None) -> pipeline.A
 
 @mcp.tool()
 @recoverable
+async def add_papers(identifiers: list[str], workspace: str | None = None) -> list[pipeline.AddPapersItem]:
+    """Use to bring up to 50 papers into the library at once by DOI, arXiv ID or direct PDF link (free copies only).
+    Each item reports its own `status` (as add_paper) or `error` (the code add_paper would return), so one bad
+    identifier does not stop the rest. Repeated identifiers are added once. Give `workspace` to file them there too;
+    an unknown workspace fails the whole call. Use add_paper for a single identifier."""
+    async with sessions() as session:
+        return await pipeline.add_papers(session, identifiers, workspace)
+
+
+@mcp.tool()
+@recoverable
 async def start_search_run(
     workspace: str, query: str, sources: list[str] | None = None,
     year_from: int | None = None, year_to: int | None = None,
@@ -281,7 +292,8 @@ async def list_hits(
     limit: int = 50,
 ) -> pipeline.HitPage:
     """Use to read search results waiting for screening. Filter by run and by status (undecided, relevant,
-    not_relevant, maybe); pass next_cursor back to page. Each hit may carry an AI suggestion — a suggestion only,
+    not_relevant, maybe); pass next_cursor back to page. Each hit shows source_type, peer_review, published_doi and
+    published_venue to tell preprints from published work, and may carry an AI suggestion — a suggestion only,
     never a decision."""
     async with sessions() as session:
         return await pipeline.list_hits(session, workspace, run_id, status, cursor, limit)
@@ -293,7 +305,8 @@ async def get_screening_suggestions(
     workspace: str, run_id: uuid.UUID | None = None, min_relevance: int | None = None, cursor: str | None = None,
 ) -> pipeline.HitPage:
     """Use to read the AI's suggestions on undecided hits, best score first. min_relevance (1 to 5) hides weaker
-    ones; pass next_cursor back to page. These are suggestions only; nothing here is a decision."""
+    ones; pass next_cursor back to page. Hits carry source_type, peer_review, published_doi and published_venue.
+    These are suggestions only; nothing here is a decision."""
     async with sessions() as session:
         return await pipeline.get_screening_suggestions(session, workspace, run_id, min_relevance, cursor)
 
@@ -338,6 +351,21 @@ async def run_prescreen(
     web app. Suggestions are never decisions."""
     async with sessions() as session:
         return await pipeline.run_prescreen(session, workspace, run_id, confirm)
+
+
+@mcp.tool()
+@recoverable
+async def enrich_hits(workspace: str, run_id: uuid.UUID | None = None) -> pipeline.EnrichQueued:
+    """Use to fill peer-review and published-version data for hits found before this existed. It runs in the
+    background (a few seconds per 500 hits, longer when Semantic Scholar is busy); read the results with
+    list_hits. It also fills abstracts that are missing. `queued` is how many hits' papers have not been asked
+    about yet: call again later. A count above 0 can mean a job is still running (`already_running` is true and a
+    second call starts nothing), a rate-limited stop or a failed chunk. A hit Semantic Scholar couldn't fill is
+    asked once only. Hits whose 'no abstract' suggestion is now out of date are cleared (`suggestions_cleared`), so
+    run_prescreen picks them up again.
+    With Semantic Scholar turned off in Settings nothing is queued (`s2_off`)."""
+    async with sessions() as session:
+        return await pipeline.enrich_hits(session, workspace, run_id)
 
 
 @mcp.tool()

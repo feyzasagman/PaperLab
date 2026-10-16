@@ -28,6 +28,7 @@ from app.core.source_registry import MAPPERS as _MAPPERS
 from app.core.source_registry import PAGE_FUNCS as _PAGE_FUNCS
 from app.core.source_registry import PAGE_SIZE_BY_SOURCE
 from app.core.source_registry import STARTING_CURSOR_VALUE as _STARTING_CURSOR_VALUE
+from app.core.source_types import peer_reviewed_of
 from app.models.references import ExternalRef, paper_references
 from app.models.workspace_search import (
     SearchRunEligibility,
@@ -126,6 +127,9 @@ async def _find_or_create_external_ref(session: AsyncSession, candidate: Candida
             existing.cited_by_count = candidate.cited_by_count
         if candidate.abstract and not existing.abstract:
             existing.abstract = candidate.abstract
+        for triage in ("source_type", "published_doi", "published_venue"):
+            if getattr(candidate, triage) and not getattr(existing, triage):
+                setattr(existing, triage, getattr(candidate, triage))
         # Union, not backfill-if-empty like the fields above: a later search or snowball round can rediscover an
         # already-known paper through a source that hadn't found it before, and every one of those is worth
         # keeping, not just whichever happened to create the row.
@@ -143,6 +147,9 @@ async def _find_or_create_external_ref(session: AsyncSession, candidate: Candida
         abstract=candidate.abstract,
         pdf_urls=candidate.pdf_urls,
         sources=list(candidate.sources),
+        source_type=candidate.source_type,
+        published_doi=candidate.published_doi,
+        published_venue=candidate.published_venue,
     )
     session.add(ref)
     await session.flush()
@@ -611,6 +618,10 @@ def _hit_out_dict(
         doi=ref.doi if ref else None,
         abstract=ref.abstract if ref else None,
         sources=ref.sources if ref else [],
+        source_type=ref.source_type if ref else None,
+        published_doi=ref.published_doi if ref else None,
+        published_venue=ref.published_venue if ref else None,
+        peer_review=peer_reviewed_of(ref.source_type if ref else None),
         stage2_status=stage2_status,
         stage2_exclude_reason=stage2_exclude_reason,
     )

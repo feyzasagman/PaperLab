@@ -5,6 +5,7 @@ every read and write is an existing service's. Results are the API's own schemas
 fields.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass, fields
 from datetime import datetime
@@ -20,6 +21,7 @@ from app.core import (
     claims,
     discovery,
     evidence_cards,
+    hit_enrichment,
     notes,
     paper_sources,
     papers,
@@ -33,7 +35,7 @@ from app.core import (
     workspace_search,
     workspaces,
 )
-from app.core.errors import Conflict, InvalidInput, NotFound
+from app.core.errors import Conflict, DomainError, InvalidInput, NotFound, error_code
 from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import PaperStatus
 from app.providers.base import LLMError, LLMUnavailable
@@ -51,12 +53,21 @@ class Removed:
 
 
 async def list_papers(
-    session: AsyncSession, workspace: str, tags_: list[str] | None = None, match: Literal["any", "all"] = "any"
+    session: AsyncSession,
+    workspace: str,
+    tags_: list[str] | None = None,
+    match: Literal["any", "all"] = "any",
+    full_text: bool | None = None,
 ) -> list[PaperOut]:
     ws = await workspace_id(session, workspace)
     rows = await workspaces.papers(session, ws)
     wanted = await tags.paper_ids(session, ws, tags_, match)
-    return [PaperOut.model_validate(row) for row in rows if wanted is None or row.id in wanted]
+    return [
+        PaperOut.model_validate(row)
+        for row in rows
+        if (wanted is None or row.id in wanted)
+        and (full_text is None or (row.evidence_access == "full_text") == full_text)
+    ]
 
 
 async def list_tags(session: AsyncSession, workspace: str) -> list[tags.TagSummary]:
@@ -180,7 +191,8 @@ async def _add_found(session, providers, kind, value, workspace_uuid) -> AddPape
 
 async def _add_link(session, providers, link, workspace_uuid) -> AddPaperResult:
     await pdf_links.check_url(link)
-    providers.pdf.event_hooks["request"].append(pdf_links.guard)  # this call's own client, closed after it
+    if pdf_links.guard not in providers.pdf.event_hooks["request"]:
+        providers.pdf.event_hooks["request"].append(pdf_links.guard)  # this call's own client, closed after it
     data = await discovery.download_pdf(providers.pdf, [link])
     if data is None:
         return AddPaperResult(status="no_free_pdf", landing_url=link)
@@ -191,14 +203,72 @@ async def _add_link(session, providers, link, workspace_uuid) -> AddPaperResult:
     return await _queued(session, paper, workspace_uuid)
 
 
+logger = logging.getLogger(__name__)
+
+
+async def _add(session, providers, kind, value, workspace_uuid) -> AddPaperResult:
+    if kind == "link":
+        return await _add_link(session, providers, value, workspace_uuid)
+    return await _add_found(session, providers, kind, value, workspace_uuid)
+
+
 async def add_paper(session: AsyncSession, identifier: str, workspace: str | None = None) -> AddPaperResult:
     """Adds a paper by DOI, arXiv ID or direct PDF link, free copies only (D68, D217), and queues its ingest."""
     kind, value = _identifier(identifier)
     workspace_uuid = await workspace_id(session, workspace) if workspace is not None else None  # before any download
     async with discovery.open_providers(session) as providers:
-        if kind == "link":
-            return await _add_link(session, providers, value, workspace_uuid)
-        return await _add_found(session, providers, kind, value, workspace_uuid)
+        return await _add(session, providers, kind, value, workspace_uuid)
+
+
+MAX_ADD_PAPERS = 50
+
+
+@dataclass(frozen=True)
+class AddPapersItem:
+    identifier: str
+    status: str | None = None
+    paper_id: uuid.UUID | None = None
+    error: str | None = None
+
+
+def _distinct(identifiers: list[str]) -> list[tuple[str, tuple[str, str] | None, str | None]]:
+    """(identifier, parsed, error) once per distinct paper, in order. An unparseable one is its own entry."""
+    seen, out = set(), []
+    for raw in identifiers:
+        text = raw.strip()
+        try:
+            parsed, error = _identifier(text), None
+        except InvalidInput as exc:
+            parsed, error = None, error_code(exc)
+        if (parsed or text) not in seen:
+            seen.add(parsed or text)
+            out.append((text, parsed, error))
+    return out
+
+
+async def add_papers(
+    session: AsyncSession, identifiers: list[str], workspace: str | None = None
+) -> list[AddPapersItem]:
+    """add_paper for up to MAX_ADD_PAPERS identifiers with one set of providers; each item keeps its own error."""
+    if len(identifiers) > MAX_ADD_PAPERS:
+        raise InvalidInput("too_many_identifiers", max=MAX_ADD_PAPERS)
+    workspace_uuid = await workspace_id(session, workspace) if workspace is not None else None  # before any download
+    items = []
+    async with discovery.open_providers(session) as providers:
+        for text, parsed, error in _distinct(identifiers):
+            if parsed is not None:
+                try:
+                    added = await _add(session, providers, *parsed, workspace_uuid)
+                    items.append(AddPapersItem(text, added.status, added.paper_id))
+                    continue
+                except DomainError as exc:
+                    error = error_code(exc)
+                except Exception:  # one provider's surprise must not lose the items already added
+                    logger.exception("add_papers failed on %s", text)
+                    await session.rollback()  # a failed flush leaves the session unusable until then
+                    error = "failed"
+            items.append(AddPapersItem(text, error=error))
+    return items
 
 
 async def _sources(session: AsyncSession, sources: list[str] | None) -> list[str]:
@@ -333,6 +403,37 @@ async def run_prescreen(
     state = await screening.start_suggestions(session, ws, False, run_id)
     await queue.enqueue("suggest_screening", str(ws))
     return ScreeningStateOut.model_validate(state)
+
+
+@dataclass(frozen=True)
+class EnrichQueued:
+    queued: int
+    already_running: bool = False
+    suggestions_cleared: int = 0
+    s2_off: bool = False  # Semantic Scholar is off in Settings: nothing was queued
+
+
+async def enrich_hits(session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None) -> EnrichQueued:
+    """Queues the Semantic Scholar backfill for hits not asked about yet. `queued` is how many; calling again shows
+    what a rate-limited run left, and `already_running` means a job for it is still going, so nothing new started.
+    A hit Semantic Scholar couldn't fill is asked once only; arXiv gaps are asked
+    again. With Semantic Scholar turned off in Settings nothing is queued (`s2_off`). Hits whose 'no abstract'
+    suggestion is now out of date are cleared (`suggestions_cleared`), so run_prescreen picks them up again."""
+    ws = await workspace_id(session, workspace)
+    if run_id is not None:
+        await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
+    cleared = await hit_enrichment.clear_stale_no_abstract(session, ws)  # needs no Semantic Scholar
+    if not (await paper_sources.get(session)).enabled["semantic_scholar"]:
+        return EnrichQueued(0, suggestions_cleared=cleared, s2_off=True)
+    s2_refs = await hit_enrichment.refs_to_enrich(session, ws, run_id)
+    count = len({r.id for r in [*s2_refs, *await hit_enrichment.refs_for_arxiv(session, ws, run_id)]})
+    if not count:
+        return EnrichQueued(0, suggestions_cleared=cleared)
+    # One job per workspace and run at a time: arq refuses a duplicate id while one is queued or running.
+    started = await queue.enqueue(
+        "enrich_hits", str(ws), str(run_id) if run_id else None, job_id=f"enrich_hits:{ws}:{run_id or 'all'}"
+    )
+    return EnrichQueued(count, already_running=not started, suggestions_cleared=cleared)
 
 
 async def stop_prescreen(session: AsyncSession, workspace: str) -> ScreeningStateOut:

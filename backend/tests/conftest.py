@@ -104,11 +104,17 @@ class FakeArq:
 
     def __init__(self):
         self.jobs: list[tuple] = []
+        self.job_ids: set[str] = set()
 
-    async def enqueue_job(self, name: str, *args, _queue_name: str | None = None) -> None:
+    async def enqueue_job(self, name: str, *args, _queue_name: str | None = None, _job_id: str | None = None):
         expected = queue.INGEST_QUEUE if name in queue.INGEST_JOBS else None
         assert _queue_name == expected, f"{name} was queued on {_queue_name}, not {expected}"
+        if _job_id is not None:  # arq refuses a job id that is queued or running, and answers None
+            if _job_id in self.job_ids:
+                return None
+            self.job_ids.add(_job_id)
         self.jobs.append((name, *args))
+        return object()
 
 
 @pytest.fixture
