@@ -75,6 +75,7 @@ async def test_batch_posts_ids_and_aligns_nulls():
     [request] = seen
     assert request.method == "POST" and request.url.params["fields"] == semantic_scholar.BATCH_FIELDS
     assert request.read() == b'{"ids":["DOI:10.1/x","DOI:10.1/missing"]}'
+    assert request.extensions["timeout"]["read"] == 60.0  # a 500-id batch with abstracts outlasts the 10 s default
 
 
 async def test_enrich_fills_only_empty_fields_and_counts(session):
@@ -182,15 +183,24 @@ async def test_enrich_hits_tool_queues_once_with_the_count(session, jobs):
     done = ref("done", doi="10.1/c", source_type="preprint", abstract="Has one.")
     ws, run = await pool(session, [ref("a", doi="10.1/a"), ref("b", doi="10.1/b"), done])
     out = result(await call("enrich_hits", workspace=ws.name))
-    assert out == {"queued": 2}
+    assert out == {"queued": 2, "already_running": False}
     assert jobs.jobs == [("enrich_hits", str(ws.id), None)]
     result(await call("enrich_hits", workspace=ws.name, run_id=str(run.id)))
     assert jobs.jobs[-1] == ("enrich_hits", str(ws.id), str(run.id))
 
 
+async def test_a_second_enrich_hits_while_a_job_runs_queues_nothing(session, jobs):
+    ws, _ = await pool(session, [ref("a", doi="10.1/a")])
+    first = result(await call("enrich_hits", workspace=ws.name))
+    second = result(await call("enrich_hits", workspace=ws.name))
+    assert first == {"queued": 1, "already_running": False}
+    assert second == {"queued": 1, "already_running": True}
+    assert jobs.jobs == [("enrich_hits", str(ws.id), None)]
+
+
 async def test_enrich_hits_with_nothing_to_do_queues_nothing(session, jobs):
     ws, _ = await pool(session, [ref("done", doi="10.1/c", source_type="preprint", abstract="Has one.")])
-    assert result(await call("enrich_hits", workspace=ws.name)) == {"queued": 0}
+    assert result(await call("enrich_hits", workspace=ws.name)) == {"queued": 0, "already_running": False}
     assert jobs.jobs == []
 
 

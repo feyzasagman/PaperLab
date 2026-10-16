@@ -122,6 +122,8 @@ def from_work(work: dict[str, Any]) -> Candidate:
     authors = [a["author"]["display_name"] for a in work.get("authorships") or [] if a.get("author")]
     external_ids = {k: v for k, v in {"openalex": short_id(work.get("id")), "arxiv": arxiv_id}.items() if v}
     source_type = source_type_of(work.get("type"), doi)
+    if PREPRINT_SERVERS.search(source.get("display_name") or ""):
+        source_type = "preprint"  # hosted on a preprint server, whatever OpenAlex's type says
     return Candidate(
         title=work.get("title") or "Untitled",
         authors=authors[:MAX_AUTHORS],

@@ -408,11 +408,13 @@ async def run_prescreen(
 @dataclass(frozen=True)
 class EnrichQueued:
     queued: int
+    already_running: bool = False
 
 
 async def enrich_hits(session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None) -> EnrichQueued:
     """Queues the Semantic Scholar backfill for hits not asked about yet. `queued` is how many; calling again shows
-    what a rate-limited run left. A hit Semantic Scholar couldn't fill is asked once only. Refused (source_off) when
+    what a rate-limited run left, and `already_running` means a job for it is still going, so nothing new started.
+    A hit Semantic Scholar couldn't fill is asked once only. Refused (source_off) when
     Semantic Scholar is turned off in Settings."""
     ws = await workspace_id(session, workspace)
     if not (await paper_sources.get(session)).enabled["semantic_scholar"]:
@@ -420,9 +422,13 @@ async def enrich_hits(session: AsyncSession, workspace: str, run_id: uuid.UUID |
     if run_id is not None:
         await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
     count = len(await hit_enrichment.refs_to_enrich(session, ws, run_id))
-    if count:
-        await queue.enqueue("enrich_hits", str(ws), str(run_id) if run_id else None)
-    return EnrichQueued(count)
+    if not count:
+        return EnrichQueued(0)
+    # One job per workspace and run at a time: arq refuses a duplicate id while one is queued or running.
+    started = await queue.enqueue(
+        "enrich_hits", str(ws), str(run_id) if run_id else None, job_id=f"enrich_hits:{ws}:{run_id or 'all'}"
+    )
+    return EnrichQueued(count, already_running=not started)
 
 
 async def stop_prescreen(session: AsyncSession, workspace: str) -> ScreeningStateOut:

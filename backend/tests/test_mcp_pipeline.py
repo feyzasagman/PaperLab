@@ -11,7 +11,7 @@ from pdf_papers import chunked_paper
 
 from app.core import discovery, papers, pdf_links, pipeline, workspaces
 from app.core.candidates import Candidate
-from app.models import PaperStatus
+from app.models import Paper, PaperStatus
 from app.providers import discovery_fake
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
@@ -291,3 +291,4 @@ async def test_add_papers_carries_on_after_an_unexpected_failure(session, jobs, 
     outcomes = [(i["status"], i["error"]) for i in items]
     assert outcomes == [("queued", None), (None, "failed"), (None, "no_matching_paper")]
     assert jobs.jobs[0] == ("ingest_paper", items[0]["paper_id"])
+    assert await session.get(Paper, uuid.UUID(items[0]["paper_id"])) is not None

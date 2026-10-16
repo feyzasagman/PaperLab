@@ -13,6 +13,7 @@ from app.providers.openalex import json_body
 
 BASE_URL = "https://api.semanticscholar.org"
 TIMEOUT = httpx.Timeout(10.0)
+BATCH_TIMEOUT = httpx.Timeout(60.0)  # a 500-id batch with abstracts is slow to answer
 PAPER_FIELDS = "title,year,venue,authors,externalIds,openAccessPdf,citationCount,abstract,publicationTypes,journal"
 # The default pool is recent papers only, and its picks for BERT were weak. all-cs also served a biology DOI.
 RECOMMENDATION_POOL = "all-cs"
@@ -80,7 +81,9 @@ async def batch(http: httpx.AsyncClient, ids: list[str], fields: str = BATCH_FIE
     """Several papers in one request, in the order of `ids`; None for each one S2 doesn't know. At most 500 ids."""
     if not ids:
         return []
-    response = await http.post("/graph/v1/paper/batch", params={"fields": fields}, json={"ids": ids})
+    response = await http.post(
+        "/graph/v1/paper/batch", params={"fields": fields}, json={"ids": ids}, timeout=BATCH_TIMEOUT
+    )
     papers = json_body(response.raise_for_status())
     if not isinstance(papers, list):
         raise httpx.DecodingError("Semantic Scholar's batch answer is not a list", request=response.request)
