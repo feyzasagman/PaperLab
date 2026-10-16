@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core import ai_sort, discovery, year_range
+from app.core import ai_sort, discovery, tags, year_range
 from app.core.candidates import Candidate, from_s2, merge, normal_title
 from app.core.discovery import Providers, _add_unpaywall_links, download_pdf
 from app.core.references import _same_reference
@@ -886,6 +886,7 @@ async def import_hits(
         imported += 1
         paper_ids.append(paper.id)
 
+    await tags.apply_hit_tags(session, workspace_id, hits)
     await session.commit()
     return ImportResult(imported, failed, paper_ids)
 

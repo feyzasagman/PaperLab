@@ -1539,3 +1539,19 @@ async def test_list_runs_over_http_newest_first_with_hit_counts(client, session)
     assert resp.status_code == 200 and len(runs) == 2
     assert runs[0]["id"] == newer.json()["id"] and runs[0]["hit_count"] == 0
     assert runs[1]["hit_count"] == 3 and "stats_json" not in runs[1]
+
+
+async def test_import_hits_over_http_applies_the_tags_given_at_screening(session, client, discovery_api):
+    from app.core import tags, workspaces
+    from app.models.workspace_search import WorkspaceSearchHit
+
+    discovery_api.pdf_host.reply("/paper.pdf", 200, content=b"%PDF-1.4 fake content")
+    hit_id = await _make_importable_hit(session, pdf_urls=["https://pdf.example/paper.pdf"])
+    hit = await session.get(WorkspaceSearchHit, hit_id)
+    await tags.tag_hits(session, hit.workspace_id, ["Q1"], [hit_id])
+
+    resp = await client.post(f"/api/workspaces/{hit.workspace_id}/search/hits/import", json={"hit_ids": [str(hit_id)]})
+
+    assert resp.status_code == 200
+    await session.refresh(hit)
+    assert await tags.paper_ids(session, hit.workspace_id, ["Q1"]) == {hit.paper_id}

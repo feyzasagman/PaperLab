@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enrichment import normalize_doi
 from app.core.errors import Conflict, InvalidInput
-from app.models import Paper, WorkspaceTag, paper_tags, workspace_papers
+from app.models import Paper, WorkspaceTag, hit_tags, paper_tags, workspace_papers
+from app.models.workspace_search import WorkspaceSearchHit
 
 NAME_MAX_CHARS = 64
 MAX_TAG_BATCH = 5000
@@ -215,3 +216,40 @@ async def paper_ids(
     else:
         query = query.distinct()
     return set(await session.scalars(query))
+
+
+async def apply_hit_tags(session: AsyncSession, ws: uuid.UUID, hits: Sequence[WorkspaceSearchHit]) -> None:
+    """Copies the hits' tags onto their papers, for hits whose paper is a member of the workspace. No commit."""
+    ids = [h.id for h in hits if h.paper_id is not None]
+    if not ids:
+        return
+    wanted = (
+        select(WorkspaceSearchHit.workspace_id, WorkspaceSearchHit.paper_id, hit_tags.c.tag_id)
+        .join(hit_tags, hit_tags.c.hit_id == WorkspaceSearchHit.id)
+        .join(
+            workspace_papers,
+            (workspace_papers.c.workspace_id == WorkspaceSearchHit.workspace_id)
+            & (workspace_papers.c.paper_id == WorkspaceSearchHit.paper_id),
+        )
+        .where(WorkspaceSearchHit.id.in_(ids), WorkspaceSearchHit.workspace_id == ws)
+    )
+    await session.flush()  # an INSERT..SELECT doesn't autoflush the hits' fresh paper_id
+    await session.execute(
+        insert(paper_tags).from_select(["workspace_id", "paper_id", "tag_id"], wanted).on_conflict_do_nothing()
+    )
+
+
+async def tag_hits(session: AsyncSession, ws: uuid.UUID, names: list[str], hit_ids: Sequence[uuid.UUID]) -> None:
+    """Stores the tags on the workspace's hits (creating missing tags); a hit already imported tags its paper too."""
+    hits = list(
+        await session.scalars(
+            select(WorkspaceSearchHit).where(WorkspaceSearchHit.workspace_id == ws, WorkspaceSearchHit.id.in_(hit_ids))
+        )
+    )
+    if not names or not hits:
+        return
+    tag_ids = {(await get_or_create(session, ws, name)).id for name in names}
+    rows = [{"hit_id": h.id, "tag_id": t} for h in hits for t in tag_ids]
+    await session.execute(insert(hit_tags).values(rows).on_conflict_do_nothing())
+    await apply_hit_tags(session, ws, hits)
+    await session.commit()

@@ -345,16 +345,23 @@ MAX_ACCEPT_HITS = 5000  # the API's cap
 
 
 async def accept_suggestions(
-    session: AsyncSession, workspace: str, hit_ids: list[uuid.UUID]
+    session: AsyncSession, workspace: str, hit_ids: list[uuid.UUID], tags_: list[str] | None = None
 ) -> screening.AcceptResult:
-    """Records the owner's decision from each suggestion: include becomes relevant, exclude not_relevant."""
+    """Records the owner's decision from each suggestion: include becomes relevant, exclude not_relevant. `tags_`
+    go on the accepted hits only."""
     if len(hit_ids) > MAX_ACCEPT_HITS:
         raise InvalidInput("too_many_hits", max=MAX_ACCEPT_HITS)
-    return await screening.accept_suggestions(session, await workspace_id(session, workspace), hit_ids)
+    ws = await workspace_id(session, workspace)
+    accepted = await screening.accept_suggestions(session, ws, hit_ids)
+    if tags_:
+        skipped = set(accepted.skipped)
+        await tags.tag_hits(session, ws, tags_, [h for h in hit_ids if h not in skipped])
+    return accepted
 
 
 async def review_hits(
-    session: AsyncSession, workspace: str, hit_ids: list[uuid.UUID], decision: str, reason: str | None = None
+    session: AsyncSession, workspace: str, hit_ids: list[uuid.UUID], decision: str, reason: str | None = None,
+    tags_: list[str] | None = None,
 ) -> ReviewResult:
     """Records the owner's stage-1 decision (Claude Code asks before each call). Hits outside the workspace are
     skipped, never written (D218)."""
@@ -366,13 +373,19 @@ async def review_hits(
     own = await workspace_search.owned_hit_ids(session, ws, hit_ids)
     kept_reason = reason if decision == "not_relevant" else None
     updated = await workspace_search.bulk_review_hits(session, ws, list(own), decision, kept_reason, None)
+    if tags_:
+        await tags.tag_hits(session, ws, tags_, list(own))
     return ReviewResult(updated=updated, skipped=[h for h in hit_ids if h not in own])
 
 
-async def import_hit(session: AsyncSession, workspace: str, hit_id: uuid.UUID) -> workspace_search.ImportResult:
+async def import_hit(
+    session: AsyncSession, workspace: str, hit_id: uuid.UUID, tags_: list[str] | None = None
+) -> workspace_search.ImportResult:
     ws = await workspace_id(session, workspace)
     if hit_id not in await workspace_search.owned_hit_ids(session, ws, [hit_id]):
         raise NotFound("hit_not_found", hit_id=str(hit_id))
+    if tags_:
+        await tags.tag_hits(session, ws, tags_, [hit_id])
     async with discovery.open_providers(session) as providers:
         imported = await workspace_search.import_hits(session, providers, ws, [hit_id])
     for paper_id in imported.paper_ids:

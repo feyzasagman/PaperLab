@@ -7,9 +7,14 @@ from mcp_fixtures import *  # noqa: F403
 from mcp_fixtures import call, result
 from pdf_papers import TWO_LINE_QUOTE, chunked_paper
 
-from app.core import workspaces
-from app.models import Paper
-from app.providers import embedding
+from screening_pool import make_pool
+from sqlalchemy import select
+
+from app.core import discovery, workspace_search, workspaces
+from app.core.paper_sources import SourceSettings
+from app.core.source_registry import SOURCE_IDS
+from app.models import Paper, hit_tags
+from app.providers import discovery_fake, embedding
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 RUN = uuid.uuid4().hex[:8]
@@ -116,3 +121,58 @@ async def test_tags_without_a_workspace_are_refused(session, tmp_path):
 
     for refused in (searched, noted):
         assert refused.is_error and refused.structured_content["error"] == "tags_need_a_workspace"
+
+
+async def _free_hit(session, label):
+    """A workspace with one snowball hit whose PDF is free (the `...free` DOI of the offline fakes)."""
+    ws = await workspaces.create(session, f"{label} {RUN}")
+    paper = Paper(title="Seed", file_path="/nonexistent.pdf", page_count=1, doi=f"10.5555/{uuid.uuid4().hex}")
+    session.add(paper)
+    await session.commit()
+    await workspaces.add_paper(session, ws.id, paper.id)
+    every = SourceSettings(contact_email=discovery_fake.MAILTO, enabled=dict.fromkeys(SOURCE_IDS, True))
+    providers = discovery.build_providers(every, discovery_fake.transport())
+    try:
+        await workspace_search.snowball(session, providers, ws.id, [paper.id], [], backward=True, forward=False)
+    finally:
+        await providers.aclose()
+    hits = result(await call("list_hits", workspace=ws.name))["hits"]
+    return ws, next(h for h in hits if h["doi"] == f"{discovery_fake.DOI_PREFIX}free")
+
+
+async def test_review_then_import_lands_the_paper_under_its_tag(session):
+    ws, free = await _free_hit(session, "Land")
+    reviewed = result(
+        await call("review_hits", workspace=ws.name, hit_ids=[free["id"]], decision="relevant", tags=["Q1-techniques"])
+    )
+    assert reviewed["updated"] == 1
+    imported = result(await call("import_hit", workspace=ws.name, hit_id=free["id"]))
+    listed = result(await call("list_papers", workspace=ws.name, tags=["q1-techniques"]))
+    assert [r["id"] for r in listed] == imported["paper_ids"]
+
+
+async def test_import_hit_with_tags_and_an_already_imported_hit(session):
+    ws, free = await _free_hit(session, "Both")
+    imported = result(await call("import_hit", workspace=ws.name, hit_id=free["id"], tags=["Q2"]))
+    assert [r["id"] for r in result(await call("list_papers", workspace=ws.name, tags=["Q2"]))] == imported["paper_ids"]
+    # The hit is imported now: tagging it at review tags its paper at once.
+    await call("review_hits", workspace=ws.name, hit_ids=[free["id"]], decision="relevant", tags=["Q3"])
+    assert [r["id"] for r in result(await call("list_papers", workspace=ws.name, tags=["Q3"]))] == imported["paper_ids"]
+
+
+async def test_skipped_hits_get_no_tags(session):
+    ws, _ = await make_pool(session, [("a", None)])
+    foreign = uuid.uuid4()
+    out = result(await call("review_hits", workspace=ws.name, hit_ids=[str(foreign)], decision="maybe", tags=["T"]))
+    assert out == {"updated": 0, "skipped": [str(foreign)]}
+    assert (await session.execute(select(hit_tags))).all() == []
+
+
+async def test_accept_suggestions_with_tags(session):
+    ws, (inc, none) = await make_pool(session, [("a", None), ("b", None)])
+    inc.suggestion = "include"
+    await session.flush()
+    out = result(await call("accept_suggestions", workspace=ws.name, hit_ids=[str(inc.id), str(none.id)], tags=["T"]))
+    assert out["accepted"] == 1
+    tagged = (await session.execute(select(hit_tags.c.hit_id))).scalars().all()
+    assert tagged == [inc.id]

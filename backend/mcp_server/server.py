@@ -45,7 +45,8 @@ mcp = MCPServer(
         "get_evidence_card reads it, list_evidence_cards shows a workspace's cards. "
         "Tags: list_tags shows a workspace's tags with counts and coverage, tag_papers / untag_papers label papers in "
         "bulk by id or DOI, rename_tag and delete_tag manage them; list_papers, search_library, export_citations, "
-        "list_evidence_cards and list_notes take tags=[…] to scope to them. "
+        "list_evidence_cards and list_notes take tags=[…] to scope to them; review_hits, accept_suggestions and import_hit "
+        "take tags=[…] to label hits as they are screened, and the paper keeps them once imported. "
         "Citations: export_citations gives a workspace's papers as BibTeX, RIS, CSL-JSON or APA 7. "
         "An AI suggestion on a hit is a suggestion, never a decision; only review_hits and "
         "accept_suggestions record one, so ask the owner first."
@@ -349,33 +350,41 @@ async def stop_prescreen(workspace: str) -> pipeline.ScreeningStateOut:
 
 @mcp.tool()
 @recoverable
-async def accept_suggestions(workspace: str, hit_ids: list[uuid.UUID]) -> screening.AcceptResult:
+async def accept_suggestions(
+    workspace: str, hit_ids: list[uuid.UUID], tags: list[str] | None = None
+) -> screening.AcceptResult:
     """Use to record the owner's decision on hits by accepting their suggestions (include becomes relevant,
     exclude becomes not_relevant with its reason). Hits with no suggestion, unsure ones, already decided ones
-    and ones not in the workspace are skipped.
+    and ones not in the workspace are skipped. `tags` label the accepted hits (created when missing) and move onto
+    each paper when it is imported.
     Ask the owner before calling."""
     async with sessions() as session:
-        return await pipeline.accept_suggestions(session, workspace, hit_ids)
+        return await pipeline.accept_suggestions(session, workspace, hit_ids, tags)
 
 
 @mcp.tool()
 @recoverable
 async def review_hits(
-    workspace: str, hit_ids: list[uuid.UUID], decision: str, reason: str | None = None
+    workspace: str, hit_ids: list[uuid.UUID], decision: str, reason: str | None = None,
+    tags: list[str] | None = None,
 ) -> pipeline.ReviewResult:
     """Use to record the owner's title/abstract screening decision on hits: relevant, not_relevant (needs a reason:
-    wrong_topic, wrong_study_type, duplicate, language, inaccessible, other) or maybe."""
+    wrong_topic, wrong_study_type, duplicate, language, inaccessible, other) or maybe. `tags` label the hits
+    (created when missing) and move onto each paper when it is imported, e.g. its research question."""
     async with sessions() as session:
-        return await pipeline.review_hits(session, workspace, hit_ids, decision, reason)
+        return await pipeline.review_hits(session, workspace, hit_ids, decision, reason, tags)
 
 
 @mcp.tool()
 @recoverable
-async def import_hit(workspace: str, hit_id: uuid.UUID) -> pipeline.workspace_search.ImportResult:
+async def import_hit(
+    workspace: str, hit_id: uuid.UUID, tags: list[str] | None = None
+) -> pipeline.workspace_search.ImportResult:
     """Use to pull a screened hit into the library: downloads its free PDF and starts ingesting. failed=1 means no
-    free copy was found; imported=0, failed=0 means it was already imported."""
+    free copy was found; imported=0, failed=0 means it was already imported. `tags` label the paper (created when
+    missing)."""
     async with sessions() as session:
-        return await pipeline.import_hit(session, workspace, hit_id)
+        return await pipeline.import_hit(session, workspace, hit_id, tags)
 
 
 @mcp.tool()
