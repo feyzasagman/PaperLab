@@ -7,6 +7,24 @@ from app.providers import dblp
 pytestmark = pytest.mark.anyio
 
 
+@pytest.mark.parametrize(
+    "publication_type,expected,peer_reviewed",
+    [
+        ("Informal and Other Publications", "preprint", "false"),
+        ("Conference and Workshop Papers", "proceedings", "true"),
+        ("Journal Articles", "journal_article", "true"),
+        ("Books and Theses", None, "unknown"),
+        (None, None, "unknown"),
+    ],
+)
+async def test_publication_type_sets_source_type(publication_type, expected, peer_reviewed):
+    from app.core.source_types import peer_reviewed_of
+
+    candidate = from_dblp({"type": publication_type})
+    assert candidate.source_type == expected
+    assert peer_reviewed_of(candidate.source_type) == peer_reviewed
+
+
 async def test_author_homonym_suffix_is_removed_and_surname_merge_works():
     from app.core.candidates import Candidate, surname
 

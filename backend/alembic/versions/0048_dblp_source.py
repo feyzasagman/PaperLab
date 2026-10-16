@@ -1,15 +1,15 @@
 """Add opt-in DBLP source settings.
 
-Revision ID: 0044
-Revises: 0043
+Revision ID: 0048
+Revises: 0047
 """
 
 import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0044"
-down_revision = "0043"
+revision = "0048"
+down_revision = "0047"
 branch_labels = None
 depends_on = None
 

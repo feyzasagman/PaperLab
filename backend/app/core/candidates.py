@@ -196,7 +196,7 @@ def from_dblp(entry: Mapping[str, Any]) -> Candidate:
     arxiv_id = arxiv_from_doi(doi) or next(
         (found for link in links if isinstance(link, str) and (found := _arxiv_from_url(link))), None
     )
-    arxiv_id = _ARXIV_VERSION.sub("", arxiv_id) if arxiv_id else None
+    arxiv_id = ARXIV_VERSION.sub("", arxiv_id) if arxiv_id else None
     ids = {k: v for k, v in {"dblp": entry.get("key"), "arxiv": arxiv_id}.items() if v}
     return Candidate(
         title=html.unescape(entry.get("title") or "Untitled").rstrip("."),
@@ -204,6 +204,11 @@ def from_dblp(entry: Mapping[str, Any]) -> Candidate:
         year=int(year) if year.isdigit() and len(year) == 4 else None,
         venue=venue, doi=doi, external_ids=ids,
         pdf_urls=ordered_pdf_urls(arxiv_id), sources=("dblp",),
+        source_type={
+            "Informal and Other Publications": "preprint",
+            "Conference and Workshop Papers": "proceedings",
+            "Journal Articles": "journal_article",
+        }.get(entry.get("type")),
     )
 
 
