@@ -269,21 +269,23 @@ PRESCREEN_CONFIRM_ABOVE = 500  # a workspace-wide run once queued 13,720 hits an
 
 
 async def run_prescreen(
-    session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None, confirm: bool = False
+    session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None, confirm: bool = False,
+    allow_remote: bool = False,
 ) -> ScreeningStateOut:
-    """Starts AI pre-screening. There is no confirm dialog over MCP, so a remote default model is refused, and so
-    is a workspace-wide queue over PRESCREEN_CONFIRM_ABOVE hits unless confirm is set."""
+    """Starts AI pre-screening. There is no confirm dialog over MCP, so a remote default model is refused unless
+    allow_remote is set (the owner agreed), and so is a workspace-wide queue over PRESCREEN_CONFIRM_ABOVE hits
+    unless confirm is set. The two are independent."""
     ws = await workspace_id(session, workspace)
     if run_id is not None:
         await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
-    await _refuse_remote(session, False)
+    await _refuse_remote(session, allow_remote)
     if run_id is None and not confirm:
         # ponytail: loads the pool twice on a workspace-wide call (here and in start_suggestions); pass the count
         # through if it shows up in timings.
         queued = len(screening.suggestion_queue(await screening.load_pool(session, ws)))
         if queued > PRESCREEN_CONFIRM_ABOVE:
             raise Conflict("prescreen_needs_confirm", queued=queued, limit=PRESCREEN_CONFIRM_ABOVE)
-    state = await screening.start_suggestions(session, ws, False, run_id)
+    state = await screening.start_suggestions(session, ws, allow_remote, run_id)
     await queue.enqueue("suggest_screening", str(ws))
     return ScreeningStateOut.model_validate(state)
 

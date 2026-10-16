@@ -411,6 +411,23 @@ async def test_run_prescreen_confirm_never_lifts_the_remote_refusal(session, job
     assert jobs.jobs == [] and workspace.suggest_status == "idle"
 
 
+async def test_run_prescreen_with_allow_remote_starts_on_a_remote_model(session, jobs, monkeypatch):
+    _model(monkeypatch, False)
+    workspace, (hit, *_) = await _pool(session)
+    state = result(await call("run_prescreen", workspace=workspace.name, run_id=str(hit.run_id), allow_remote=True))
+    assert state["suggest_status"] == "running"
+    assert jobs.jobs == [("suggest_screening", str(workspace.id))]
+
+
+async def test_allow_remote_does_not_lift_the_size_check(session, jobs, monkeypatch):
+    _model(monkeypatch, False)
+    monkeypatch.setattr(pipeline, "PRESCREEN_CONFIRM_ABOVE", 2)
+    workspace, _ = await _pool(session)
+    response = await call("run_prescreen", workspace=workspace.name, allow_remote=True)
+    assert response.is_error and response.structured_content["error"] == "prescreen_needs_confirm"
+    assert jobs.jobs == [] and workspace.suggest_status == "idle"
+
+
 async def test_run_prescreen_errors(session, jobs, monkeypatch):
     _model(monkeypatch, True)
     workspace, _ = await _pool(session, criteria=None)
