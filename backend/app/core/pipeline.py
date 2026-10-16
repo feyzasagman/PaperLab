@@ -274,6 +274,12 @@ async def run_prescreen(session: AsyncSession, workspace: str, run_id: uuid.UUID
     return ScreeningStateOut.model_validate(state)
 
 
+async def stop_prescreen(session: AsyncSession, workspace: str) -> ScreeningStateOut:
+    """Stops pre-screening; idle when nothing runs, and a second call on a stuck 'stopping' resets it."""
+    state = await screening.stop_suggestions(session, await workspace_id(session, workspace))
+    return ScreeningStateOut.model_validate(state)
+
+
 MAX_ACCEPT_HITS = 5000  # the API's cap
 
 

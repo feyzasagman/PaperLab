@@ -45,6 +45,7 @@ TOOLS = [
     "set_screening_criteria",
     "snowball",
     "start_search_run",
+    "stop_prescreen",
     "stop_search_run",
     "verify_claim",
     "verify_claims",

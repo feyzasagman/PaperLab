@@ -46,7 +46,7 @@ EXPECTED_TOOLS = {
     "set_eligibility": None, "get_prisma": True, "list_notes": True,
     "create_saved_search": None, "list_saved_searches": True, "set_saved_search_enabled": None,
     "get_screening_criteria": True, "set_screening_criteria": None,
-    "run_prescreen": None, "get_screening_suggestions": True, "accept_suggestions": None,
+    "run_prescreen": None, "stop_prescreen": None, "get_screening_suggestions": True, "accept_suggestions": None,
     "verify_claim": None, "verify_claims": None,
     "generate_evidence_card": None, "get_evidence_card": True, "list_evidence_cards": True,
     "export_citations": True,

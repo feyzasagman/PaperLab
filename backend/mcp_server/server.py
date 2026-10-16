@@ -38,7 +38,7 @@ mcp = MCPServer(
         "set_saved_search_enabled pauses or resumes one. "
         "Notes: list_notes reads them, create_note saves one on a passage it quotes exactly. "
         "AI pre-screening: get_screening_criteria reads the question and criteria, set_screening_criteria saves them "
-        "(ask the owner first; it clears the suggestions), run_prescreen starts it, "
+        "(ask the owner first; it clears the suggestions), run_prescreen starts it, stop_prescreen stops it, "
         "get_screening_suggestions reads the results and accept_suggestions "
         "accepts some. Claims: verify_claim and verify_claims check a claim against the papers it cites, with a "
         "quote as evidence. Evidence cards: generate_evidence_card starts one (about a minute per paper), "
@@ -273,6 +273,15 @@ async def run_prescreen(workspace: str, run_id: uuid.UUID | None = None) -> pipe
     receive the abstracts. Suggestions are never decisions."""
     async with sessions() as session:
         return await pipeline.run_prescreen(session, workspace, run_id)
+
+
+@mcp.tool()
+@recoverable
+async def stop_prescreen(workspace: str) -> pipeline.ScreeningStateOut:
+    """Use to stop AI pre-screening that is running in a workspace. Suggestions made so far stay; a second call on
+    one that is stuck stopping resets it."""
+    async with sessions() as session:
+        return await pipeline.stop_prescreen(session, workspace)
 
 
 @mcp.tool()

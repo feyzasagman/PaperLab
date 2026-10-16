@@ -380,6 +380,18 @@ async def test_run_prescreen_starts_and_enqueues_with_a_local_model(session, job
     assert jobs.jobs == [("suggest_screening", str(workspace.id))]
 
 
+async def test_stop_prescreen_stops_a_running_prescreen(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    workspace, _ = await _pool(session)
+    result(await call("run_prescreen", workspace=workspace.name))
+    assert result(await call("stop_prescreen", workspace=workspace.name))["suggest_status"] == "stopping"
+
+
+async def test_stop_prescreen_while_idle_is_a_no_op(session):
+    workspace, _ = await _pool(session)
+    assert result(await call("stop_prescreen", workspace=workspace.name))["suggest_status"] == "idle"
+
+
 async def test_run_prescreen_with_a_remote_model_asks_and_starts_nothing(session, jobs, monkeypatch):
     _model(monkeypatch, False)
     workspace, _ = await _pool(session)

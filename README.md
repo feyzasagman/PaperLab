@@ -399,6 +399,7 @@ Systematic search and screening:
 - `list_hits`: a run's results, filtered by your decision, with any AI suggestion;
 - `review_hits`: records your screening decisions on hits, with a reason when you exclude;
 - `run_prescreen`: has your default model suggest include, exclude or unsure for undecided hits (a remote model is refused, since your abstracts would leave your machine);
+- `stop_prescreen`: stops AI pre-screening that is running; the suggestions made so far stay;
 - `get_screening_suggestions`: undecided hits with a suggestion, best score first;
 - `accept_suggestions`: records your decision from the suggestions you pick;
 - `import_hit`: brings a hit into the library and the workspace;
