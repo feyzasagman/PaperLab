@@ -398,7 +398,7 @@ Systematic search and screening:
 - `stop_search_run`: stops a search run that is still going;
 - `list_hits`: a run's results, filtered by your decision, with any AI suggestion;
 - `review_hits`: records your screening decisions on hits, with a reason when you exclude;
-- `run_prescreen`: has your default model suggest include, exclude or unsure for undecided hits (a remote model is refused, naming its host, since your abstracts would leave your machine; a workspace-wide run over 500 hits asks for `confirm`, which never lifts the remote refusal: pick a local default model or start it from the web app);
+- `run_prescreen`: has your default model suggest include, exclude or unsure for undecided hits (a remote default model is refused, naming its host, unless you agreed and the assistant passes `allow_remote`, since your abstracts would leave your machine; a workspace-wide run over 500 hits asks for `confirm`; `run_ids` queues several search runs as one job);
 - `stop_prescreen`: stops AI pre-screening that is running; the suggestions made so far stay;
 - `get_screening_suggestions`: undecided hits with a suggestion, best score first;
 - `accept_suggestions`: records your decision from the suggestions you pick;
