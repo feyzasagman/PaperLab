@@ -91,6 +91,22 @@ test('clicking Continue calls the API and does not select the row', async () => 
 test('a paused run says so in plain words instead of "exhausted"', () => {
   setup([pausedRun])
   fireEvent.click(screen.getByRole('button', { name: 'Runs (1)' }))
-  expect(screen.getByText(/Paused at 200 results per source; Continue fetches more from 2 sources/)).toBeTruthy()
+  expect(screen.getByText(/Paused at 200 results per source per pass; Continue fetches more from 2 sources/)).toBeTruthy()
   expect(screen.queryByText(/exhausted/)).toBeNull()
+})
+
+test('a refused Continue explains itself on its own row only, and only that row is disabled', async () => {
+  let reject: (e: Error) => void = () => {}
+  vi.spyOn(api, 'continueSearchRun').mockImplementation(() => new Promise((_, r) => { reject = r }) as never)
+  setup([{ ...pausedRun, id: 'ra' }, { ...pausedRun, id: 'rb' }])
+  fireEvent.click(screen.getByRole('button', { name: 'Runs (2)' }))
+  const [first, second] = screen.getAllByRole('button', { name: /^Continue/ })
+  fireEvent.click(first)
+  await waitFor(() => expect((first as HTMLButtonElement).disabled).toBe(true))
+  expect((second as HTMLButtonElement).disabled).toBe(false)
+  reject(new Error('search_run_still_stopping'))
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toBe('Still stopping the last pass; try again in a few seconds.')
+  expect(alert.closest('[data-run]')?.getAttribute('data-run')).toBe('ra')
+  expect(screen.getAllByRole('alert')).toHaveLength(1)
 })

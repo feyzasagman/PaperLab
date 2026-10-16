@@ -225,7 +225,7 @@ test('a paused run says so in plain words and offers Continue, which calls the A
   vi.mocked(api.continueSearchRun).mockResolvedValue({ ...pausedPanelRun, status: 'running', can_continue: false } as never)
   renderWithClient(<SearchTab workspaceId="ws-1" runId="run-5" onRunIdChange={vi.fn()} />)
   await waitFor(() =>
-    expect(screen.getByText(/Paused at 200 results per source; Continue fetches more from 2 sources/)).toBeInTheDocument(),
+    expect(screen.getByText(/Paused at 200 results per source per pass; Continue fetches more from 2 sources/)).toBeInTheDocument(),
   )
   fireEvent.click(screen.getByRole('button', { name: 'Continue: fetch the next results from 2 sources' }))
   await waitFor(() => expect(api.continueSearchRun).toHaveBeenCalledWith('ws-1', 'run-5'))
@@ -243,5 +243,17 @@ test('a refused Continue shows its reason inline', async () => {
   vi.mocked(api.continueSearchRun).mockRejectedValue(new Error('nothing_left_to_fetch'))
   renderWithClient(<SearchTab workspaceId="ws-1" runId="run-5" onRunIdChange={vi.fn()} />)
   fireEvent.click(await screen.findByRole('button', { name: /^Continue/ }))
-  await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/nothing_left_to_fetch/))
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Every source is already finished.'))
+})
+
+test('a refused Continue is not shown on another run', async () => {
+  vi.mocked(api.getSearchRun).mockImplementation(
+    async (_ws, id) => ({ ...pausedPanelRun, id, can_continue: id === 'run-5' }) as never)
+  vi.mocked(api.continueSearchRun).mockRejectedValue(new Error('search_run_already_running'))
+  const { client, rerender } = renderWithClient(<SearchTab workspaceId="ws-1" runId="run-5" onRunIdChange={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: /^Continue/ }))
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('This search is already running.'))
+  rerender(<QueryClientProvider client={client}><SearchTab workspaceId="ws-1" runId="run-6" onRunIdChange={vi.fn()} /></QueryClientProvider>)
+  await waitFor(() => expect(screen.queryByRole('button', { name: /^Continue/ })).toBeNull())
+  expect(screen.queryByRole('alert')).toBeNull()
 })

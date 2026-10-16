@@ -8,7 +8,7 @@ import { HitTable } from './HitTable'
 import { SavedSearches } from './SavedSearches'
 import { RunsList } from './RunsList'
 import { Button } from '@/components/ui/button'
-import { continueLabel, pausedText } from './continueText'
+import { continueLabel, continueRefusal, pausedText } from './continueText'
 import { ScreeningAssist } from './ScreeningAssist'
 
 /** The sources that failed on a run, each with its error text when the server gave a string; tolerant of bad shapes. */
@@ -85,9 +85,9 @@ export function SearchTab({
             </Button>
           )}
         </div>
-        {continueRun.error && (
+        {continueRun.error && continueRun.variables === run.data.id && (
           <div role="alert" className="border-b px-3 py-1 text-sm text-destructive">
-            {continueRun.error.message}
+            {continueRefusal(continueRun.error.message)}
           </div>
         )}
         {failedSources(run.data.stats_json).map(({ id, error }) => (

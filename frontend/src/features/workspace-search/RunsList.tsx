@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { plural } from '@/features/charts/chartMeta'
 import { relative } from './schedule'
-import { continueLabel, pausedText } from './continueText'
+import { continueLabel, continueRefusal, pausedText } from './continueText'
 
 /** The workspace's recent search runs, collapsed under Saved searches; picking one opens it (its id goes in the URL). */
 export function RunsList({
@@ -26,10 +26,10 @@ export function RunsList({
       <Button variant="ghost" size="sm" className="justify-start" aria-expanded={open} onClick={() => setOpen(!open)}>
         Runs ({runs.length})
       </Button>
-      {cont.error && <p role="alert" className="text-sm text-destructive">{cont.error.message}</p>}
       {open &&
         runs.map((r) => (
-          <div key={r.id} className="flex items-center gap-2">
+          <div key={r.id} data-run={r.id} className="grid gap-1">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               aria-current={r.id === runId ? 'true' : undefined}
@@ -46,12 +46,16 @@ export function RunsList({
                 variant="outline"
                 size="sm"
                 aria-label={continueLabel(r.sources_left)}
-                disabled={cont.isPending}
+                disabled={cont.isPending && cont.variables === r.id}
                 onClick={() => cont.mutate(r.id)}
               >
                 Continue
               </Button>
             )}
+          </div>
+          {cont.error && cont.variables === r.id && (
+            <p role="alert" className="text-sm text-destructive">{continueRefusal(cont.error.message)}</p>
+          )}
           </div>
         ))}
     </section>
