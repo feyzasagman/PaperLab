@@ -392,6 +392,7 @@ Library:
 
 Adding papers:
 - `add_paper`: a paper by DOI, arXiv ID or PDF link, free copies only, optionally into a workspace;
+- `add_papers`: up to 50 papers by DOI, arXiv ID or PDF link in one call; each item reports its own status or error;
 - `add_paper_to_workspace`: files a library paper in a workspace;
 - `remove_paper_from_workspace`: takes a paper out of a workspace (it stays in the library).
 

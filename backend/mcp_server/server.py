@@ -9,7 +9,6 @@ nothing in this process may print.
 
 import functools
 import json
-import re
 import uuid
 from typing import Annotated, Literal
 
@@ -18,7 +17,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
 from app.core import graph, library, notes, pipeline, screening, workspaces
-from app.core.errors import Conflict, DomainError, InvalidInput, NotFound
+from app.core.errors import CODE, KINDS, DomainError
 from app.db import SessionLocal
 
 # ponytail: the embedding model loads on the first search (seconds). Warm it up in a lifespan if a first search
@@ -28,7 +27,8 @@ mcp = MCPServer(
     instructions=(
         "PaperLab is the owner's research library. Learn workspace names with list_workspaces. "
         "Library: search_library, get_paper, related_papers, list_papers; create_workspace makes a new one; add papers "
-        "by DOI, arXiv ID or PDF link with add_paper (free copies only), file them with add_paper_to_workspace and "
+        "by DOI, arXiv ID or PDF link with add_paper (free copies only; add_papers takes up to 50 at once), "
+        "file them with add_paper_to_workspace and "
         "take them out with remove_paper_from_workspace. "
         "Systematic search: start_search_run, then get_search_run until it finishes "
         "(stop_search_run ends one early; list_search_runs shows a workspace's runs); read results with list_hits, "
@@ -57,8 +57,6 @@ mcp = MCPServer(
 )
 sessions = SessionLocal  # tests point this at their rolled-back session
 READ_ONLY = ToolAnnotations(read_only_hint=True)
-_CODE = re.compile(r"[a-z]+(?:_[a-z]+)+")
-_KINDS = {NotFound: "not_found", InvalidInput: "invalid_input", Conflict: "conflict"}
 
 
 def recoverable(tool):
@@ -71,10 +69,10 @@ def recoverable(tool):
             return await tool(*args, **kwargs)
         except DomainError as exc:
             message = str(exc)
-            if _CODE.fullmatch(message):
+            if CODE.fullmatch(message):
                 error = {"error": message, **exc.details}
             else:
-                error = {"error": _KINDS.get(type(exc), "invalid_input"), "detail": message, **exc.details}
+                error = {"error": KINDS.get(type(exc), "invalid_input"), "detail": message, **exc.details}
             return CallToolResult(
                 content=[TextContent(type="text", text=json.dumps(error))], structured_content=error, is_error=True
             )
@@ -234,6 +232,17 @@ async def add_paper(identifier: str, workspace: str | None = None) -> pipeline.A
     Give `workspace` to file it there too."""
     async with sessions() as session:
         return await pipeline.add_paper(session, identifier, workspace)
+
+
+@mcp.tool()
+@recoverable
+async def add_papers(identifiers: list[str], workspace: str | None = None) -> list[pipeline.AddPapersItem]:
+    """Use to bring up to 50 papers into the library at once by DOI, arXiv ID or direct PDF link (free copies only).
+    Each item reports its own `status` (as add_paper) or `error` (the code add_paper would return), so one bad
+    identifier does not stop the rest. Repeated identifiers are added once. Give `workspace` to file them there too;
+    an unknown workspace fails the whole call. Use add_paper for a single identifier."""
+    async with sessions() as session:
+        return await pipeline.add_papers(session, identifiers, workspace)
 
 
 @mcp.tool()

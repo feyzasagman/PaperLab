@@ -39,7 +39,7 @@ async def call(tool: str, **arguments):
 
 EXPECTED_TOOLS = {
     "search_library": True, "get_paper": True, "related_papers": True, "create_note": None,
-    "list_workspaces": True, "create_workspace": None, "list_papers": True, "add_paper": None,
+    "list_workspaces": True, "create_workspace": None, "list_papers": True, "add_paper": None, "add_papers": None,
     "add_paper_to_workspace": None, "remove_paper_from_workspace": None,
     "start_search_run": None, "get_search_run": True, "list_search_runs": True, "stop_search_run": None,
     "list_hits": True, "review_hits": None, "import_hit": None, "snowball": None,

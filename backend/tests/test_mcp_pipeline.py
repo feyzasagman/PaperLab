@@ -242,3 +242,34 @@ async def test_an_empty_workspace_name_is_refused_not_ignored(jobs):
     response = await call("add_paper", identifier=FREE_DOI, workspace="")
     assert response.is_error and response.structured_content["error"] == "unknown_workspace"
     assert jobs.jobs == []
+
+
+async def test_add_papers_reports_each_item(session, jobs, monkeypatch):
+    opened = []
+    real = discovery.open_providers
+    monkeypatch.setattr(discovery, "open_providers", lambda s: (opened.append(1), real(s))[1])
+    ws = await workspaces.create(session, f"Bulk {RUN}")
+
+    nope = f"{discovery_fake.DOI_PREFIX}nope"
+    identifiers = [FREE_DOI, "Attention is all you need", f" doi:{FREE_DOI} ", nope]
+    items = result(await call("add_papers", identifiers=identifiers, workspace=ws.name))
+
+    assert [(i["identifier"], i["status"], i["error"]) for i in items] == [
+        (FREE_DOI, "queued", None),
+        ("Attention is all you need", None, "invalid_identifier"),
+        (nope, None, "no_matching_paper"),
+    ]
+    assert len(opened) == 1 and jobs.jobs == [("ingest_paper", items[0]["paper_id"])]
+    assert [p.id for p in await workspaces.papers(session, ws.id)] == [uuid.UUID(items[0]["paper_id"])]
+
+
+async def test_add_papers_unknown_workspace_adds_nothing(jobs):
+    response = await call("add_papers", identifiers=[FREE_DOI], workspace=f"Nope {RUN}")
+    assert response.is_error and response.structured_content["error"] == "unknown_workspace"
+    assert jobs.jobs == []
+
+
+async def test_add_papers_over_the_cap(jobs):
+    response = await call("add_papers", identifiers=[f"10.1/{n}" for n in range(51)])
+    assert response.is_error and response.structured_content["error"] == "too_many_identifiers"
+    assert response.structured_content["max"] == 50 and jobs.jobs == []

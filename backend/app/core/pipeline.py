@@ -34,7 +34,7 @@ from app.core import (
     workspace_search,
     workspaces,
 )
-from app.core.errors import Conflict, InvalidInput, NotFound
+from app.core.errors import Conflict, DomainError, InvalidInput, NotFound, error_code
 from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import PaperStatus
 from app.providers.base import LLMError, LLMUnavailable
@@ -190,7 +190,8 @@ async def _add_found(session, providers, kind, value, workspace_uuid) -> AddPape
 
 async def _add_link(session, providers, link, workspace_uuid) -> AddPaperResult:
     await pdf_links.check_url(link)
-    providers.pdf.event_hooks["request"].append(pdf_links.guard)  # this call's own client, closed after it
+    if pdf_links.guard not in providers.pdf.event_hooks["request"]:
+        providers.pdf.event_hooks["request"].append(pdf_links.guard)  # this call's own client, closed after it
     data = await discovery.download_pdf(providers.pdf, [link])
     if data is None:
         return AddPaperResult(status="no_free_pdf", landing_url=link)
@@ -201,14 +202,63 @@ async def _add_link(session, providers, link, workspace_uuid) -> AddPaperResult:
     return await _queued(session, paper, workspace_uuid)
 
 
+async def _add(session, providers, kind, value, workspace_uuid) -> AddPaperResult:
+    if kind == "link":
+        return await _add_link(session, providers, value, workspace_uuid)
+    return await _add_found(session, providers, kind, value, workspace_uuid)
+
+
 async def add_paper(session: AsyncSession, identifier: str, workspace: str | None = None) -> AddPaperResult:
     """Adds a paper by DOI, arXiv ID or direct PDF link, free copies only (D68, D217), and queues its ingest."""
     kind, value = _identifier(identifier)
     workspace_uuid = await workspace_id(session, workspace) if workspace is not None else None  # before any download
     async with discovery.open_providers(session) as providers:
-        if kind == "link":
-            return await _add_link(session, providers, value, workspace_uuid)
-        return await _add_found(session, providers, kind, value, workspace_uuid)
+        return await _add(session, providers, kind, value, workspace_uuid)
+
+
+MAX_ADD_PAPERS = 50
+
+
+@dataclass(frozen=True)
+class AddPapersItem:
+    identifier: str
+    status: str | None = None
+    paper_id: uuid.UUID | None = None
+    error: str | None = None
+
+
+def _distinct(identifiers: list[str]) -> list[tuple[str, tuple[str, str] | None, str | None]]:
+    """(identifier, parsed, error) once per distinct paper, in order. An unparseable one is its own entry."""
+    seen, out = set(), []
+    for raw in identifiers:
+        text = raw.strip()
+        try:
+            parsed, error = _identifier(text), None
+        except InvalidInput as exc:
+            parsed, error = None, error_code(exc)
+        if (parsed or text) not in seen:
+            seen.add(parsed or text)
+            out.append((text, parsed, error))
+    return out
+
+
+async def add_papers(session: AsyncSession, identifiers: list[str], workspace: str | None = None) -> list[AddPapersItem]:
+    """add_paper for up to MAX_ADD_PAPERS identifiers with one set of providers; each item keeps its own error."""
+    if len(identifiers) > MAX_ADD_PAPERS:
+        raise InvalidInput("too_many_identifiers", max=MAX_ADD_PAPERS)
+    workspace_uuid = await workspace_id(session, workspace) if workspace is not None else None  # before any download
+    items = []
+    async with discovery.open_providers(session) as providers:
+        for text, parsed, error in _distinct(identifiers):
+            if parsed is not None:
+                try:
+                    added = await _add(session, providers, *parsed, workspace_uuid)
+                    items.append(AddPapersItem(text, added.status, added.paper_id))
+                    continue
+                except DomainError as exc:
+                    error = error_code(exc)
+            items.append(AddPapersItem(text, error=error))
+    return items
 
 
 async def _sources(session: AsyncSession, sources: list[str] | None) -> list[str]:

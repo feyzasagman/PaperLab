@@ -16,6 +16,7 @@ TOOLS = [
     "accept_suggestions",
     "add_paper",
     "add_paper_to_workspace",
+    "add_papers",
     "create_note",
     "create_saved_search",
     "create_workspace",
