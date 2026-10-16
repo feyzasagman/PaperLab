@@ -50,7 +50,8 @@ class WorkerSettings:
         _to_ingest_queue("reembed_paper"),
         fetch_references,
         func(run_workspace_search, timeout=SEARCH_RUN_JOB_TIMEOUT),
-        func(enrich_hits, timeout=ENRICH_JOB_TIMEOUT),
+        # no stored result: the job id frees as soon as it ends, so a re-run after a rate-limited stop starts
+        func(enrich_hits, timeout=ENRICH_JOB_TIMEOUT, keep_result=0),
         func(suggest_screening, timeout=SUGGEST_JOB_TIMEOUT),
         func(generate_evidence_cards, timeout=EVIDENCE_CARDS_JOB_TIMEOUT, max_tries=EVIDENCE_CARDS_MAX_TRIES),
     ]

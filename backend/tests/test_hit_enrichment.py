@@ -15,6 +15,8 @@ from app.models.references import ExternalRef
 from app.models.workspace import Workspace
 from app.models.workspace_search import WorkspaceSearchHit, WorkspaceSearchRun
 from app.providers import semantic_scholar
+from app.workers.hit_enrichment import enrich_hits as worker_enrich_hits
+from app.workers.settings import WorkerSettings
 
 pytestmark = pytest.mark.anyio
 
@@ -253,3 +255,9 @@ async def test_enrich_hits_is_refused_when_semantic_scholar_is_off(session, jobs
     response = await call("enrich_hits", workspace=ws.name)
     assert response.is_error and response.structured_content["error"] == "source_off"
     assert jobs.jobs == []
+
+
+async def test_enrich_hits_job_stores_no_result():
+    # A stored result keeps the job id taken for an hour, so a re-run after a rate-limited stop is refused.
+    entries = [f for f in WorkerSettings.functions if getattr(f, "coroutine", f) is worker_enrich_hits]
+    assert len(entries) == 1 and entries[0].keep_result_s == 0
