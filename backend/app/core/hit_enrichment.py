@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import func, null, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.candidates import s2_triage
@@ -32,6 +32,7 @@ class EnrichResult:
     not_found: int = 0
     remaining: int = 0
     rate_limited: bool = False
+    suggestions_cleared: int = 0
 
 
 async def refs_to_enrich(session: AsyncSession, ws: uuid.UUID, run_id: uuid.UUID | None) -> list[ExternalRef]:
@@ -133,3 +134,28 @@ async def enrich(
                 filled += 1
         await session.commit()
     return EnrichResult(looked_up, filled, not_found)
+
+
+SUGGESTION_COLUMNS = (
+    "suggestion", "suggestion_reason", "suggestion_note", "suggestion_model", "suggested_at", "suggestion_relevance",
+    "suggestion_quotes", "suggestion_confidence", "suggestion_flags", "suggestion_prompt_version",
+)
+
+
+async def clear_stale_no_abstract(session: AsyncSession, ws: uuid.UUID) -> int:
+    """Clears the 'no abstract' suggestion of undecided hits whose ref has an abstract by now, so pre-screening takes
+    them up again. Decided hits and real verdicts are left alone. Returns the number of hits cleared."""
+    has_abstract = select(ExternalRef.id).where(func.btrim(func.coalesce(ExternalRef.abstract, "")) != "")
+    cleared = await session.execute(
+        update(WorkspaceSearchHit)
+        .where(
+            WorkspaceSearchHit.workspace_id == ws,
+            WorkspaceSearchHit.stage1_status.is_(None),
+            WorkspaceSearchHit.suggestion_flags.contains(["no_abstract"]),
+            WorkspaceSearchHit.external_ref_id.in_(has_abstract),
+        )
+        .values({column: null() for column in SUGGESTION_COLUMNS})  # null(): JSON null would not be SQL NULL
+        .execution_options(synchronize_session=False)
+    )
+    await session.commit()
+    return cleared.rowcount

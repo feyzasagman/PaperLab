@@ -9,6 +9,7 @@ import httpx
 import pytest
 from mcp_fixtures import *  # noqa: F403
 from mcp_fixtures import call, result
+from sqlalchemy import select
 
 from app.core import hit_enrichment
 from app.models.references import ExternalRef
@@ -185,7 +186,7 @@ async def test_enrich_hits_tool_queues_once_with_the_count(session, jobs):
     done = ref("done", doi="10.1/c", source_type="preprint", abstract="Has one.")
     ws, run = await pool(session, [ref("a", doi="10.1/a"), ref("b", doi="10.1/b"), done])
     out = result(await call("enrich_hits", workspace=ws.name))
-    assert out == {"queued": 2, "already_running": False}
+    assert out == {"queued": 2, "already_running": False, "suggestions_cleared": 0}
     assert jobs.jobs == [("enrich_hits", str(ws.id), None)]
     result(await call("enrich_hits", workspace=ws.name, run_id=str(run.id)))
     assert jobs.jobs[-1] == ("enrich_hits", str(ws.id), str(run.id))
@@ -195,14 +196,15 @@ async def test_a_second_enrich_hits_while_a_job_runs_queues_nothing(session, job
     ws, _ = await pool(session, [ref("a", doi="10.1/a")])
     first = result(await call("enrich_hits", workspace=ws.name))
     second = result(await call("enrich_hits", workspace=ws.name))
-    assert first == {"queued": 1, "already_running": False}
-    assert second == {"queued": 1, "already_running": True}
+    assert first == {"queued": 1, "already_running": False, "suggestions_cleared": 0}
+    assert second == {"queued": 1, "already_running": True, "suggestions_cleared": 0}
     assert jobs.jobs == [("enrich_hits", str(ws.id), None)]
 
 
 async def test_enrich_hits_with_nothing_to_do_queues_nothing(session, jobs):
     ws, _ = await pool(session, [ref("done", doi="10.1/c", source_type="preprint", abstract="Has one.")])
-    assert result(await call("enrich_hits", workspace=ws.name)) == {"queued": 0, "already_running": False}
+    out = result(await call("enrich_hits", workspace=ws.name))
+    assert out == {"queued": 0, "already_running": False, "suggestions_cleared": 0}
     assert jobs.jobs == []
 
 
@@ -261,3 +263,78 @@ async def test_enrich_hits_job_stores_no_result():
     # A stored result keeps the job id taken for an hour, so a re-run after a rate-limited stop is refused.
     entries = [f for f in WorkerSettings.functions if getattr(f, "coroutine", f) is worker_enrich_hits]
     assert len(entries) == 1 and entries[0].keep_result_s == 0
+
+
+async def hit_of(session, r: ExternalRef) -> WorkspaceSearchHit:
+    hit = (await session.execute(
+        select(WorkspaceSearchHit).where(WorkspaceSearchHit.external_ref_id == r.id)
+    )).scalar_one()
+    await session.refresh(hit)
+    return hit
+
+
+def suggest(hit: WorkspaceSearchHit, flags: list[str], status: str | None = None) -> None:
+    hit.suggestion, hit.suggestion_reason, hit.suggestion_note = "unsure", None, "n"
+    hit.suggestion_model, hit.suggested_at, hit.suggestion_relevance = "m", NOW, 3
+    hit.suggestion_quotes, hit.suggestion_confidence = ["q"], "low"
+    hit.suggestion_flags, hit.suggestion_prompt_version = flags, 2
+    hit.stage1_status = status
+
+
+async def test_stale_no_abstract_suggestions_are_cleared_for_undecided_hits_only(session):
+    stale = ref("stale", abstract="Now has one.")
+    decided = ref("decided", abstract="Has one.")
+    verdict = ref("verdict", abstract="Has one.")
+    still_empty = ref("still empty", abstract="  ")
+    ws, _ = await pool(session, [stale, decided, verdict, still_empty])
+    hits = {r: await hit_of(session, r) for r in (stale, decided, verdict, still_empty)}
+    suggest(hits[stale], ["no_abstract"])
+    suggest(hits[decided], ["no_abstract"], status="relevant")
+    suggest(hits[verdict], [])
+    suggest(hits[still_empty], ["no_abstract"])
+    await session.flush()
+
+    assert await hit_enrichment.clear_stale_no_abstract(session, ws.id) == 1
+
+    cleared = await hit_of(session, stale)
+    assert (cleared.suggestion, cleared.suggestion_reason, cleared.suggestion_note, cleared.suggestion_model) == (
+        None, None, None, None)
+    assert (cleared.suggested_at, cleared.suggestion_relevance, cleared.suggestion_confidence) == (None, None, None)
+    assert (cleared.suggestion_quotes, cleared.suggestion_flags, cleared.suggestion_prompt_version) == (
+        None, None, None)
+    kept = await hit_of(session, decided)
+    assert (kept.suggestion, kept.stage1_status, kept.suggestion_flags) == ("unsure", "relevant", ["no_abstract"])
+    assert (await hit_of(session, verdict)).suggestion == "unsure"
+    assert (await hit_of(session, still_empty)).suggestion_flags == ["no_abstract"]
+
+
+async def test_enrich_hits_clears_even_with_nothing_to_enrich(session, jobs):
+    done = ref("done", doi="10.1/c", source_type="preprint", abstract="Has one.")
+    ws, _ = await pool(session, [done])
+    suggest(await hit_of(session, done), ["no_abstract"])
+    await session.flush()
+    out = result(await call("enrich_hits", workspace=ws.name))
+    assert out == {"queued": 0, "already_running": False, "suggestions_cleared": 1}
+    assert jobs.jobs == []
+    assert (await hit_of(session, done)).suggestion is None
+
+
+async def test_the_job_clears_after_filling_abstracts(session, monkeypatch):
+    from app.workers import hit_enrichment as worker
+
+    @asynccontextmanager
+    async def test_session():
+        yield session
+
+    monkeypatch.setattr(worker, "SessionLocal", test_session)
+    one = ref("one", doi="10.1/x")
+    ws, _ = await pool(session, [one])
+    suggest(await hit_of(session, one), ["no_abstract"])
+    await session.flush()
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=[JOURNAL]))
+
+    await worker.enrich_hits({"transport": transport}, str(ws.id))
+
+    assert one.abstract == "From S2."
+    hit = await hit_of(session, one)
+    assert hit.suggestion is None and hit.suggestion_flags is None

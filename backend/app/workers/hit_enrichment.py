@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from dataclasses import replace
 
 from app.config import settings
 from app.core import hit_enrichment, paper_sources
@@ -28,7 +29,7 @@ async def enrich_hits(ctx: dict, workspace_id: str, run_id: str | None = None) -
             transport=transport,
             retry_429=False,
         ) as http:
-            outcome = await hit_enrichment.enrich(
-                session, http, uuid.UUID(workspace_id), uuid.UUID(run_id) if run_id else None
-            )
+            ws = uuid.UUID(workspace_id)
+            outcome = await hit_enrichment.enrich(session, http, ws, uuid.UUID(run_id) if run_id else None)
+        outcome = replace(outcome, suggestions_cleared=await hit_enrichment.clear_stale_no_abstract(session, ws))
     logger.info("enrich_hits for %s: %s", workspace_id, outcome)

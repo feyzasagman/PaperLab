@@ -361,7 +361,8 @@ async def enrich_hits(workspace: str, run_id: uuid.UUID | None = None) -> pipeli
     list_hits. It also fills abstracts that are missing. `queued` is how many hits' papers have not been asked
     about yet: call again later. A count above 0 can mean a job is still running (`already_running` is true and a
     second call starts nothing), a rate-limited stop or a failed chunk. A hit Semantic Scholar couldn't fill is
-    asked once only.
+    asked once only. Hits whose 'no abstract' suggestion is now out of date are cleared (`suggestions_cleared`), so
+    run_prescreen picks them up again.
     Refused (source_off) when Semantic Scholar is turned off in Settings."""
     async with sessions() as session:
         return await pipeline.enrich_hits(session, workspace, run_id)
