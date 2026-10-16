@@ -342,9 +342,12 @@ class EnrichQueued:
 
 
 async def enrich_hits(session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None) -> EnrichQueued:
-    """Queues the Semantic Scholar backfill when any hit's ref lacks triage data or an abstract. `queued` is how many
-    refs still miss data, so calling again shows what a rate-limited run left."""
+    """Queues the Semantic Scholar backfill for hits not asked about yet. `queued` is how many; calling again shows
+    what a rate-limited run left. A hit Semantic Scholar couldn't fill is asked once only. Refused (source_off) when
+    Semantic Scholar is turned off in Settings."""
     ws = await workspace_id(session, workspace)
+    if not (await paper_sources.get(session)).enabled["semantic_scholar"]:
+        raise Conflict("source_off", source="semantic_scholar")
     if run_id is not None:
         await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
     count = len(await hit_enrichment.refs_to_enrich(session, ws, run_id))

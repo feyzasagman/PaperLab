@@ -5,6 +5,7 @@ import logging
 import uuid
 from asyncio import sleep
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import func, select
@@ -19,9 +20,9 @@ from app.providers import semantic_scholar
 logger = logging.getLogger(__name__)
 
 CHUNK = 500  # S2's batch limit
-RATE_LIMIT_WAITS = (2.0, 5.0, 15.0)  # when a 429 has no Retry-After
+RATE_LIMIT_WAITS = (2.0, 5.0, 15.0)  # when a 429 has no Retry-After, one per retry
 MAX_WAIT = 60.0
-MAX_429 = 3  # consecutive 429s on one chunk before the job stops
+MAX_429 = 4  # consecutive 429s on one chunk before the job stops
 
 
 @dataclass(frozen=True)
@@ -34,13 +35,18 @@ class EnrichResult:
 
 
 async def refs_to_enrich(session: AsyncSession, ws: uuid.UUID, run_id: uuid.UUID | None) -> list[ExternalRef]:
-    """Refs of the workspace's hits (optionally one run's) with a DOI or arXiv id and no source_type or abstract."""
+    """Refs of the workspace's hits (optionally one run's) with a DOI or arXiv id and no source_type or
+    abstract, that Semantic Scholar was not asked about yet."""
     hits = select(WorkspaceSearchHit.external_ref_id).where(WorkspaceSearchHit.workspace_id == ws)
     if run_id is not None:
         hits = hits.where(WorkspaceSearchHit.run_id == run_id)
     wanted = ExternalRef.doi.is_not(None) | ExternalRef.external_ids["arxiv"].astext.is_not(None)
     missing = ExternalRef.source_type.is_(None) | (func.btrim(func.coalesce(ExternalRef.abstract, "")) == "")
-    query = select(ExternalRef).where(ExternalRef.id.in_(hits), wanted, missing).order_by(ExternalRef.id)
+    query = (
+        select(ExternalRef)
+        .where(ExternalRef.id.in_(hits), wanted, missing, ExternalRef.triage_checked_at.is_(None))
+        .order_by(ExternalRef.id)
+    )
     return list((await session.execute(query)).scalars())
 
 
@@ -95,13 +101,20 @@ async def enrich(
     session: AsyncSession, http: httpx.AsyncClient, ws: uuid.UUID, run_id: uuid.UUID | None
 ) -> EnrichResult:
     """Looks the refs up in chunks of CHUNK, one batch call each, committing per chunk. A chunk that fails is logged
-    and counted as not found; three 429s in a row stop the job, with the count of refs left."""
-    refs = [(ref, key) for ref in await refs_to_enrich(session, ws, run_id) if (key := s2_id(ref))]
+    and counted as not found; four 429s in a row stop the job, with the count of refs left."""
+    pending = await refs_to_enrich(session, ws, run_id)
+    refs = [(ref, key) for ref in pending if (key := s2_id(ref))]
+    for ref in pending:
+        if not s2_id(ref):
+            ref.triage_checked_at = datetime.now(timezone.utc)  # nothing to ask about: never picked again
+    await session.commit()
     looked_up = filled = not_found = 0
     for start in range(0, len(refs), CHUNK):
         chunk = refs[start : start + CHUNK]
         try:
             answers = await _batch_with_backoff(http, [key for _, key in chunk])
+            if answers is not None and len(answers) != len(chunk):
+                raise httpx.DecodingError(f"S2 answered {len(answers)} papers for {len(chunk)} ids")
         except httpx.HTTPError:
             logger.exception("Semantic Scholar batch of %d refs failed; going on", len(chunk))
             not_found += len(chunk)
@@ -111,7 +124,9 @@ async def enrich(
             logger.warning("Semantic Scholar kept answering 429; stopping with %d refs left", remaining)
             return EnrichResult(looked_up, filled, not_found, remaining, True)
         looked_up += len(chunk)
-        for (ref, _), paper in zip(chunk, answers):
+        asked_at = datetime.now(timezone.utc)
+        for (ref, _), paper in zip(chunk, answers, strict=True):
+            ref.triage_checked_at = asked_at
             if paper is None:
                 not_found += 1
             elif apply_s2(ref, paper):

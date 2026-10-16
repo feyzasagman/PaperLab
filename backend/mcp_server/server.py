@@ -349,8 +349,9 @@ async def run_prescreen(
 async def enrich_hits(workspace: str, run_id: uuid.UUID | None = None) -> pipeline.EnrichQueued:
     """Use to fill peer-review and published-version data for hits found before this existed. It runs in the
     background (about a second per 500 hits); read the results with list_hits. It also fills abstracts that are
-    missing. `queued` is how many hits' papers still lack data: call again later, and a count above 0 means
-    Semantic Scholar was busy and some are left."""
+    missing. `queued` is how many hits' papers have not been asked about yet: call again later, and a count above 0
+    means the last run was rate-limited and some are left. A hit Semantic Scholar couldn't fill is asked once only.
+    Refused (source_off) when Semantic Scholar is turned off in Settings."""
     async with sessions() as session:
         return await pipeline.enrich_hits(session, workspace, run_id)
 

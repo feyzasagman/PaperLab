@@ -147,7 +147,7 @@ async def test_retry_after_is_honoured_and_capped(session, waits):
     assert waits == [7, 60] and outcome.filled == 1
 
 
-async def test_three_429s_stop_the_job_cleanly(session, waits):
+async def test_four_429s_stop_the_job_cleanly(session, waits):
     ws, _ = await pool(session, [ref("a", doi="10.1/a"), ref("b", doi="10.1/b")])
     calls = []
 
@@ -157,8 +157,9 @@ async def test_three_429s_stop_the_job_cleanly(session, waits):
 
     async with s2_client(handler) as http:
         outcome = await hit_enrichment.enrich(session, http, ws.id, None)
-    assert len(calls) == 3 and waits == [2, 5]
+    assert len(calls) == 4 and waits == [2, 5, 15]
     assert (outcome.rate_limited, outcome.remaining, outcome.filled) == (True, 2, 0)
+    assert len(await hit_enrichment.refs_to_enrich(session, ws.id, None)) == 2  # still unasked, still queued
 
 
 async def test_a_failing_chunk_does_not_stop_the_job(session, monkeypatch):
@@ -208,3 +209,37 @@ async def test_the_worker_job_runs_enrich(session, monkeypatch):
     await worker.enrich_hits({"transport": transport}, str(ws.id))
 
     assert one.source_type == "journal_article"
+
+
+async def test_a_second_enrich_after_a_full_run_finds_nothing(session):
+    refs = [ref("filled", doi="10.1/x"), ref("unknown", doi="10.1/gone"), ref("no id", doi="10.48550/arxiv.2301.1")]
+    ws, _ = await pool(session, refs)
+    async with s2_client(lambda request: httpx.Response(200, json=[JOURNAL, None])) as http:
+        await hit_enrichment.enrich(session, http, ws.id, None)
+    assert await hit_enrichment.refs_to_enrich(session, ws.id, None) == []
+    assert all(r.triage_checked_at is not None for r in refs)
+
+
+async def test_a_short_answer_fails_the_chunk_and_leaves_refs_unchecked(session):
+    refs = [ref("a", doi="10.1/a"), ref("b", doi="10.1/b")]
+    ws, _ = await pool(session, refs)
+    async with s2_client(lambda request: httpx.Response(200, json=[JOURNAL])) as http:
+        outcome = await hit_enrichment.enrich(session, http, ws.id, None)
+    assert (outcome.looked_up, outcome.filled, outcome.not_found) == (0, 0, 2)
+    assert len(await hit_enrichment.refs_to_enrich(session, ws.id, None)) == 2
+
+
+async def test_enrich_hits_is_refused_when_semantic_scholar_is_off(session, jobs, monkeypatch):
+    from app.core import paper_sources
+    from app.core.source_registry import SOURCE_IDS
+
+    ws, _ = await pool(session, [ref("a", doi="10.1/a")])
+    off = paper_sources.SourceSettings(enabled={**dict.fromkeys(SOURCE_IDS, True), "semantic_scholar": False})
+
+    async def get(_session):
+        return off
+
+    monkeypatch.setattr(paper_sources, "get", get)
+    response = await call("enrich_hits", workspace=ws.name)
+    assert response.is_error and response.structured_content["error"] == "source_off"
+    assert jobs.jobs == []

@@ -72,6 +72,7 @@ async def get_paper(http: httpx.AsyncClient, key: str) -> dict | None:
 
 
 async def get_papers(http: httpx.AsyncClient, keys: list[str]) -> list[dict | None]:
+    """Several papers in one request, in the order of `keys`; None for each one S2 doesn't know. At most 500 keys."""
     return await batch(http, keys, PAPER_FIELDS)
 
 

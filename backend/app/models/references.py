@@ -50,6 +50,8 @@ class ExternalRef(Base):
     source_type: Mapped[str | None] = mapped_column(Text)
     published_doi: Mapped[str | None] = mapped_column(Text)
     published_venue: Mapped[str | None] = mapped_column(Text)
+    # When enrich_hits last asked Semantic Scholar about this ref, whatever it answered: asked once only.
+    triage_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 paper_references = Table(
