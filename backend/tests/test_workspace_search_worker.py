@@ -792,3 +792,26 @@ async def test_a_job_whose_run_started_a_new_pass_returns_without_writing(sessio
     assert len(asked) == 1  # only the first batch; the second iteration noticed the new pass
     assert reloaded.stats_json["passes"] == 2 and reloaded.stats_json["pass_raw_count"] == {}
     assert reloaded.status == "running"
+
+
+@pytest.mark.parametrize("cut_short", [False, True])
+async def test_a_continue_landing_before_the_end_of_pass_write_keeps_the_new_pass_running(
+    session, worker, monkeypatch, cut_short
+):
+    _endless_titled_pages(monkeypatch)
+    _, run = await _started_run(session)
+    if cut_short:
+        monkeypatch.setattr(worker_module, "MAX_BATCH_ITERATIONS", 1)
+    real_mark = worker_module._mark_exhausted_unless_stopped
+
+    async def continue_first(session_arg, run_arg, *args, **kwargs):
+        await session_arg.execute(update(WorkspaceSearchRun).where(WorkspaceSearchRun.id == run_arg.id).values(
+            status="running", stats_json={**run_arg.stats_json, "passes": 2}))
+        return await real_mark(session_arg, run_arg, *args, **kwargs)
+
+    monkeypatch.setattr(worker_module, "_mark_exhausted_unless_stopped", continue_first)
+    await worker_module.run_workspace_search(worker, str(run.id))
+
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert reloaded.status == "running" and reloaded.stats_json["passes"] == 2
+    assert reloaded.stopped_at is None and "cut_short" not in reloaded.stats_json

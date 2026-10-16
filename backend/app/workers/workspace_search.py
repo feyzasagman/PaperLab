@@ -66,12 +66,16 @@ async def _try_lock(session, run_id: uuid.UUID) -> bool:
     return bool(await session.scalar(_TRY_LOCK, {"key": _lock_key(run_id)}))
 
 
-async def _mark_exhausted_unless_stopped(session, run: WorkspaceSearchRun, cut_short: bool = False) -> None:
+async def _mark_exhausted_unless_stopped(
+    session, run: WorkspaceSearchRun, cut_short: bool = False, expected_pass: int | None = None
+) -> None:
     """The loop's shared terminal-state write for both the natural (all-cursors) exit and the bounded-backstop
     (iteration-cap or wall-clock deadline) exit. Re-checks status fresh first: a concurrent Stop landing during
-    the last batch already set a status that must not be clobbered back to "exhausted" (bundled minor)."""
+    the last batch already set a status that must not be clobbered back to "exhausted" (bundled minor). Likewise a
+    Continue that landed after this job's last commit started a newer pass (expected_pass is this job's), which
+    this job must not end."""
     await session.refresh(run)
-    if run.status == "running":
+    if run.status == "running" and (expected_pass is None or run.stats_json.get("passes", 1) == expected_pass):
         if cut_short:
             # D266: the wall-clock or iteration backstop ended the run, not every source running dry: say so, and
             # name the sources still paging, because PRISMA "identified" is then a partial count. Status stays
@@ -183,11 +187,11 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
                         run.stats_json = {**run.stats_json, "paused_sources": paused}
                     await session.commit()
                     if done:
-                        await _mark_exhausted_unless_stopped(session, run)
+                        await _mark_exhausted_unless_stopped(session, run, expected_pass=my_pass)
                         return
                 # Reached by running out of iterations or hitting the wall-clock deadline without every source
                 # naturally exhausting — still a valid terminal state (C2 part 3), not a failure.
-                await _mark_exhausted_unless_stopped(session, run, cut_short=True)
+                await _mark_exhausted_unless_stopped(session, run, cut_short=True, expected_pass=my_pass)
             finally:
                 await providers.aclose()
         except Exception:
