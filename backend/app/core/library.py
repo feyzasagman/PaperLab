@@ -5,11 +5,13 @@ Each function returns plain dataclasses; the MCP server returns them as they are
 
 import uuid
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import embedding_index, workspaces
+from app.core import tags as tag_store
 from app.core.errors import InvalidInput
 from app.core.notes import list_notes_for_paper
 from app.core.papers import get_paper
@@ -75,24 +77,38 @@ class PaperCard:
 
 
 async def search(
-    session: AsyncSession, query: str, workspace: str | None = None, *, k: int = SEARCH_K, embedder=None
+    session: AsyncSession, query: str, workspace: str | None = None, *, k: int = SEARCH_K, embedder=None,
+    tags: list[str] | None = None, match: Literal["any", "all"] = "any",
 ) -> list[Passage]:
     """The k passages nearest to the query, closest first, at most MAX_PER_PAPER from one paper, in the whole library
     or one workspace (by name). The name is checked before anything is embedded, so a wrong one never loads the model.
 
-    Raises InvalidInput("empty_query"), NotFound("unknown_workspace", available=[...]),
+    `tags` (a workspace's tag names) keeps only papers carrying any/all of them. Raises
+    InvalidInput("empty_query" | "tags_need_a_workspace" | "unknown_tag" | "invalid_match"),
+    NotFound("unknown_workspace", available=[...]),
     Conflict("search_not_set_up" | "search_rebuilding", detail=<sentence>, …), Conflict("embedding_model_changed"), or
     Conflict(<the question can't be embedded>).
     """
     if not query.strip():
         raise InvalidInput("empty_query")
+    if tags and workspace is None:
+        raise InvalidInput("tags_need_a_workspace")
+    wanted = None
     if workspace is None:
         workspace_id, scope = None, await embedding_index.indexed_papers(session)
     else:
         workspace_id = await workspaces.by_name(session, workspace)
+        wanted = await tag_store.paper_ids(session, workspace_id, tags, match)
         scope = [paper.id for paper in await workspaces.papers(session, workspace_id)]
+        if wanted is not None:  # retrieve takes paper_ids or workspace_id, never both
+            scope, workspace_id = [p for p in scope if p in wanted], None
+    if wanted is not None and not scope:
+        return []
     embedder = await searchable(session, scope, embedder)  # not set up, then rebuilding, then stale vectors (D156)
-    found = await retrieve(session, query, workspace_id=workspace_id, k=k, embedder=embedder, per_paper=MAX_PER_PAPER)
+    found = await retrieve(
+        session, query, workspace_id=workspace_id, paper_ids=scope if wanted is not None else None,
+        k=k, embedder=embedder, per_paper=MAX_PER_PAPER,
+    )
     rows = await session.scalars(
         select(Paper).where(Paper.id.in_({chunk.paper_id for chunk in found})).execution_options(populate_existing=True)
     )

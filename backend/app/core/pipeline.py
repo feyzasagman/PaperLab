@@ -435,21 +435,26 @@ class LabelledNote(notes.NoteView):
 
 
 async def list_notes(
-    session: AsyncSession, workspace: str | None = None, paper_id: uuid.UUID | None = None, author: str = "all"
+    session: AsyncSession, workspace: str | None = None, paper_id: uuid.UUID | None = None, author: str = "all",
+    tags_: list[str] | None = None, match: Literal["any", "all"] = "any",
 ) -> list[LabelledNote]:
     if (workspace is None) == (paper_id is None):
         raise InvalidInput("notes_scope", hint="Give either workspace or paper_id.")
+    if tags_ and workspace is None:
+        raise InvalidInput("tags_need_a_workspace")
     if author not in AUTHORS:
         raise InvalidInput(f"author is one of {', '.join(AUTHORS)}")
-    views = (
-        await workspaces.notes(session, await workspace_id(session, workspace))
-        if workspace is not None
-        else await notes.list_notes_for_paper(session, paper_id)
-    )
+    wanted = None
+    if workspace is not None:
+        ws = await workspace_id(session, workspace)
+        wanted = await tags.paper_ids(session, ws, tags_, match)
+        views = await workspaces.notes(session, ws)
+    else:
+        views = await notes.list_notes_for_paper(session, paper_id)
     return [
         LabelledNote(**{f.name: getattr(v, f.name) for f in fields(v)}, author=LABELS[v.provenance])
         for v in views
-        if v.provenance in AUTHORS[author]
+        if v.provenance in AUTHORS[author] and (wanted is None or wanted.intersection(v.paper_ids))
     ]
 
 
@@ -523,11 +528,16 @@ async def get_evidence_card(session: AsyncSession, paper_id: uuid.UUID) -> evide
     return evidence_cards.summarize(await evidence_cards.get_card(session, paper_id))
 
 
-async def list_evidence_cards(session: AsyncSession, workspace: str) -> list[EvidenceRow]:
-    rows = await evidence_cards.workspace_cards(session, await workspace_id(session, workspace))
+async def list_evidence_cards(
+    session: AsyncSession, workspace: str, tags_: list[str] | None = None, match: Literal["any", "all"] = "any"
+) -> list[EvidenceRow]:
+    ws = await workspace_id(session, workspace)
+    wanted = await tags.paper_ids(session, ws, tags_, match)
+    rows = await evidence_cards.workspace_cards(session, ws)
     return [
         EvidenceRow(r.paper_id, r.title, r.year, r.first_author, r.card and evidence_cards.summarize(r.card))
         for r in rows
+        if wanted is None or r.paper_id in wanted
     ]
 
 
@@ -545,6 +555,13 @@ class CitationExport:
     text: str
 
 
-async def export_citations_as(session: AsyncSession, workspace: str, fmt: str) -> CitationExport:
-    text, count = await export_citations(session, workspace_id=await workspace_id(session, workspace), fmt=fmt)
+async def export_citations_as(
+    session: AsyncSession, workspace: str, fmt: str, tags_: list[str] | None = None,
+    match: Literal["any", "all"] = "any",
+) -> CitationExport:
+    ws = await workspace_id(session, workspace)
+    wanted = await tags.paper_ids(session, ws, tags_, match)
+    # export_papers takes a workspace or paper ids, not both
+    scope = {"workspace_id": ws} if wanted is None else {"paper_ids": sorted(wanted)}
+    text, count = await export_citations(session, fmt=fmt, **scope)
     return CitationExport(fmt, count, text)

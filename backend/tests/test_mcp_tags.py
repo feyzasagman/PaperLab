@@ -5,12 +5,19 @@ import uuid
 import pytest
 from mcp_fixtures import *  # noqa: F403
 from mcp_fixtures import call, result
+from pdf_papers import TWO_LINE_QUOTE, chunked_paper
 
 from app.core import workspaces
 from app.models import Paper
+from app.providers import embedding
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
 RUN = uuid.uuid4().hex[:8]
+
+
+@pytest.fixture(autouse=True)
+def fake_query_embedder(embedder, monkeypatch):
+    monkeypatch.setattr(embedding, "get_model", lambda: embedder)
 
 
 async def ten_papers(session, name):
@@ -54,3 +61,58 @@ async def test_tag_list_filter_rename_and_delete_over_mcp(session):
     gone = result(await call("delete_tag", workspace=name, tag="Milestone"))
     assert gone == {"tag": "Milestone", "papers": 9}
     assert len(result(await call("list_papers", workspace=name))) == 10
+
+
+async def two_tagged_papers(session, tmp_path, name):
+    """Two chunked papers in one workspace; only the first carries Q2-diversity."""
+    tagged, tagged_chunks, vectors = await chunked_paper(session, tmp_path / "a", title="Tagged paper")
+    other, _, _ = await chunked_paper(session, tmp_path / "b", title="Untagged paper")
+    ws = await workspaces.create(session, name)
+    for paper in (tagged, other):
+        await workspaces.add_paper(session, ws.id, paper.id)
+    await call("tag_papers", workspace=name, tag="Q2-diversity", paper_ids=[str(tagged.id)])
+    return tagged, other, tagged_chunks, vectors
+
+
+async def test_search_library_by_tag_returns_only_tagged_passages(session, tmp_path, embedder):
+    name = f"Tag search {RUN}"
+    tagged, _, _, vectors = await two_tagged_papers(session, tmp_path, name)
+    embedder.vectors["search_query: how are notes anchored?"] = vectors[0]
+
+    found = result(await call("search_library", query="how are notes anchored?", workspace=name, tags=["q2-diversity"]))
+
+    assert found and {p["paper_id"] for p in found} == {str(tagged.id)}
+
+
+async def test_export_citations_by_tag_lists_only_those_papers(session, tmp_path):
+    name = f"Tag cite {RUN}"
+    await two_tagged_papers(session, tmp_path, name)
+
+    cited = result(await call("export_citations", workspace=name, tags=["Q2-diversity"]))
+
+    assert cited["count"] == 1 and "Tagged paper" in cited["text"] and "Untagged paper" not in cited["text"]
+
+
+async def test_list_evidence_cards_and_notes_by_tag(session, tmp_path):
+    name = f"Tag cards {RUN}"
+    tagged, other, _, _ = await two_tagged_papers(session, tmp_path, name)
+    for paper in (tagged, other):
+        made = await call("create_note", body="n", paper_id=str(paper.id), quoted_text=TWO_LINE_QUOTE)
+        assert not made.is_error, made.content
+
+    cards = result(await call("list_evidence_cards", workspace=name, tags=["Q2-diversity"]))
+    notes = result(await call("list_notes", workspace=name, tags=["Q2-diversity"]))
+
+    assert [c["paper_id"] for c in cards] == [str(tagged.id)]
+    assert [n["paper_ids"] for n in notes] == [[str(tagged.id)]]
+    assert len(result(await call("list_notes", workspace=name))) == 2
+
+
+async def test_tags_without_a_workspace_are_refused(session, tmp_path):
+    paper, _, _ = await chunked_paper(session, tmp_path)
+
+    searched = await call("search_library", query="anything", tags=["x"])
+    noted = await call("list_notes", paper_id=str(paper.id), tags=["x"])
+
+    for refused in (searched, noted):
+        assert refused.is_error and refused.structured_content["error"] == "tags_need_a_workspace"

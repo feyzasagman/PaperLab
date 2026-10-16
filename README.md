@@ -385,6 +385,7 @@ Library:
 - `list_workspaces`: your workspaces, with their names;
 - `create_workspace`: a new workspace;
 - `list_papers`: the papers in a workspace, optionally only those with any or all of some tags;
+- `search_library`, `export_citations`, `list_evidence_cards` and `list_notes` also take `tags` (and `match`: any or all) to scope to a workspace's tags;
 - `list_tags`: a workspace's tags, with paper counts and coverage;
 - `tag_papers` / `untag_papers`: label papers with a tag, or take it off, by id or DOI;
 - `rename_tag` / `delete_tag`: rename a tag, or delete it (the papers stay).

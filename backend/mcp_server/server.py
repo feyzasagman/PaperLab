@@ -80,16 +80,20 @@ def recoverable(tool):
 
 @mcp.tool(annotations=READ_ONLY)
 @recoverable
-async def search_library(query: str, workspace: str | None = None) -> list[library.Passage]:
+async def search_library(
+    query: str, workspace: str | None = None, tags: list[str] | None = None, match: Literal["any", "all"] = "any"
+) -> list[library.Passage]:
     """Passages from the owner's papers closest to `query`, closest first (at most 3 from one paper). Leave out
     `workspace` to search the whole library, or give a workspace's exact name; an unknown name answers with the
-    names that exist. Until the owner downloads the search model, it answers search_not_set_up with a sentence to
-    pass on. While search is being rebuilt with a new source, it answers search_rebuilding with how far it got (done
-    of total papers): try again when it finishes. Each passage says what its paper is: `source_type` (journal_article,
+    names that exist. Give `tags` (needs a workspace) to search only papers carrying any of them (`match` "any") or
+    all of them ("all"); this keeps the answer small. Until the owner downloads the search model, it answers
+    search_not_set_up with a sentence to pass on. While search is being rebuilt with a new source, it answers
+    search_rebuilding with how far it got (done of total papers): try again when it finishes. Each passage says what
+    its paper is: `source_type` (journal_article,
     proceedings, book, chapter, preprint, magazine, thesis, other, or null), `peer_reviewed` (true, false or unknown:
     a heuristic) and `evidence_access` (full_text, abstract or metadata): weigh the evidence by them."""
     async with sessions() as session:
-        return await library.search(session, query, workspace)
+        return await library.search(session, query, workspace, tags=tags, match=match)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -408,13 +412,14 @@ async def get_prisma(workspace: str, run_id: uuid.UUID | None = None) -> pipelin
 @mcp.tool(annotations=READ_ONLY)
 @recoverable
 async def list_notes(
-    workspace: str | None = None, paper_id: uuid.UUID | None = None, author: str = "all"
+    workspace: str | None = None, paper_id: uuid.UUID | None = None, author: str = "all",
+    tags: list[str] | None = None, match: Literal["any", "all"] = "any",
 ) -> list[pipeline.LabelledNote]:
     """Use to read what has been noted on a workspace's papers or on one paper: give exactly one of workspace or
     paper_id. author: you (the owner's), ai (written by a model, including ones the owner edited, labelled AI · edited)
-    or all."""
+    or all. With a workspace, `tags` keeps notes on papers carrying any (`match` "any") or all ("all") of them."""
     async with sessions() as session:
-        return await pipeline.list_notes(session, workspace, paper_id, author)
+        return await pipeline.list_notes(session, workspace, paper_id, author, tags, match)
 
 
 @mcp.tool()
@@ -534,18 +539,24 @@ async def get_evidence_card(paper_id: uuid.UUID) -> pipeline.evidence_cards.Card
 
 @mcp.tool(annotations=READ_ONLY)
 @recoverable
-async def list_evidence_cards(workspace: str) -> list[pipeline.EvidenceRow]:
+async def list_evidence_cards(
+    workspace: str, tags: list[str] | None = None, match: Literal["any", "all"] = "any"
+) -> list[pipeline.EvidenceRow]:
     """Use to compare a workspace's papers: one row per paper (title, year, first author) with its evidence card, or
     no card yet. Every value is backed by a quote with its page, and unsupported items are left out (counted in
-    left_out). Values flagged edited are the owner's, not the model's."""
+    left_out). Values flagged edited are the owner's, not the model's. `tags` keeps only papers carrying any
+    (`match` "any") or all ("all") of them."""
     async with sessions() as session:
-        return await pipeline.list_evidence_cards(session, workspace)
+        return await pipeline.list_evidence_cards(session, workspace, tags, match)
 
 
 @mcp.tool(annotations=READ_ONLY)
 @recoverable
-async def export_citations(workspace: str, format: str = "bibtex") -> pipeline.CitationExport:
+async def export_citations(
+    workspace: str, format: str = "bibtex", tags: list[str] | None = None, match: Literal["any", "all"] = "any"
+) -> pipeline.CitationExport:
     """Use to cite a workspace's papers in a manuscript: format is bibtex, ris, csljson, apa (plain text) or apa-html
-    (APA 7 with italics). Returns {"format", "count", "text"}; text is ready to paste or save to a file."""
+    (APA 7 with italics). `tags` cites only papers carrying any (`match` "any") or all ("all") of them. Returns
+    {"format", "count", "text"}; text is ready to paste or save to a file."""
     async with sessions() as session:
-        return await pipeline.export_citations_as(session, workspace, format)
+        return await pipeline.export_citations_as(session, workspace, format, tags, match)
