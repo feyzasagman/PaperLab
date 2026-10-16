@@ -193,3 +193,25 @@ async def test_accept_suggestions_with_tags(session):
     mine = [inc.id, none.id]
     tagged = (await session.execute(select(hit_tags.c.hit_id).where(hit_tags.c.hit_id.in_(mine)))).scalars().all()
     assert tagged == [inc.id]
+
+
+async def test_list_papers_without_full_text(session, tmp_path):
+    name = f"Full text {RUN}"
+    ws = await workspaces.create(session, name)
+    full, _, _ = await chunked_paper(session, tmp_path / "full", title="Has full text")
+    bare = Paper(title="Metadata only", file_path="/nonexistent.pdf", page_count=1)
+    session.add(bare)
+    await session.commit()
+    for paper in (full, bare):
+        await workspaces.add_paper(session, ws.id, paper.id)
+    await call("tag_papers", workspace=name, tag="Q1", paper_ids=[str(full.id), str(bare.id)])
+
+    session.expire_all()  # the test session shares its identity map with the server; has_chunks was loaded before chunking
+
+    def ids(rows):
+        return {r["id"] for r in result(rows)}
+
+    assert ids(await call("list_papers", workspace=name, full_text=False)) == {str(bare.id)}
+    assert ids(await call("list_papers", workspace=name, full_text=True)) == {str(full.id)}
+    assert ids(await call("list_papers", workspace=name)) == {str(full.id), str(bare.id)}
+    assert ids(await call("list_papers", workspace=name, full_text=False, tags=["Q1"])) == {str(bare.id)}

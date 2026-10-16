@@ -52,12 +52,21 @@ class Removed:
 
 
 async def list_papers(
-    session: AsyncSession, workspace: str, tags_: list[str] | None = None, match: Literal["any", "all"] = "any"
+    session: AsyncSession,
+    workspace: str,
+    tags_: list[str] | None = None,
+    match: Literal["any", "all"] = "any",
+    full_text: bool | None = None,
 ) -> list[PaperOut]:
     ws = await workspace_id(session, workspace)
     rows = await workspaces.papers(session, ws)
     wanted = await tags.paper_ids(session, ws, tags_, match)
-    return [PaperOut.model_validate(row) for row in rows if wanted is None or row.id in wanted]
+    return [
+        PaperOut.model_validate(row)
+        for row in rows
+        if (wanted is None or row.id in wanted)
+        and (full_text is None or (row.evidence_access == "full_text") == full_text)
+    ]
 
 
 async def list_tags(session: AsyncSession, workspace: str) -> list[tags.TagSummary]:

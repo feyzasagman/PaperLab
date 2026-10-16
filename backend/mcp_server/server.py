@@ -153,13 +153,14 @@ async def create_workspace(name: str, description: str | None = None) -> workspa
 @mcp.tool(annotations=READ_ONLY)
 @recoverable
 async def list_papers(
-    workspace: str, tags: list[str] | None = None, match: Literal["any", "all"] = "any"
+    workspace: str, tags: list[str] | None = None, match: Literal["any", "all"] = "any", full_text: bool | None = None
 ) -> list[pipeline.PaperOut]:
     """Use to see which papers a workspace holds and whether each finished ingesting (status `ready`), newest first.
     Give `tags` to keep only papers carrying any of them (`match` "any") or all of them ("all"); an unknown tag is
-    an error that lists the workspace's tags."""
+    an error that lists the workspace's tags. `full_text` false keeps only the papers without their full text
+    (abstract or metadata only), true only those with it."""
     async with sessions() as session:
-        return await pipeline.list_papers(session, workspace, tags, match)
+        return await pipeline.list_papers(session, workspace, tags, match, full_text)
 
 
 @mcp.tool(annotations=READ_ONLY)
