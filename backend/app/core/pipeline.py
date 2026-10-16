@@ -295,22 +295,22 @@ async def start_search_run(
     filters = {"year_from": year_from, "year_to": year_to}
     run = await workspace_search.start_run(session, ws, query.strip(), filters, await _sources(session, sources))
     await queue.enqueue("run_workspace_search", str(run.id))
-    return SearchRunOut.model_validate(run)
+    return await workspace_search.run_out(session, run)
 
 
 async def get_search_run(session: AsyncSession, run_id: uuid.UUID) -> SearchRunOut:
-    return SearchRunOut.model_validate(await workspace_search.get_run(session, run_id))
+    return await workspace_search.run_out(session, await workspace_search.get_run(session, run_id))
 
 
 async def list_search_runs(session: AsyncSession, workspace: str, limit: int = 20) -> list[SearchRunSummary]:
     runs = await workspace_search.list_runs(
         session, await workspace_id(session, workspace), max(1, min(limit, MAX_HITS))
     )
-    return [SearchRunSummary.from_run(run, count) for run, count in runs]
+    return await workspace_search.run_summaries(session, runs)
 
 
 async def stop_search_run(session: AsyncSession, run_id: uuid.UUID) -> SearchRunOut:
-    return SearchRunOut.model_validate(await workspace_search.stop_run(session, run_id))
+    return await workspace_search.run_out(session, await workspace_search.stop_run(session, run_id))
 
 
 DECISIONS = ("relevant", "not_relevant", "maybe")

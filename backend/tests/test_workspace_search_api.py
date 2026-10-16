@@ -133,33 +133,83 @@ async def test_stop_and_get_run_over_http(client):
     assert fetched.json()["status"] == "stopped"
 
 
-async def test_restart_run_over_http(client, arq):
-    ws = await client.post("/api/workspaces", json={"name": "Restart API test"})
+async def _stopped_run_over_http(client, session, name, cursors, stats=None):
+    """Starts a run over HTTP, stops it, then sets its cursors as {source: (cursor_json, exhausted)} and stats."""
+    from sqlalchemy import select
+
+    from app.models.workspace_search import WorkspaceSearchCursor, WorkspaceSearchRun
+
+    ws = await client.post("/api/workspaces", json={"name": name})
     workspace_id = ws.json()["id"]
     started = await client.post(
-        f"/api/workspaces/{workspace_id}/search/runs", json={"query": "bert", "filters": {}, "sources": ["arxiv"]}
+        f"/api/workspaces/{workspace_id}/search/runs", json={"query": "bert", "filters": {}, "sources": list(cursors)}
     )
     run_id = started.json()["id"]
     await client.post(f"/api/workspaces/{workspace_id}/search/runs/{run_id}/stop")
+    for cursor in (await session.execute(
+        select(WorkspaceSearchCursor).where(WorkspaceSearchCursor.run_id == uuid.UUID(run_id))
+    )).scalars():
+        cursor.cursor_json, cursor.exhausted = cursors[cursor.source]
+    run = await session.get(WorkspaceSearchRun, uuid.UUID(run_id), populate_existing=True)
+    run.stats_json = stats or {}
+    await session.commit()
+    return workspace_id, run_id
 
-    restarted = await client.post(f"/api/workspaces/{workspace_id}/search/runs/{run_id}")
 
-    assert restarted.status_code == 200
-    assert restarted.json()["status"] == "running"
+async def test_continue_run_over_http(client, session, arq):
+    workspace_id, run_id = await _stopped_run_over_http(
+        client, session, "Continue API test", {"arxiv": ({"value": 200, "paused": True}, False)})
+
+    resumed = await client.post(f"/api/workspaces/{workspace_id}/search/runs/{run_id}")
+
+    assert resumed.status_code == 200
+    body = resumed.json()
+    assert body["status"] == "running" and body["stats_json"]["passes"] == 2
+    assert (body["can_continue"], body["sources_left"]) == (False, ["arxiv"])  # running: nothing to press
     assert arq.jobs[-1] == ("run_workspace_search", run_id)
 
 
-async def test_restart_a_running_run_is_409(client):
-    ws = await client.post("/api/workspaces", json={"name": "Conflict API test"})
-    workspace_id = ws.json()["id"]
+async def test_continue_over_http_409s(client, session, arq):
+    running_ws = (await client.post("/api/workspaces", json={"name": "Continue running 409"})).json()["id"]
+    running = (await client.post(
+        f"/api/workspaces/{running_ws}/search/runs", json={"query": "bert", "filters": {}, "sources": ["arxiv"]}
+    )).json()["id"]
+    done_ws, done = await _stopped_run_over_http(
+        client, session, "Continue done 409", {"arxiv": ({"value": 9}, True)}, stats={"passes": 1})
+    jobs_before = len(arq.jobs)
+
+    still_running = await client.post(f"/api/workspaces/{running_ws}/search/runs/{running}")
+    nothing_left = await client.post(f"/api/workspaces/{done_ws}/search/runs/{done}")
+    foreign = await client.post(f"/api/workspaces/{running_ws}/search/runs/{done}")
+
+    assert still_running.status_code == 409 and still_running.json()["detail"] == "search_run_already_running"
+    assert nothing_left.status_code == 409 and nothing_left.json()["detail"] == "nothing_left_to_fetch"
+    assert foreign.status_code == 404
+    assert len(arq.jobs) == jobs_before  # a refused continue enqueues nothing
+
+
+async def test_runs_api_reports_can_continue_and_sources_left(client, session):
+    workspace_id, run_id = await _stopped_run_over_http(
+        client, session, "Can continue API test",
+        {"arxiv": ({"value": 200, "paused": True}, False), "crossref": ({"value": 9}, True),
+         "openalex": ({"value": 3}, False)},
+        stats={"paused_sources": ["arxiv"]})
+    expected = {"can_continue": True, "sources_left": ["arxiv", "openalex"], "paused_sources": ["arxiv"]}
+
+    got = (await client.get(f"/api/workspaces/{workspace_id}/search/runs/{run_id}")).json()
+    listed = (await client.get(f"/api/workspaces/{workspace_id}/search/runs")).json()[0]
+
+    assert {key: got[key] for key in expected} == expected
+    assert {key: listed[key] for key in expected} == expected
+    # a run that is still going cannot be continued, and a finished one with nothing left says so
     started = await client.post(
-        f"/api/workspaces/{workspace_id}/search/runs", json={"query": "bert", "filters": {}, "sources": ["arxiv"]}
-    )
-    run_id = started.json()["id"]
-
-    resp = await client.post(f"/api/workspaces/{workspace_id}/search/runs/{run_id}")
-
-    assert resp.status_code == 409
+        f"/api/workspaces/{workspace_id}/search/runs", json={"query": "gnn", "filters": {}, "sources": ["arxiv"]})
+    assert (started.json()["can_continue"], started.json()["sources_left"]) == (False, ["arxiv"])
+    stopped = await client.post(f"/api/workspaces/{workspace_id}/search/runs/{started.json()['id']}/stop")
+    assert (stopped.json()["can_continue"], stopped.json()["sources_left"]) == (True, ["arxiv"])
+    done_ws, done = await _stopped_run_over_http(client, session, "Cannot continue", {"arxiv": ({"value": 9}, True)})
+    finished = (await client.get(f"/api/workspaces/{done_ws}/search/runs/{done}")).json()
+    assert (finished["can_continue"], finished["sources_left"], finished["paused_sources"]) == (False, [], [])
 
 
 async def test_get_unknown_run_is_404(client):

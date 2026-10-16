@@ -53,40 +53,36 @@ async def start_run(
         session, workspace_id, payload.query, payload.filters, payload.sources, payload.query_overrides,
     )
     await _enqueue(request, run.id)
-    return run
+    return await workspace_search.run_out(session, run)
 
 
 @router.post("/runs/{run_id}")
-async def restart_run(
+async def continue_run(
     workspace_id: uuid.UUID, run_id: uuid.UUID, session: SessionDep, request: Request
 ) -> SearchRunOut:
-    run = await workspace_search.get_run(session, run_id)
-    resumed = await workspace_search.start_run(
-        session, workspace_id, run.query_text, run.filters_json, run.sources_json,
-        run.query_overrides_json, run_id=run_id,
-    )
+    run = await workspace_search.continue_run(session, workspace_id, run_id)
     await _enqueue(request, run_id)
-    return resumed
+    return await workspace_search.run_out(session, run)
 
 
 @router.post("/runs/{run_id}/stop")
 async def stop_run(workspace_id: uuid.UUID, run_id: uuid.UUID, session: SessionDep) -> SearchRunOut:
-    return await workspace_search.stop_run(session, run_id, workspace_id=workspace_id)
+    return await workspace_search.run_out(
+        session, await workspace_search.stop_run(session, run_id, workspace_id=workspace_id))
 
 
 @router.get("/runs")
 async def list_runs(
     workspace_id: uuid.UUID, session: SessionDep, limit: Annotated[int, Query(ge=1, le=100)] = 20
 ) -> list[SearchRunSummary]:
-    return [
-        SearchRunSummary.from_run(run, count)
-        for run, count in await workspace_search.list_runs(session, workspace_id, limit)
-    ]
+    return await workspace_search.run_summaries(
+        session, await workspace_search.list_runs(session, workspace_id, limit))
 
 
 @router.get("/runs/{run_id}")
 async def get_run(workspace_id: uuid.UUID, run_id: uuid.UUID, session: SessionDep) -> SearchRunOut:
-    return await workspace_search.get_run(session, run_id, workspace_id=workspace_id)
+    return await workspace_search.run_out(
+        session, await workspace_search.get_run(session, run_id, workspace_id=workspace_id))
 
 
 @router.get("/hits")

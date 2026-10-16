@@ -62,3 +62,17 @@ async def test_prisma_notes_identified_is_partial_only_when_a_run_was_cut_short(
     per_run = (await client.get(f"/api/workspaces/{workspace.id}/search/prisma", params={"runs": str(run.id)})).json()
     for body in (combined, per_run):
         assert len(body["notes"]) == 1 and "partial" in body["notes"][0] and "arxiv, crossref" in body["notes"][0]
+
+
+async def test_prisma_notes_paused_sources_so_identified_is_not_mistaken_for_complete(client, session):  # M62
+    workspace, hits = await make_pool(session, [("x", None)])
+    run = await session.get(WorkspaceSearchRun, hits[0].run_id)
+    run.stats_json = {"paused_sources": ["arxiv", "crossref"]}
+    await session.flush()
+    body = await _prisma(client, workspace)
+    assert len(body["notes"]) == 1
+    assert "paused at 200 results per source for 2 sources; more can be fetched" in body["notes"][0]
+    assert "partial" not in body["notes"][0]  # not the time-limit note
+    run.stats_json = {}  # after Continue finishes the sources, the note goes away
+    await session.flush()
+    assert (await _prisma(client, workspace))["notes"] == []

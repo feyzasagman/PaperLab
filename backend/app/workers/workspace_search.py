@@ -150,6 +150,7 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
                         logger.warning("workspace search run %s: %s failed: %s", rid, source, per_source_error[source])
                     capped = [s for s in result.sources_exhausted if s in result.errors]  # exhausted by the error cap
                     failed_sources = sorted({*run.stats_json.get("failed_sources", []), *capped})
+                    # includes out-of-range items (unlike per_source_raw_count), so year-filtered sources still pause
                     pass_raw = dict(run.stats_json.get("pass_raw_count", {}))
                     for source, count in result.raw_counts.items():
                         pass_raw[source] = pass_raw.get(source, 0) + count + result.out_of_range.get(source, 0)

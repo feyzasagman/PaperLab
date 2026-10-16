@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 
 from app.core.workspace_search import PAGE_SIZE_BY_SOURCE, SOURCE_ERROR_CAP
 from app.models import PaperSources
@@ -652,3 +652,121 @@ async def test_a_stored_source_error_is_short_and_has_no_api_key(session, worker
                                                             discovery_fake.transport())
     stored = reloaded.stats_json["per_source_error"]["arxiv"]
     assert len(stored) <= 200 and "SECRET" not in stored and "429" in stored
+
+
+# --- M62: continue a run from where each source stopped -----------------------------------------------------
+
+
+def _endless_titled_pages(monkeypatch, source: str = "arxiv", page_size: int = 50) -> list[int]:
+    """An endless source whose items map to distinct papers (title = its offset), so hits really get stored.
+    Returns the cursors the source was asked for."""
+    from app.core import workspace_search as core_module
+    from app.core.candidates import Candidate
+
+    asked: list[int] = []
+
+    async def page(client, query, size, cursor):
+        asked.append(cursor)
+        return list(range(cursor, cursor + size)), cursor + size
+
+    monkeypatch.setitem(core_module._PAGE_FUNCS, source, page)
+    monkeypatch.setitem(
+        core_module._MAPPERS, source, lambda raw: Candidate(title=f"Continue paper {raw}", sources=(source,)))
+    monkeypatch.setitem(core_module.PAGE_SIZE_BY_SOURCE, source, page_size)
+    return asked
+
+
+async def _started_run(session):
+    from app.core.workspace_search import start_run
+
+    workspace = Workspace(name=f"Continue worker {uuid.uuid4().hex[:8]}")
+    session.add(workspace)
+    await session.flush()
+    await session.commit()
+    return workspace, await start_run(session, workspace.id, "bert", filters={}, sources=["arxiv"])
+
+
+async def _hit_count(session, run) -> int:
+    return await session.scalar(
+        select(func.count()).select_from(WorkspaceSearchHit).where(WorkspaceSearchHit.run_id == run.id)
+    )
+
+
+async def test_continue_resumes_a_paused_source_at_its_next_page_with_no_duplicate_hits(session, worker, monkeypatch):
+    from app.core.workspace_search import continue_run
+
+    asked = _endless_titled_pages(monkeypatch)
+    workspace, run = await _started_run(session)
+    await worker_module.run_workspace_search(worker, str(run.id))
+    assert asked == [0, 50, 100, 150] and await _hit_count(session, run) == 200
+
+    await continue_run(session, workspace.id, run.id)
+    await worker_module.run_workspace_search(worker, str(run.id))
+
+    assert asked == [0, 50, 100, 150, 200, 250, 300, 350]  # no page twice, none skipped
+    assert await _hit_count(session, run) == 400
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert reloaded.status == "exhausted"
+    assert reloaded.stats_json["passes"] == 2
+    assert reloaded.stats_json["pass_raw_count"] == {"arxiv": 200}  # this pass only
+    assert reloaded.stats_json["per_source_raw_count"] == {"arxiv": 400}  # cumulative
+    assert reloaded.stats_json["paused_sources"] == ["arxiv"]
+    assert reloaded.stats_json["last_batch_new_hits"] == 50
+
+
+async def test_stop_during_a_continued_pass_then_continue_again(session, worker, monkeypatch):
+    from app.core.workspace_search import continue_run
+
+    asked = _endless_titled_pages(monkeypatch)
+    workspace, run = await _started_run(session)
+    await worker_module.run_workspace_search(worker, str(run.id))  # pass 1: 0..150, paused
+    await continue_run(session, workspace.id, run.id)
+    real_search_batch = worker_module.search_batch
+    calls = 0
+
+    async def stop_after_second_batch(session_arg, providers, run_arg):
+        nonlocal calls
+        calls += 1
+        result = await real_search_batch(session_arg, providers, run_arg)
+        if calls == 2:
+            await session_arg.execute(
+                update(WorkspaceSearchRun).where(WorkspaceSearchRun.id == run_arg.id).values(status="stopped")
+            )
+        return result
+
+    monkeypatch.setattr(worker_module, "search_batch", stop_after_second_batch)
+    await worker_module.run_workspace_search(worker, str(run.id))  # pass 2: 200, 250, then stopped
+    monkeypatch.setattr(worker_module, "search_batch", real_search_batch)
+    stopped = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert stopped.status == "stopped" and asked[-2:] == [200, 250]
+    assert (await _cursors(session, run))["arxiv"].cursor_json == {"value": 300}  # stopped, not paused
+
+    await continue_run(session, workspace.id, run.id)
+    await worker_module.run_workspace_search(worker, str(run.id))  # pass 3 starts at 300
+
+    assert asked == [0, 50, 100, 150, 200, 250, 300, 350, 400, 450]
+    assert await _hit_count(session, run) == 500
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert reloaded.stats_json["passes"] == 3
+    assert reloaded.stats_json["pass_raw_count"] == {"arxiv": 200}  # the stopped pass's 100 are not carried over
+    assert reloaded.stats_json["per_source_raw_count"] == {"arxiv": 500}
+
+
+async def test_cut_short_flags_describe_the_latest_pass_only(session, worker, monkeypatch):
+    from app.core.workspace_search import continue_run
+
+    _endless_titled_pages(monkeypatch)
+    workspace, run = await _started_run(session)
+    monkeypatch.setattr(worker_module, "MAX_BATCH_ITERATIONS", 2)
+    await worker_module.run_workspace_search(worker, str(run.id))
+    cut = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert cut.stats_json["cut_short"] is True and cut.stats_json["unfinished_sources"] == ["arxiv"]
+
+    await continue_run(session, workspace.id, run.id)
+    monkeypatch.setattr(worker_module, "MAX_BATCH_ITERATIONS", 200)
+    await worker_module.run_workspace_search(worker, str(run.id))
+
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert "cut_short" not in reloaded.stats_json and "unfinished_sources" not in reloaded.stats_json
+    assert reloaded.stats_json["paused_sources"] == ["arxiv"]
+    assert reloaded.stats_json["per_source_raw_count"] == {"arxiv": 300}  # totals stay cumulative

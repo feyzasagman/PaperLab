@@ -37,6 +37,7 @@ from app.models.workspace_search import (
     WorkspaceSearchRun,
 )
 from app.providers import semantic_scholar
+from app.schemas.workspace_search import SearchRunOut, SearchRunSummary
 
 if TYPE_CHECKING:
     from app.schemas.workspace_search import HitReviewUpdate
@@ -328,20 +329,9 @@ from app.models import Paper, workspace_papers
 
 async def start_run(
     session: AsyncSession, workspace_id, query_text: str, filters: dict, sources: list[str],
-    query_overrides: dict | None = None, run_id=None,
+    query_overrides: dict | None = None,
 ) -> WorkspaceSearchRun:
     await workspaces.get(session, workspace_id)  # raises NotFound if missing
-    if run_id is not None:
-        run = await get_run(session, run_id)
-        if run.workspace_id != workspace_id:
-            raise NotFound(f"search run {run_id} not found")
-        if run.status == "running":
-            raise Conflict("search_run_already_running")
-        run.status = "running"
-        run.stopped_at = None
-        await session.commit()
-        return run
-
     years = year_range.parse(filters)  # raises InvalidInput("invalid_years")
     filters = years.as_filters() if years else {}
 
@@ -362,6 +352,60 @@ async def start_run(
         session.add(WorkspaceSearchCursor(run_id=run.id, source=source, cursor_json=seed))
     await session.commit()
     return run
+
+
+# What a new pass starts without: the pass's own counters and its end-of-pass flags. The totals (per_source_*,
+# failed_sources) stay, so PRISMA and the run's history remain cumulative.
+_PASS_STATS = ("cut_short", "unfinished_sources", "paused_sources")
+_PASS_CURSOR_STATE = ("paused", "retry_after")
+
+
+async def continue_run(session: AsyncSession, workspace_id, run_id) -> WorkspaceSearchRun:
+    """Starts another pass over a stopped, cut-short, paused or failed run: every source that isn't exhausted
+    picks up at its stored cursor, so no page is fetched twice. A source that gave up on errors is exhausted and
+    stays out; the error count of a live one is kept, only its cooldown and pause are cleared."""
+    run = await get_run(session, run_id, workspace_id)
+    if run.status == "running":
+        raise Conflict("search_run_already_running")
+    live = (await session.scalars(
+        select(WorkspaceSearchCursor).where(
+            WorkspaceSearchCursor.run_id == run.id, WorkspaceSearchCursor.exhausted.is_(False))
+    )).all()
+    if not live:
+        raise Conflict("nothing_left_to_fetch")
+    for cursor in live:
+        cursor.cursor_json = {k: v for k, v in cursor.cursor_json.items() if k not in _PASS_CURSOR_STATE}
+    kept = {k: v for k, v in run.stats_json.items() if k not in _PASS_STATS}
+    run.stats_json = {**kept, "pass_raw_count": {}, "last_batch_new_hits": 0, "passes": kept.get("passes", 1) + 1}
+    run.status = "running"
+    run.stopped_at = None
+    await session.commit()
+    return run
+
+
+async def sources_left(session: AsyncSession, run_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[str]]:
+    """Each run's sources that still have results to fetch (cursor not exhausted); runs with none are absent."""
+    rows = await session.execute(
+        select(WorkspaceSearchCursor.run_id, WorkspaceSearchCursor.source)
+        .where(WorkspaceSearchCursor.run_id.in_(run_ids), WorkspaceSearchCursor.exhausted.is_(False))
+        .order_by(WorkspaceSearchCursor.source)
+    )
+    left: dict[uuid.UUID, list[str]] = {}
+    for run_id, source in rows.all():
+        left.setdefault(run_id, []).append(source)
+    return left
+
+
+async def run_out(session: AsyncSession, run: WorkspaceSearchRun) -> SearchRunOut:
+    left = await sources_left(session, [run.id])
+    return SearchRunOut.model_validate(run).with_continuation(left.get(run.id, []))
+
+
+async def run_summaries(
+    session: AsyncSession, rows: list[tuple[WorkspaceSearchRun, int]]
+) -> list[SearchRunSummary]:
+    left = await sources_left(session, [run.id for run, _ in rows])
+    return [SearchRunSummary.from_run(run, count, left.get(run.id, [])) for run, count in rows]
 
 
 async def stop_run(session: AsyncSession, run_id, workspace_id=None) -> WorkspaceSearchRun:
