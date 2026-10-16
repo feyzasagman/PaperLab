@@ -49,7 +49,7 @@ EXPECTED_TOOLS = {
     "run_prescreen": None, "stop_prescreen": None, "get_screening_suggestions": True, "accept_suggestions": None,
     "verify_claim": None, "verify_claims": None,
     "generate_evidence_card": None, "get_evidence_card": True, "list_evidence_cards": True,
-    "export_citations": True,
+    "export_citations": True, "enrich_hits": None,
     "list_tags": True, "tag_papers": None, "untag_papers": None, "rename_tag": None, "delete_tag": None,
 }
 

@@ -20,6 +20,7 @@ from app.core import (
     claims,
     discovery,
     evidence_cards,
+    hit_enrichment,
     notes,
     paper_sources,
     papers,
@@ -333,6 +334,23 @@ async def run_prescreen(
     state = await screening.start_suggestions(session, ws, False, run_id)
     await queue.enqueue("suggest_screening", str(ws))
     return ScreeningStateOut.model_validate(state)
+
+
+@dataclass(frozen=True)
+class EnrichQueued:
+    queued: int
+
+
+async def enrich_hits(session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None) -> EnrichQueued:
+    """Queues the Semantic Scholar backfill when any hit's ref lacks triage data or an abstract. `queued` is how many
+    refs still miss data, so calling again shows what a rate-limited run left."""
+    ws = await workspace_id(session, workspace)
+    if run_id is not None:
+        await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
+    count = len(await hit_enrichment.refs_to_enrich(session, ws, run_id))
+    if count:
+        await queue.enqueue("enrich_hits", str(ws), str(run_id) if run_id else None)
+    return EnrichQueued(count)
 
 
 async def stop_prescreen(session: AsyncSession, workspace: str) -> ScreeningStateOut:

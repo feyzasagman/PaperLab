@@ -20,6 +20,7 @@ TOOLS = [
     "create_saved_search",
     "create_workspace",
     "delete_tag",
+    "enrich_hits",
     "export_citations",
     "generate_evidence_card",
     "get_evidence_card",

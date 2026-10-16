@@ -43,6 +43,8 @@ mcp = MCPServer(
         "accepts some. Claims: verify_claim and verify_claims check a claim against the papers it cites, with a "
         "quote as evidence. Evidence cards: generate_evidence_card starts one (about a minute per paper), "
         "get_evidence_card reads it, list_evidence_cards shows a workspace's cards. "
+        "Older hits: enrich_hits fills their peer-review and published-version data and missing abstracts, "
+        "in the background. "
         "Tags: list_tags shows a workspace's tags with counts and coverage, tag_papers / untag_papers label papers in "
         "bulk by id or DOI, rename_tag and delete_tag manage them; list_papers, search_library, export_citations, "
         "list_evidence_cards and list_notes take tags=[…] to scope to them; review_hits, "
@@ -340,6 +342,17 @@ async def run_prescreen(
     web app. Suggestions are never decisions."""
     async with sessions() as session:
         return await pipeline.run_prescreen(session, workspace, run_id, confirm)
+
+
+@mcp.tool()
+@recoverable
+async def enrich_hits(workspace: str, run_id: uuid.UUID | None = None) -> pipeline.EnrichQueued:
+    """Use to fill peer-review and published-version data for hits found before this existed. It runs in the
+    background (about a second per 500 hits); read the results with list_hits. It also fills abstracts that are
+    missing. `queued` is how many hits' papers still lack data: call again later, and a count above 0 means
+    Semantic Scholar was busy and some are left."""
+    async with sessions() as session:
+        return await pipeline.enrich_hits(session, workspace, run_id)
 
 
 @mcp.tool()

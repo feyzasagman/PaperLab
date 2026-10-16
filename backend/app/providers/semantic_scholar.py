@@ -17,17 +17,25 @@ PAPER_FIELDS = "title,year,venue,authors,externalIds,openAccessPdf,citationCount
 # The default pool is recent papers only, and its picks for BERT were weak. all-cs also served a biology DOI.
 RECOMMENDATION_POOL = "all-cs"
 PAGE = 100  # references/citations page size (M7.5 D79)
+# What the enrich_hits backfill reads per paper: triage data and the abstract.
+BATCH_FIELDS = "externalIds,venue,journal,publicationTypes,abstract"
 # Waits before asking again after a 429. The shared keyless pool is often busy for a moment, then answers.
 RETRY_DELAYS = (2.0, 5.0)
 
 
 def new_client(
-    *, email: str | None = None, api_key: str | None = None, transport: httpx.AsyncBaseTransport | None = None
+    *,
+    email: str | None = None,
+    api_key: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    retry_429: bool = True,
 ) -> httpx.AsyncClient:
     headers = {"x-api-key": api_key} if api_key else {}
     # RETRY_DELAYS is read here, not captured as a default argument, so a test's monkeypatch of this module's own
     # RETRY_DELAYS (done before calling new_client) still takes effect.
-    retrying = RetryOn429(transport or httpx.AsyncHTTPTransport(), RETRY_DELAYS)
+    # retry_429=False for a caller that waits on Retry-After itself (hit_enrichment).
+    inner = transport or httpx.AsyncHTTPTransport()
+    retrying = RetryOn429(inner, RETRY_DELAYS) if retry_429 else inner
     return httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=TIMEOUT, transport=retrying)
 
 
@@ -64,10 +72,14 @@ async def get_paper(http: httpx.AsyncClient, key: str) -> dict | None:
 
 
 async def get_papers(http: httpx.AsyncClient, keys: list[str]) -> list[dict | None]:
-    """Several papers in one request, in the order of `keys`; None for each one S2 doesn't know. At most 500 keys."""
-    if not keys:
+    return await batch(http, keys, PAPER_FIELDS)
+
+
+async def batch(http: httpx.AsyncClient, ids: list[str], fields: str = BATCH_FIELDS) -> list[dict | None]:
+    """Several papers in one request, in the order of `ids`; None for each one S2 doesn't know. At most 500 ids."""
+    if not ids:
         return []
-    response = await http.post("/graph/v1/paper/batch", params={"fields": PAPER_FIELDS}, json={"ids": keys})
+    response = await http.post("/graph/v1/paper/batch", params={"fields": fields}, json={"ids": ids})
     papers = json_body(response.raise_for_status())
     if not isinstance(papers, list):
         raise httpx.DecodingError("Semantic Scholar's batch answer is not a list", request=response.request)
