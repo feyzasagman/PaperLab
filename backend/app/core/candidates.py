@@ -28,7 +28,7 @@ CROSSREF_PAPER_TYPES = frozenset(
 
 ARXIV_ID = r"\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z]{2})?/\d{7}"
 _ARXIV_URL = re.compile(rf"arxiv\.org/(?:abs|pdf)/({ARXIV_ID})", re.IGNORECASE)
-_ARXIV_VERSION = re.compile(r"v\d+$")
+ARXIV_VERSION = re.compile(r"v\d+$")
 
 
 @dataclass(frozen=True)
@@ -231,7 +231,7 @@ def from_core(work: Mapping[str, Any]) -> Candidate:
     """Only `downloadUrl` is a PDF link: CORE's other full-text URLs include landing pages (D68). Its citation count
     is left out, since CORE counted 0 for a paper cited 100,000 times."""
     doi = (work.get("doi") or "").lower() or None
-    arxiv_id = _ARXIV_VERSION.sub("", (work.get("arxivId") or "").lower()) or arxiv_from_doi(doi)
+    arxiv_id = ARXIV_VERSION.sub("", (work.get("arxivId") or "").lower()) or arxiv_from_doi(doi)
     core_id = str(work["id"]) if work.get("id") is not None else None
     external_ids = {k: v for k, v in {"arxiv": arxiv_id, "core": core_id}.items() if v}
     return Candidate(

@@ -12,7 +12,7 @@ import httpx
 from sqlalchemy import func, null, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.candidates import _ARXIV_VERSION, ARXIV_ID, s2_triage
+from app.core.candidates import ARXIV_ID, ARXIV_VERSION, s2_triage
 from app.core.source_types import ARXIV_DOI_PREFIX
 from app.models.references import ExternalRef
 from app.models.workspace_search import WorkspaceSearchHit
@@ -60,7 +60,7 @@ async def refs_for_arxiv(session: AsyncSession, ws: uuid.UUID, run_id: uuid.UUID
         )
         .order_by(ExternalRef.id)
     )
-    return list((await session.execute(query)).scalars())
+    return [r for r in (await session.execute(query)).scalars() if _arxiv_id(r)]  # the count and the pass agree
 
 
 async def refs_to_enrich(session: AsyncSession, ws: uuid.UUID, run_id: uuid.UUID | None) -> list[ExternalRef]:
@@ -173,7 +173,7 @@ class ArxivResult:
 
 
 def _arxiv_id(ref: ExternalRef) -> str | None:
-    found = _ARXIV_VERSION.sub("", ((ref.external_ids or {}).get("arxiv") or "").strip().lower())
+    found = ARXIV_VERSION.sub("", ((ref.external_ids or {}).get("arxiv") or "").strip().lower())
     return found if _ARXIV_FULL.fullmatch(found) else None  # one malformed id would make arXiv reject the chunk
 
 
@@ -190,18 +190,24 @@ async def _arxiv_with_backoff(http: httpx.AsyncClient, ids: list[str]) -> list[d
     return None
 
 
-async def _arxiv_one_by_one(http: httpx.AsyncClient, ids: list[str]) -> list[dict]:
-    """After a 400 for the whole chunk: arXiv rejects the chunk if any id is bad, so ask for each id alone."""
-    found = []
+async def _arxiv_one_by_one(http: httpx.AsyncClient, ids: list[str]) -> list[dict] | None:
+    """After a 400 for the whole chunk: arXiv rejects the chunk if any id is bad, so ask for each id alone. Same
+    429/503 waits as a chunk; None once an id is throttled MAX_429 times in a row."""
+    found: list[dict] = []
     for key in ids:
         await sleep(ARXIV_PAUSE)
         try:
-            entry = await arxiv.get(http, key)
+            entries = await _arxiv_with_backoff(http, [key])
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 400:  # 400: arXiv can't read this id; skip it
+                logger.warning("arXiv answered %d for %s; going on", exc.response.status_code, key)
+            continue
         except httpx.HTTPError:
             logger.exception("arXiv lookup of %s failed; going on", key)
             continue
-        if entry:
-            found.append(entry)
+        if entries is None:
+            return None
+        found.extend(entries)
     return found
 
 

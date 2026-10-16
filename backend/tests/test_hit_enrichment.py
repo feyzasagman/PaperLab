@@ -243,7 +243,7 @@ async def test_a_short_answer_fails_the_chunk_and_leaves_refs_unchecked(session)
     assert len(await hit_enrichment.refs_to_enrich(session, ws.id, None)) == 2
 
 
-async def test_enrich_hits_is_refused_when_semantic_scholar_is_off(session, jobs, monkeypatch):
+async def test_enrich_hits_queues_nothing_when_semantic_scholar_is_off(session, jobs, monkeypatch):
     from app.core import paper_sources
     from app.core.source_registry import SOURCE_IDS
 
@@ -505,3 +505,27 @@ async def test_a_400_for_the_chunk_is_re_asked_one_id_at_a_time(session, waits):
     assert waits == [3.0, 3.0, 3.0]
     assert all(r.abstract for r in ok) and odd.abstract is None and junk.abstract is None
     assert (outcome.filled, outcome.rate_limited) == (2, False)
+
+
+async def test_per_id_retry_stops_when_arxiv_throttles(session, waits):
+    refs = arxiv_refs(3)
+    ws, _ = await pool(session, refs)
+    calls = []
+
+    def handler(request):
+        calls.append(id_list(request))
+        return httpx.Response(400 if len(calls) == 1 else 429)
+
+    async with arxiv_client(handler) as http:
+        outcome = await hit_enrichment.arxiv_abstracts(session, http, refs)
+
+    assert len(calls) == 1 + 4 and all(len(ids) == 1 for ids in calls[1:])  # no request for the other two ids
+    assert outcome.rate_limited and outcome.filled == 0
+    assert waits == [3.0, 2, 5, 15]
+
+
+async def test_refs_for_arxiv_keeps_only_well_formed_arxiv_ids(session):
+    good = ref("good", external_ids={"arxiv": "2301.00001v2"})
+    junk = ref("junk", external_ids={"arxiv": "not an id"})
+    ws, _ = await pool(session, [good, junk])
+    assert [r.title for r in await hit_enrichment.refs_for_arxiv(session, ws.id, None)] == ["good"]
