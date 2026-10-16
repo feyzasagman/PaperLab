@@ -148,3 +148,30 @@ async def test_failures_raise_an_httpx_error(arxiv_api, status, body):
         await arxiv.search(arxiv_api.client, "BERT", 3)
     with pytest.raises(httpx.HTTPError):
         await arxiv.get(arxiv_api.client, "1810.04805")
+
+
+def _atom_entry(arxiv_id: str, abstract: str) -> str:
+    return (f"<entry><id>http://arxiv.org/abs/{arxiv_id}v1</id><title>T {arxiv_id}</title>"
+            f"<published>2023-01-02T00:00:00Z</published><summary>{abstract}</summary></entry>")
+
+
+async def test_get_many_parses_several_entries_and_skips_errors(arxiv_api):
+    body = ATOM.format(
+        _atom_entry("2301.00001", "First.")
+        + '<entry><id>https://arxiv.org/api/errors#incorrect_id_format_for_2301.9</id><title>Error</title>'
+        "<summary>incorrect id format</summary></entry>" + _atom_entry("2301.00003", "Third.")
+    )
+    arxiv_api.reply("/api/query", 200, text=body)
+
+    entries = await arxiv.get_many(arxiv_api.client, ["2301.00001", "2301.9", "2301.00003"])
+
+    assert [(e["arxiv_id"], e["abstract"]) for e in entries] == [("2301.00001", "First."), ("2301.00003", "Third.")]
+    [request] = arxiv_api.requests
+    assert request.url.params["id_list"] == "2301.00001,2301.9,2301.00003"
+    assert request.url.params["max_results"] == "3"
+
+
+async def test_get_many_raises_on_an_error_status(arxiv_api):
+    arxiv_api.reply("/api/query", 429, text="busy")
+    with pytest.raises(httpx.HTTPStatusError):
+        await arxiv.get_many(arxiv_api.client, ["2301.00001"])

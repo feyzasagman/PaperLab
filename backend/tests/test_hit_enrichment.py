@@ -15,7 +15,7 @@ from app.core import hit_enrichment
 from app.models.references import ExternalRef
 from app.models.workspace import Workspace
 from app.models.workspace_search import WorkspaceSearchHit, WorkspaceSearchRun
-from app.providers import semantic_scholar
+from app.providers import arxiv, semantic_scholar
 from app.workers.hit_enrichment import enrich_hits as worker_enrich_hits
 from app.workers.settings import WorkerSettings
 
@@ -338,3 +338,124 @@ async def test_the_job_clears_after_filling_abstracts(session, monkeypatch):
     assert one.abstract == "From S2."
     hit = await hit_of(session, one)
     assert hit.suggestion is None and hit.suggestion_flags is None
+
+
+async def test_apply_s2_keeps_the_arxiv_id():
+    plain = ref("plain", doi="10.1/x")
+    assert not plain.external_ids
+    hit_enrichment.apply_s2(plain, {**JOURNAL, "externalIds": {"DOI": "10.1/x", "ArXiv": "2301.01234"}})
+    assert plain.external_ids == {"arxiv": "2301.01234"}
+    own = ref("own", doi="10.1/y", external_ids={"arxiv": "2000.00001", "x": "1"})
+    before = own.external_ids
+    hit_enrichment.apply_s2(own, {**JOURNAL, "externalIds": {"ArXiv": "2301.01234"}})
+    assert own.external_ids == {"arxiv": "2000.00001", "x": "1"} and own.external_ids is before
+
+
+def atom(ids: list[str], skip: tuple[str, ...] = ()) -> str:
+    entries = "".join(
+        f"<entry><id>http://arxiv.org/abs/{i}v1</id><title>t</title><summary>Abstract of {i}.</summary></entry>"
+        for i in ids if i not in skip
+    )
+    return f'<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">{entries}</feed>'
+
+
+def arxiv_refs(count: int, **fields) -> list[ExternalRef]:
+    return [ref(f"a{n}", external_ids={"arxiv": f"2301.{n:05d}"}, **fields) for n in range(count)]
+
+
+def arxiv_client(handler):
+    return arxiv.new_client(transport=httpx.MockTransport(handler))
+
+
+def id_list(request) -> list[str]:
+    return request.url.params["id_list"].split(",")
+
+
+async def test_arxiv_fallback_fills_only_empty_abstracts_and_paces_requests(session):
+    refs = arxiv_refs(150)
+    has_one = ref("has one", abstract="Mine.", external_ids={"arxiv": "2301.99999"})
+    no_arxiv = ref("no arxiv", doi="10.1/n")
+    ws, _ = await pool(session, [*refs, has_one, no_arxiv])
+    sent, sleeps = [], []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    def handler(request):
+        sent.append(id_list(request))
+        return httpx.Response(200, text=atom(id_list(request)))
+
+    async with arxiv_client(handler) as http:
+        outcome = await hit_enrichment.arxiv_abstracts(session, http, [*refs, has_one, no_arxiv], sleep=sleep)
+
+    assert [len(ids) for ids in sent] == [100, 50] and sleeps == [3.0]
+    assert (outcome.asked, outcome.filled, outcome.rate_limited) == (150, 150, False)
+    assert refs[0].abstract == "Abstract of 2301.00000." and has_one.abstract == "Mine." and no_arxiv.abstract is None
+
+
+async def test_arxiv_429_then_success_and_four_429s_stop(session, monkeypatch):
+    monkeypatch.setattr(hit_enrichment, "ARXIV_CHUNK", 2)
+    refs = arxiv_refs(4)
+    ws, _ = await pool(session, refs)
+    sleeps = []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    answers = iter([
+        httpx.Response(429, headers={"Retry-After": "7"}),
+        httpx.Response(200, text=atom(["2301.00000"])),  # arXiv answers one of the two ids
+    ])
+    async with arxiv_client(lambda request: next(answers)) as http:
+        outcome = await hit_enrichment.arxiv_abstracts(session, http, refs[:2], sleep=sleep)
+    assert sleeps == [7] and (outcome.asked, outcome.filled, outcome.rate_limited) == (2, 1, False)
+    assert refs[0].abstract and refs[1].abstract is None
+
+    sleeps.clear()
+    calls = []
+
+    def busy(request):
+        calls.append(request)
+        return httpx.Response(503 if len(calls) % 2 else 429)
+
+    async with arxiv_client(busy) as http:
+        outcome = await hit_enrichment.arxiv_abstracts(session, http, refs[1:], sleep=sleep)
+    assert len(calls) == 4 and sleeps == [2, 5, 15]  # stopped after the 4th in a row; the rest is left
+    assert outcome.rate_limited and outcome.filled == 0 and refs[2].abstract is None
+
+
+async def test_job_skips_arxiv_after_an_s2_rate_limit(session, monkeypatch):
+    from app.workers import hit_enrichment as worker
+
+    @asynccontextmanager
+    async def test_session():
+        yield session
+
+    async def no_sleep(seconds):
+        pass
+
+    monkeypatch.setattr(worker, "SessionLocal", test_session)
+    monkeypatch.setattr(hit_enrichment, "sleep", no_sleep)
+    one = ref("one", external_ids={"arxiv": "2301.00001"})
+    ws, _ = await pool(session, [one])
+    arxiv_calls = []
+
+    def arxiv_handler(request):
+        arxiv_calls.append(request)
+        return httpx.Response(200, text=atom(id_list(request)))
+
+    ctx = {"transport": httpx.MockTransport(lambda request: httpx.Response(429)),
+           "arxiv_transport": httpx.MockTransport(arxiv_handler)}
+    await worker.enrich_hits(ctx, str(ws.id))
+    assert arxiv_calls == [] and one.abstract is None
+
+    # S2 answers but has no abstract: the job falls back to arXiv
+    ctx["transport"] = httpx.MockTransport(lambda request: httpx.Response(200, json=[{**JOURNAL, "abstract": None}]))
+    await hit_enrichment_reset(session, one)
+    await worker.enrich_hits(ctx, str(ws.id))
+    assert len(arxiv_calls) == 1 and one.abstract == "Abstract of 2301.00001."
+
+
+async def hit_enrichment_reset(session, r):
+    r.triage_checked_at = None
+    await session.flush()

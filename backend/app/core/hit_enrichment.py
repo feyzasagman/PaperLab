@@ -2,6 +2,7 @@
 workspace's search hits from Semantic Scholar's batch endpoint. Only on an explicit call; never overwrites a value."""
 
 import logging
+import re
 import uuid
 from asyncio import sleep
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ from app.core.candidates import s2_triage
 from app.core.source_types import ARXIV_DOI_PREFIX
 from app.models.references import ExternalRef
 from app.models.workspace_search import WorkspaceSearchHit
-from app.providers import semantic_scholar
+from app.providers import arxiv, semantic_scholar
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ CHUNK = 500  # S2's batch limit
 RATE_LIMIT_WAITS = (2.0, 5.0, 15.0)  # when a 429 has no Retry-After, one per retry
 MAX_WAIT = 60.0
 MAX_429 = 4  # consecutive 429s on one chunk before the job stops
+ARXIV_CHUNK = 100  # arXiv's id_list limit
+ARXIV_PAUSE = 3.0  # arXiv asks for one request every 3 seconds
+ARXIV_BUSY = (429, 503)
+_VERSION = re.compile(r"v\d+$")
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,7 @@ class EnrichResult:
     remaining: int = 0
     rate_limited: bool = False
     suggestions_cleared: int = 0
+    arxiv_filled: int = 0
 
 
 async def refs_to_enrich(session: AsyncSession, ws: uuid.UUID, run_id: uuid.UUID | None) -> list[ExternalRef]:
@@ -74,6 +80,9 @@ def apply_s2(ref: ExternalRef, paper: dict) -> bool:
         if value and not (getattr(ref, field) or "").strip():
             setattr(ref, field, value)
             changed = True
+    arxiv_id = (paper.get("externalIds") or {}).get("ArXiv")
+    if arxiv_id and not (ref.external_ids or {}).get("arxiv"):
+        ref.external_ids = {**(ref.external_ids or {}), "arxiv": arxiv_id}  # a new dict, so SQLAlchemy sees it
     return changed
 
 
@@ -134,6 +143,60 @@ async def enrich(
                 filled += 1
         await session.commit()
     return EnrichResult(looked_up, filled, not_found)
+
+
+@dataclass(frozen=True)
+class ArxivResult:
+    asked: int = 0
+    filled: int = 0
+    rate_limited: bool = False
+
+
+def _arxiv_id(ref: ExternalRef) -> str | None:
+    found = ((ref.external_ids or {}).get("arxiv") or "").strip().lower()
+    return _VERSION.sub("", found) or None
+
+
+async def _arxiv_with_backoff(http: httpx.AsyncClient, ids: list[str], sleep) -> list[dict] | None:
+    """The chunk's entries, or None after MAX_429 consecutive 429/503s. Other HTTP errors raise."""
+    for attempt in range(MAX_429):
+        try:
+            return await arxiv.get_many(http, ids)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in ARXIV_BUSY:
+                raise
+            if attempt < MAX_429 - 1:
+                await sleep(_wait_seconds(exc.response, attempt))
+    return None
+
+
+async def arxiv_abstracts(
+    session: AsyncSession, http: httpx.AsyncClient, refs: list[ExternalRef], *, sleep=sleep
+) -> ArxivResult:
+    """Fills the empty abstracts of refs that have an arXiv id, ARXIV_CHUNK ids per request, ARXIV_PAUSE seconds
+    apart, committing per chunk. A chunk that fails is logged and skipped; four 429/503s in a row stop it."""
+    wanted = [(r, key) for r in refs if not (r.abstract or "").strip() and (key := _arxiv_id(r))]
+    asked = filled = 0
+    for start in range(0, len(wanted), ARXIV_CHUNK):
+        if start:
+            await sleep(ARXIV_PAUSE)
+        chunk = wanted[start : start + ARXIV_CHUNK]
+        try:
+            entries = await _arxiv_with_backoff(http, [key for _, key in chunk], sleep)
+        except httpx.HTTPError:
+            logger.exception("arXiv lookup of %d ids failed; going on", len(chunk))
+            continue
+        if entries is None:
+            logger.warning("arXiv kept answering 429/503; stopping with %d refs left", len(wanted) - start)
+            return ArxivResult(asked, filled, True)
+        asked += len(chunk)
+        abstracts = {e["arxiv_id"]: e["abstract"] for e in entries if e["abstract"]}
+        for ref, key in chunk:
+            if key in abstracts:
+                ref.abstract = abstracts[key]
+                filled += 1
+        await session.commit()
+    return ArxivResult(asked, filled)
 
 
 SUGGESTION_COLUMNS = (
