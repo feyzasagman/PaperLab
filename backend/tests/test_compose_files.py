@@ -54,3 +54,21 @@ def test_the_e2e_script_only_ever_drives_the_test_project():
 def test_the_docs_no_longer_start_fake_providers_on_the_default_project():
     for path in ("README.md", "CONTRIBUTING.md", "docker-compose.yml"):
         assert not re.search(r"LLM_PROVIDER=fake[^\n`]*docker compose (?!-p)", (ROOT / path).read_text()), path
+
+
+def test_a_live_backend_process_killed_for_memory_comes_back():
+    # A test stack beside the owner's ran the live ingest worker out of memory twice on 2026-10-15, and it stayed down
+    # until restarted by hand. on-failure brings it back but, unlike always, never starts it with Docker itself.
+    found = services("docker-compose.yml")
+    assert {name: found[name].get("restart") for name in ("api", "worker", "ingest-worker")} == {
+        "api": "on-failure", "worker": "on-failure", "ingest-worker": "on-failure",
+    }
+
+
+def test_the_test_stack_and_only_the_test_stack_is_memory_capped():
+    live = services("docker-compose.yml")
+    capped = services("docker-compose.e2e.yml")
+    assert set(capped) == set(live)  # every test container has a cap, so its runs can't starve the owner's stack
+    assert all(capped[name].get("mem_limit") for name in capped), capped
+    assert not any("mem_limit" in live[name] for name in live)
+    assert re.search(r"^export COMPOSE_FILE=docker-compose\.yml:docker-compose\.e2e\.yml\b", SCRIPT.read_text(), re.M)

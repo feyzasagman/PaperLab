@@ -11,6 +11,7 @@ PROJECT=paperlab-e2e
 export API_PORT=8100 FRONTEND_PORT=5280 DB_PORT=5533
 export LLM_PROVIDER=fake DISCOVERY_PROVIDER=fake MODELS_DIR=/models
 export DEV_RELOAD=1 # the test stack runs the code being worked on; your own stack does not reload
+export COMPOSE_FILE=docker-compose.yml:docker-compose.e2e.yml # memory caps, so a run can't starve your stack
 LIVE_MODELS=paperlab_models # the downloaded search model, copied once (read-only) so specs needing it run
 
 up() {
