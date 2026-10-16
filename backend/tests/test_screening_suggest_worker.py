@@ -84,6 +84,10 @@ def worker(session, monkeypatch):
     monkeypatch.setattr(worker_module, "engine", SimpleNamespace(connect=shared_connection))
 
     def use(llm):
+        async def resolve(_session, _model_id):  # no default model needed in the test database
+            return SimpleNamespace(label="Test"), SimpleNamespace(name="scripted")
+
+        monkeypatch.setattr(worker_module.llm_connections, "resolve", resolve)
         monkeypatch.setattr(worker_module, "build_llm", lambda connection, name, transport=None: llm)
         return llm
 
@@ -335,6 +339,25 @@ async def test_a_run_scoped_job_only_touches_that_runs_hits_and_clears_its_scope
     await session.refresh(hits[1])
     await session.refresh(workspace)
     assert hits[1].suggestion is None and workspace.suggest_run_id is None
+
+
+async def test_a_multi_run_job_only_touches_the_listed_runs_hits(session, worker):
+    workspace, hits = await _running(session, [("a", None), ("b", None), ("c", None)])
+    for hit in hits[1:]:
+        run = WorkspaceSearchRun(
+            workspace_id=workspace.id, query_text="q2", filters_json={}, query_overrides_json={},
+            sources_json=["arxiv"], status="exhausted", started_at=BASE, stats_json={},
+        )
+        session.add(run)
+        await session.flush()
+        hit.run_id = run.id
+    await session.flush()
+    llm = worker(ScriptedLLM([J("include"), J("include")]))
+    await worker_module.suggest_screening({}, str(workspace.id), [str(hits[0].run_id), str(hits[1].run_id)])
+    assert len(llm.calls) == 2
+    for hit in hits:
+        await session.refresh(hit)
+    assert [h.suggestion for h in hits] == ["include", "include", None]
 
 
 @pytest.fixture
