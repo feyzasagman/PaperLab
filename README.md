@@ -394,6 +394,7 @@ Adding papers:
 Systematic search and screening:
 - `start_search_run`: searches the chosen sources for a query, for a workspace;
 - `get_search_run`: how a search run is going, and what it found;
+- `list_search_runs`: a workspace's search runs, newest first, with status, sources and hit counts;
 - `stop_search_run`: stops a search run that is still going;
 - `list_hits`: a run's results, filtered by your decision, with any AI suggestion;
 - `review_hits`: records your screening decisions on hits, with a reason when you exclude;

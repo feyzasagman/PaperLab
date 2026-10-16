@@ -525,3 +525,20 @@ async def test_a_field_over_4000_characters_is_refused(session):
 async def test_an_unknown_workspace_is_unknown_workspace_for_criteria():
     response = await call("get_screening_criteria", workspace="No such workspace")
     assert response.is_error and response.structured_content["error"] == "unknown_workspace"
+
+
+async def test_list_search_runs_newest_first_with_hit_counts_and_only_this_workspace(session, jobs):
+    await new_workspace(session, "Many runs")
+    await new_workspace(session, "Other runs")
+    first = result(await call("start_search_run", workspace=f"Many runs {RUN}", query="one", sources=["arxiv"]))
+    second = result(await call("start_search_run", workspace=f"Many runs {RUN}", query="two", sources=["arxiv"]))
+    result(await call("start_search_run", workspace=f"Other runs {RUN}", query="foreign", sources=["arxiv"]))
+    runs = result(await call("list_search_runs", workspace=f"Many runs {RUN}"))
+    assert [r["id"] for r in runs] == [second["id"], first["id"]]
+    assert runs[0]["query_text"] == "two" and runs[0]["hit_count"] == 0 and runs[0]["sources_json"] == ["arxiv"]
+    assert "stats_json" not in runs[0]
+
+
+async def test_list_search_runs_of_an_empty_workspace_is_empty(session):
+    await new_workspace(session, "No runs")
+    assert result(await call("list_search_runs", workspace=f"No runs {RUN}")) == []

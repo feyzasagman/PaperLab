@@ -31,7 +31,7 @@ mcp = MCPServer(
         "by DOI, arXiv ID or PDF link with add_paper (free copies only), file them with add_paper_to_workspace and "
         "take them out with remove_paper_from_workspace. "
         "Systematic search: start_search_run, then get_search_run until it finishes "
-        "(stop_search_run ends one early); read results with list_hits, "
+        "(stop_search_run ends one early; list_search_runs shows a workspace's runs); read results with list_hits, "
         "record the owner's screening with review_hits, pull papers in with import_hit, widen with snowball. "
         "After full-text reading, record set_eligibility; get_prisma gives the flow counts. "
         "Saved searches: create_saved_search runs a search on a schedule, list_saved_searches shows them and "
@@ -194,6 +194,16 @@ async def get_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
     the last error seen per source, even for one that later recovered."""
     async with sessions() as session:
         return await pipeline.get_search_run(session, run_id)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def list_search_runs(workspace: str, limit: int = 20) -> list[pipeline.SearchRunSummary]:
+    """Use to see a workspace's search runs, newest first: status, query, sources, per-source result counts and
+    how many hits each run added. Pass a run's id to get_search_run for full stats or to list_hits/run_prescreen
+    to scope them."""
+    async with sessions() as session:
+        return await pipeline.list_search_runs(session, workspace, limit)
 
 
 @mcp.tool()

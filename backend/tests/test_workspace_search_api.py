@@ -1524,3 +1524,18 @@ async def test_import_hits_whose_doi_is_already_in_the_library_reuses_that_paper
     assert hit.acquisition_status == "imported"
     assert await session.scalar(select(func.count()).select_from(Paper).where(func.lower(Paper.doi) == doi.lower())) == 1
     assert arq.jobs == []
+
+
+async def test_list_runs_over_http_newest_first_with_hit_counts(client, session):
+    from screening_pool import make_pool
+
+    workspace, _ = await make_pool(session, [("a", None)] * 3)
+    await session.commit()
+    newer = await client.post(
+        f"/api/workspaces/{workspace.id}/search/runs", json={"query": "newer", "filters": {}, "sources": ["arxiv"]}
+    )
+    resp = await client.get(f"/api/workspaces/{workspace.id}/search/runs")
+    runs = resp.json()
+    assert resp.status_code == 200 and len(runs) == 2
+    assert runs[0]["id"] == newer.json()["id"] and runs[0]["hit_count"] == 0
+    assert runs[1]["hit_count"] == 3 and "stats_json" not in runs[1]
