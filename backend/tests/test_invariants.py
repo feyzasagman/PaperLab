@@ -32,7 +32,7 @@ def test_mcp_server_has_no_sql_and_imports_only_core_services():
     ours = {name for name in imported if name.split(".")[0] == "app"}
     others = {name.split(".")[0] for name in imported - ours} - set(sys.stdlib_module_names)
     assert ours and all(name == "app.db" or name.split(".")[:2] == ["app", "core"] for name in ours), ours
-    assert others == {"mcp"}
+    assert others == {"mcp", "pydantic"}  # pydantic only for tool argument bounds (Field), never models or logic
     assert [word for word in ("sqlalchemy", "select(", "text(", "execute(") if word in source] == []
 
 
