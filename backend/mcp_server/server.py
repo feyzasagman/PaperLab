@@ -90,9 +90,9 @@ async def search_library(
     all of them ("all"); this keeps the answer small. Until the owner downloads the search model, it answers
     search_not_set_up with a sentence to pass on. While search is being rebuilt with a new source, it answers
     search_rebuilding with how far it got (done of total papers): try again when it finishes. Each passage says what
-    its paper is: `source_type` (journal_article,
-    proceedings, book, chapter, preprint, magazine, thesis, other, or null), `peer_reviewed` (true, false or unknown:
-    a heuristic) and `evidence_access` (full_text, abstract or metadata): weigh the evidence by them."""
+    its paper is: `source_type` (journal_article, proceedings, book, chapter, preprint, magazine, thesis, other, or
+    null), `peer_reviewed` (true, false or unknown: a heuristic) and `evidence_access` (full_text, abstract or
+    metadata): weigh the evidence by them."""
     async with sessions() as session:
         return await library.search(session, query, workspace, tags=tags, match=match)
 

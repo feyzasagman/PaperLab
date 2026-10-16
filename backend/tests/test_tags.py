@@ -1,10 +1,12 @@
+import json
 import uuid
+from datetime import datetime
 
 import pytest
 from pdf_papers import chunked_paper
 from sqlalchemy import select
 
-from app.core import tags, workspaces
+from app.core import citations_export, pipeline, tags, workspaces
 from app.core.errors import Conflict, InvalidInput
 from app.models import Paper, workspace_papers
 
@@ -15,7 +17,8 @@ RUN = uuid.uuid4().hex[:8]
 
 async def make_paper(session, **fields) -> Paper:
     fields.setdefault("doi", f"10.5555/{uuid.uuid4().hex}")
-    paper = Paper(title="A paper", file_path="/nonexistent.pdf", page_count=5, **fields)
+    fields.setdefault("title", "A paper")
+    paper = Paper(file_path="/nonexistent.pdf", page_count=5, **fields)
     session.add(paper)
     await session.commit()
     return paper
@@ -139,3 +142,25 @@ async def test_bad_names_and_batches(session):
     with pytest.raises(InvalidInput) as err:
         await tags.tag_papers(session, ws, "x")
     assert err.value.args[0] == "no_papers_given"
+
+
+async def test_export_selection_over_the_cap_names_the_limit(session):
+    with pytest.raises(InvalidInput) as err:
+        await citations_export.export_papers(
+            session, paper_ids=[uuid.uuid4() for _ in range(citations_export.MAX_SELECTION + 1)], fmt="bibtex"
+        )
+    assert err.value.args[0] == "too_many_papers"
+    assert err.value.details["max"] == citations_export.MAX_SELECTION
+
+
+async def test_tagged_export_keeps_workspace_order(session):
+    ws = await workspace(session)
+    ids = sorted(uuid.uuid4() for _ in range(3))
+    # the workspace lists newest first, so the smallest uuid is the oldest and sorts last there
+    for n, pid in enumerate(ids):
+        await make_paper(session, id=pid, title=f"T{n}", created_at=datetime(2026, 1, 1 + n))
+        await workspaces.add_paper(session, ws, pid)
+        await tags.tag_papers(session, ws, "x", paper_ids=[pid])
+    name = (await workspaces.get(session, ws)).name
+    out = await pipeline.export_citations_as(session, name, "csljson", ["x"])
+    assert [i["title"] for i in json.loads(out.text)] == ["T2", "T1", "T0"]

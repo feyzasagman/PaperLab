@@ -165,14 +165,15 @@ async def test_skipped_hits_get_no_tags(session):
     other, (foreign,) = await make_pool(session, [("b", None)])
     out = result(await call("review_hits", workspace=ws.name, hit_ids=[str(foreign.id)], decision="maybe", tags=["T"]))
     assert out == {"updated": 0, "skipped": [str(foreign.id)]}
-    assert (await session.execute(select(hit_tags))).all() == []
+    assert (await session.execute(select(hit_tags).where(hit_tags.c.hit_id == foreign.id))).all() == []
 
 
 async def test_tag_hits_survives_thousands_of_ids(session):
     ws, hits = await make_pool(session, [("a", None)] * 3)
     ids = [uuid.uuid4() for _ in range(40000)] + [h.id for h in hits]
     await tags.tag_hits(session, ws.id, ["A", "B", "C", "D"], ids)
-    rows = (await session.execute(select(hit_tags.c.hit_id))).scalars().all()
+    mine = [h.id for h in hits]
+    rows = (await session.execute(select(hit_tags.c.hit_id).where(hit_tags.c.hit_id.in_(mine)))).scalars().all()
     assert len(rows) == 12 and set(rows) == {h.id for h in hits}
 
 
@@ -190,5 +191,6 @@ async def test_accept_suggestions_with_tags(session):
     await session.flush()
     out = result(await call("accept_suggestions", workspace=ws.name, hit_ids=[str(inc.id), str(none.id)], tags=["T"]))
     assert out["accepted"] == 1
-    tagged = (await session.execute(select(hit_tags.c.hit_id))).scalars().all()
+    mine = [inc.id, none.id]
+    tagged = (await session.execute(select(hit_tags.c.hit_id).where(hit_tags.c.hit_id.in_(mine)))).scalars().all()
     assert tagged == [inc.id]

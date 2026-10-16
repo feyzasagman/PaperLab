@@ -579,6 +579,8 @@ async def export_citations_as(
     ws = await workspace_id(session, workspace)
     wanted = await tags.paper_ids(session, ws, tags_, match)
     # export_papers takes a workspace or paper ids, not both
-    scope = {"workspace_id": ws} if wanted is None else {"paper_ids": sorted(wanted)}
+    scope = {"workspace_id": ws}
+    if wanted is not None:
+        scope = {"paper_ids": [p.id for p in await workspaces.papers(session, ws) if p.id in wanted]}
     text, count = await export_citations(session, fmt=fmt, **scope)
     return CitationExport(fmt, count, text)
