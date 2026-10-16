@@ -355,7 +355,7 @@ async def test_pausing_an_unknown_saved_search_says_so(session):
 
 from screening_pool import make_pool  # noqa: E402
 
-from app.core import screening  # noqa: E402
+from app.core import pipeline, screening  # noqa: E402
 
 
 def _model(monkeypatch, local: bool):
@@ -398,6 +398,7 @@ async def test_run_prescreen_with_a_remote_model_asks_and_starts_nothing(session
     response = await call("run_prescreen", workspace=workspace.name)
     assert response.is_error and response.structured_content["error"] == "remote_model_needs_confirm"
     assert response.structured_content["model"] == "Test · model"
+    assert response.structured_content["host"] == "api.example.com"
     assert jobs.jobs == [] and workspace.suggest_status == "idle"
 
 
@@ -563,3 +564,29 @@ async def test_list_search_runs_clamps_the_limit(session, jobs):
         result(await call("start_search_run", workspace=ws, query=query, sources=["arxiv"]))
     assert len(result(await call("list_search_runs", workspace=ws, limit=-1))) == 1
     assert len(result(await call("list_search_runs", workspace=ws, limit=1))) == 1
+
+
+async def test_run_prescreen_without_a_run_refuses_a_big_queue_unless_confirmed(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    monkeypatch.setattr(pipeline, "PRESCREEN_CONFIRM_ABOVE", 2)
+    workspace, _ = await _pool(session)  # 3 hits queued
+    refused = await call("run_prescreen", workspace=workspace.name)
+    assert refused.is_error and refused.structured_content["error"] == "prescreen_needs_confirm"
+    assert (refused.structured_content["queued"], refused.structured_content["limit"]) == (3, 2)
+    assert jobs.jobs == [] and workspace.suggest_status == "idle"
+    assert result(await call("run_prescreen", workspace=workspace.name, confirm=True))["suggest_status"] == "running"
+
+
+async def test_run_prescreen_at_the_limit_starts_without_confirm(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    monkeypatch.setattr(pipeline, "PRESCREEN_CONFIRM_ABOVE", 3)
+    workspace, _ = await _pool(session)
+    assert result(await call("run_prescreen", workspace=workspace.name))["suggest_status"] == "running"
+
+
+async def test_run_prescreen_for_one_run_never_needs_confirm(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    monkeypatch.setattr(pipeline, "PRESCREEN_CONFIRM_ABOVE", 0)
+    workspace, (hit, *_) = await _pool(session)
+    state = result(await call("run_prescreen", workspace=workspace.name, run_id=str(hit.run_id)))
+    assert state["suggest_status"] == "running"

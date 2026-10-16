@@ -267,12 +267,16 @@ async def set_screening_criteria(
 
 @mcp.tool()
 @recoverable
-async def run_prescreen(workspace: str, run_id: uuid.UUID | None = None) -> pipeline.ScreeningStateOut:
-    """Use to have the default model suggest include, exclude or unsure for each undecided hit (all hits, or one run).
-    It runs in the background; a remote model is refused with remote_model_needs_confirm, since its provider would
-    receive the abstracts. Suggestions are never decisions."""
+async def run_prescreen(
+    workspace: str, run_id: uuid.UUID | None = None, confirm: bool = False
+) -> pipeline.ScreeningStateOut:
+    """Use to have the default model suggest include, exclude or unsure for each undecided hit. It runs in the
+    background. Without run_id it covers every undecided hit in the workspace; above 500 queued hits it is refused
+    with prescreen_needs_confirm and the count, so ask the owner, then call again with confirm=true. A remote model
+    is refused with remote_model_needs_confirm, naming the model and the host that would receive the abstracts.
+    Suggestions are never decisions."""
     async with sessions() as session:
-        return await pipeline.run_prescreen(session, workspace, run_id)
+        return await pipeline.run_prescreen(session, workspace, run_id, confirm)
 
 
 @mcp.tool()
