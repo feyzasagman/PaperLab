@@ -191,6 +191,34 @@ async def test_deleting_the_default_models_connection_leaves_no_default(client, 
     assert not any(m["is_default"] for m in (await client.get("/api/llm/models")).json())
 
 
+@pytest.mark.parametrize("path", ["test", "available"])
+async def test_an_omniroute_server_on_this_machine_counts_as_cloud_once_it_answers(client, provider, path):
+    """Found live on 2026-10-16: OmniRoute at host.docker.internal forwards every request to cloud providers, but its
+    address made it "local", so a pre-screen sent abstracts out with no warning. Its own response header gives it
+    away; a plain local server (LM Studio, llama.cpp) stays local."""
+    omniroute = await create(client, base_url="http://host.docker.internal:20128/v1")
+    plain = await create(client, base_url="http://localhost:1234/v1")
+    assert (omniroute["is_local"], plain["is_local"]) == (True, True)  # by address, before anything answered
+    model_list = {"json": {"data": [{"id": "auto/best-free"}]}}
+
+    provider.reply("/v1/models", 200, headers={"x-omniroute-route-class": "CLIENT_API"}, **model_list)
+    await call_model_list(client, omniroute["id"], path)
+    provider.reply("/v1/models", 200, **model_list)
+    await call_model_list(client, plain["id"], path)
+
+    rows = {c["id"]: c for c in (await client.get("/api/llm/connections")).json()}
+    assert (rows[omniroute["id"]]["is_local"], rows[plain["id"]]["is_local"]) == (False, True)
+    added = await client.post(f"/api/llm/connections/{omniroute['id']}/models", json={"name": "auto/best-free"})
+    model = added.json()
+    chat_models = {m["id"]: m for m in (await client.get("/api/llm/models")).json()}
+    assert chat_models[model["id"]]["is_local"] is False
+
+
+async def call_model_list(client, connection_id: str, path: str) -> None:
+    method = client.post if path == "test" else client.get
+    assert (await method(f"/api/llm/connections/{connection_id}/{path}")).status_code == 200
+
+
 async def test_test_connection_reports_the_count_no_list_or_the_reason(client, provider):
     connection = await create(client)
     path = f"/api/llm/connections/{connection['id']}/test"

@@ -8,6 +8,7 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import anthropic
@@ -380,17 +381,28 @@ def build_llm(connection, name: str, transport=None) -> LLM:
     return OpenAICompatibleLLM(name, connection.base_url, connection.api_key, connection.label, transport=transport)
 
 
-async def list_models(connection, transport=None, http_client=None) -> list[str] | None:
-    """The provider's model names, sorted; None when the endpoint has no list (404), so names are typed by hand.
+@dataclass(frozen=True)
+class ModelList:
+    """`names` sorted, or None when the endpoint has no list (404), so names are typed by hand. `cloud_proxy`: the
+    server answered as a router that forwards to cloud providers, whatever its address."""
 
-    Raises LLMUnavailable (key rejected, can't reach) or LLMError. `http_client` is Anthropic's httpx2 client in tests.
-    """
+    names: list[str] | None
+    cloud_proxy: bool = False
+
+
+# ponytail: OmniRoute only (owner, 2026-10-16); another router's own header goes here when one shows up.
+CLOUD_PROXY_HEADERS = ("x-omniroute-route-class",)
+
+
+async def list_models(connection, transport=None, http_client=None) -> ModelList:
+    """The provider's models. Raises LLMUnavailable (key rejected, can't reach) or LLMError. `http_client` is
+    Anthropic's httpx2 client in tests."""
     if settings.llm_provider == "fake":
         if connection.api_key == FAKE_BAD_KEY:
             raise LLMUnavailable(f"Key rejected by {connection.label}")
-        return list(FAKE_MODELS)
+        return ModelList(list(FAKE_MODELS))
     if connection.kind == "anthropic":
-        return await _anthropic_models(connection, http_client)
+        return ModelList(await _anthropic_models(connection, http_client))
     path, field, key = ("/api/tags", "models", "name") if connection.kind == "ollama" else ("/models", "data", "id")
     client = httpx.AsyncClient(
         base_url=connection.base_url, headers=_bearer(connection.api_key), timeout=LIST_TIMEOUT, transport=transport
@@ -402,12 +414,13 @@ async def list_models(connection, transport=None, http_client=None) -> list[str]
         raise LLMUnavailable(f"Can't reach {host_of(connection.base_url)}") from exc
     except httpx.HTTPError as exc:
         raise LLMError(f"{connection.label} request failed: {masked(str(exc), connection.api_key)}") from exc
+    cloud_proxy = any(header in response.headers for header in CLOUD_PROXY_HEADERS)
     if response.status_code == 404:
-        return None
+        return ModelList(None, cloud_proxy)
     if response.is_error:
         raise http_error(connection.label, response.status_code, response.text, connection.api_key)
     try:
-        return sorted(entry[key] for entry in response.json()[field])
+        return ModelList(sorted(entry[key] for entry in response.json()[field]), cloud_proxy)
     except (ValueError, KeyError, TypeError) as exc:
         raise LLMError(f"{connection.label} sent a model list PaperLab can't read") from exc
 

@@ -401,8 +401,8 @@ def test_build_llm_in_fake_mode_reports_the_fake_and_the_connection(monkeypatch)
     assert (adapter.model, adapter.connection_name) == ("fake:claude-sonnet-5", "Claude")
 
 
-def listing(handler, row: Row):
-    return llm.list_models(row, transport=httpx.MockTransport(handler))
+async def listing(handler, row: Row):
+    return (await llm.list_models(row, transport=httpx.MockTransport(handler))).names
 
 
 async def test_list_models_reads_ollama_tags_and_openai_compatible_models():
@@ -460,9 +460,9 @@ async def test_list_models_httpx_error_masks_the_key():
     assert KEY not in str(raised.value)
 
 
-def anthropic_listing(handler):
+async def anthropic_listing(handler):
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    return llm.list_models(Row("anthropic", "Claude", None, KEY), http_client=client)
+    return (await llm.list_models(Row("anthropic", "Claude", None, KEY), http_client=client)).names
 
 
 async def test_list_models_for_anthropic():
@@ -502,7 +502,7 @@ async def test_anthropic_closes_its_client_after_a_stream_and_after_a_model_list
 async def test_list_models_in_fake_mode_is_a_fixed_list_and_rejects_bad_key(monkeypatch):
     monkeypatch.setattr(settings, "llm_provider", "fake")
 
-    assert await llm.list_models(Row("ollama", "Ollama", OLLAMA_URL)) == llm.FAKE_MODELS
+    assert (await llm.list_models(Row("ollama", "Ollama", OLLAMA_URL))).names == llm.FAKE_MODELS
     with pytest.raises(LLMUnavailable, match="^Key rejected by Groq$"):
         await llm.list_models(Row("openai_compatible", "Groq", COMPATIBLE_URL, "bad-key"))
 

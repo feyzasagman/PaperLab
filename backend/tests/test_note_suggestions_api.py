@@ -51,6 +51,17 @@ async def test_suggest_notes_does_not_appear_in_the_papers_chat_history(client, 
     assert history.json() == []
 
 
+async def test_a_model_failure_is_a_502_with_the_reason_not_a_bare_500(client, session, fake_llm):
+    """Found live on 2026-10-16: a broken upstream behind an OpenAI-compatible proxy raised LLMError, which reached
+    the reader as "Internal Server Error". The provider's message is meant to be shown (providers/base.py)."""
+    paper = await make_paper(session, ["one", "two", "three"])
+    fake_llm.fail_after = 0
+
+    resp = await client.post(f"/api/papers/{paper.id}/notes/suggest")
+
+    assert (resp.status_code, resp.json()) == (502, {"detail": "fake model failed mid-answer"})
+
+
 async def test_suggest_notes_for_a_paper_not_ready_is_409(client, session, fake_llm):
     paper = await make_paper(session, ["one"], status="chunking")
 
