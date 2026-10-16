@@ -1349,3 +1349,24 @@ async def test_search_batch_skips_a_paused_source(session, fake_providers, monke
     assert asked == []  # a paused source is not fetched
     assert result.raw_counts == {} and result.errors == {}
     assert cursor.cursor_json == {"value": 200, "paused": True} and not cursor.exhausted
+
+
+@pytest.mark.asyncio
+async def test_continue_refuses_while_the_old_job_still_holds_the_run_lock(session, database_url):
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.core.errors import Conflict
+    from app.core.workspace_search import continue_run
+    from app.workers.workspace_search import _TRY_LOCK, _lock_key
+    workspace, run = await _stopped_run_with_cursors(session, {"arxiv": ({"value": 5}, False)})
+
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    async with engine.connect() as other:  # the stopping job, mid-batch, in its own transaction
+        assert await other.scalar(_TRY_LOCK, {"key": _lock_key(run.id)})
+        with pytest.raises(Conflict, match="search_run_still_stopping"):
+            await continue_run(session, workspace.id, run.id)
+    await engine.dispose()
+    reloaded = await session.get(WorkspaceSearchRun, run.id)
+    await session.refresh(reloaded)
+    assert reloaded.status == "stopped" and "passes" not in reloaded.stats_json

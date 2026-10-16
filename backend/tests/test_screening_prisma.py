@@ -71,8 +71,25 @@ async def test_prisma_notes_paused_sources_so_identified_is_not_mistaken_for_com
     await session.flush()
     body = await _prisma(client, workspace)
     assert len(body["notes"]) == 1
-    assert "paused at 200 results per source for 2 sources; more can be fetched" in body["notes"][0]
+    assert "1 search run(s) paused at 200 results per source per pass" in body["notes"][0]
+    assert "arxiv, crossref" in body["notes"][0] and "Continue" in body["notes"][0]
     assert "partial" not in body["notes"][0]  # not the time-limit note
     run.stats_json = {}  # after Continue finishes the sources, the note goes away
     await session.flush()
     assert (await _prisma(client, workspace))["notes"] == []
+
+
+async def test_prisma_combines_paused_runs_into_one_note(client, session):  # M62
+    workspace, hits = await make_pool(session, [("x", None)])
+    first = await session.get(WorkspaceSearchRun, hits[0].run_id)
+    first.stats_json = {"paused_sources": ["arxiv"]}
+    for sources in (["arxiv", "crossref"], ["crossref"]):
+        session.add(WorkspaceSearchRun(
+            workspace_id=workspace.id, query_text="q", filters_json={}, query_overrides_json={},
+            sources_json=["arxiv"], status="exhausted", started_at=first.started_at,
+            stats_json={"paused_sources": sources}))
+    await session.flush()
+    notes = (await _prisma(client, workspace))["notes"]
+    assert len(notes) == 1
+    assert "3 search run(s)" in notes[0] and "arxiv, crossref" in notes[0]
+    assert "200 results per source per pass" in notes[0] and "Continue" in notes[0]

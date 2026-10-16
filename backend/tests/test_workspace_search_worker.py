@@ -770,3 +770,25 @@ async def test_cut_short_flags_describe_the_latest_pass_only(session, worker, mo
     assert "cut_short" not in reloaded.stats_json and "unfinished_sources" not in reloaded.stats_json
     assert reloaded.stats_json["paused_sources"] == ["arxiv"]
     assert reloaded.stats_json["per_source_raw_count"] == {"arxiv": 300}  # totals stay cumulative
+
+
+async def test_a_job_whose_run_started_a_new_pass_returns_without_writing(session, worker, monkeypatch):
+    """The old job sleeps between batches; a Stop then Continue lands in that gap. When it wakes it sees "running"
+    again, but the pass is no longer its own, so it must leave the run alone."""
+    asked = _endless_titled_pages(monkeypatch)
+    _, run = await _started_run(session)
+    real_sleep = worker_module.asyncio.sleep
+
+    async def continue_during_sleep(*_args, **_kwargs):
+        await session.execute(update(WorkspaceSearchRun).where(WorkspaceSearchRun.id == run.id).values(
+            stats_json={**run.stats_json, "passes": 2, "pass_raw_count": {}}))
+
+    monkeypatch.setattr(worker_module.asyncio, "sleep", continue_during_sleep)
+    await worker_module.run_workspace_search(worker, str(run.id))
+    monkeypatch.setattr(worker_module.asyncio, "sleep", real_sleep)
+
+    reloaded = await session.get(WorkspaceSearchRun, run.id)
+    await session.refresh(reloaded)
+    assert len(asked) == 1  # only the first batch; the second iteration noticed the new pass
+    assert reloaded.stats_json["passes"] == 2 and reloaded.stats_json["pass_raw_count"] == {}
+    assert reloaded.status == "running"

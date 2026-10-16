@@ -25,7 +25,8 @@ PARTIAL_NOTE = (
     "finished (unfinished: {sources})."
 )
 PAUSED_NOTE = (
-    "{query}: paused at {limit} results per source for {count} {noun}; more can be fetched."
+    "{count} search run(s) paused at {limit} results per source per pass before these sources finished: "
+    "{sources}; more can be fetched with Continue."
 )
 FAILED_NOTE = "{sources} did not answer; identified excludes {them}."
 SUGGESTION_NOTE = (
@@ -145,12 +146,11 @@ async def prisma_export(session: AsyncSession, workspace_id: uuid.UUID, run_id: 
     cut = [r for r in counted_runs if r.stats_json.get("cut_short")]
     unfinished = sorted({src for r in cut for src in r.stats_json.get("unfinished_sources", [])})
     notes = [PARTIAL_NOTE.format(count=len(cut), sources=", ".join(unfinished) or "unknown")] if cut else []
-    for r in counted_runs:
-        paused = r.stats_json.get("paused_sources", [])
-        if paused:
-            notes.append(PAUSED_NOTE.format(
-                query=r.query_text, limit=PER_SOURCE_PASS_LIMIT, count=len(paused),
-                noun="source" if len(paused) == 1 else "sources"))
+    paused_runs = [r for r in counted_runs if r.stats_json.get("paused_sources")]
+    if paused_runs:
+        paused = sorted({src for r in paused_runs for src in r.stats_json["paused_sources"]})
+        notes.append(PAUSED_NOTE.format(
+            count=len(paused_runs), limit=PER_SOURCE_PASS_LIMIT, sources=", ".join(paused)))
     failed = sorted({src for r in counted_runs for src in r.stats_json.get("failed_sources", [])})
     if failed:
         notes.append(FAILED_NOTE.format(

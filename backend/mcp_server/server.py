@@ -293,8 +293,9 @@ async def stop_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
 @mcp.tool()
 @recoverable
 async def continue_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
-    """Use to fetch the next results of a search run that stopped, was cut short or paused at 200 per source; hits it
-    already found are never added twice. Refused with nothing_left_to_fetch when every source is finished."""
+    """Use to fetch the next results of a search run that stopped, was cut short or paused at 200 results per source per
+    pass; hits it already found are never added twice. Refused with nothing_left_to_fetch (every source is finished),
+    search_run_already_running or search_run_still_stopping (the last pass is still winding down; retry shortly)."""
     async with sessions() as session:
         return await pipeline.continue_search_run(session, run_id)
 

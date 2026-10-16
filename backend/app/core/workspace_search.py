@@ -367,6 +367,12 @@ async def continue_run(session: AsyncSession, workspace_id, run_id) -> Workspace
     run = await get_run(session, run_id, workspace_id)
     if run.status == "running":
         raise Conflict("search_run_already_running")
+    from app.workers.workspace_search import _try_lock  # late: the worker imports this module
+
+    # A stopped job still mid-batch holds this lock until its commit; starting a pass now would race it.
+    # Held only until the commit below (or the caller's rollback), so it never outlives this call.
+    if not await _try_lock(session, run.id):
+        raise Conflict("search_run_still_stopping")
     live = (await session.scalars(
         select(WorkspaceSearchCursor).where(
             WorkspaceSearchCursor.run_id == run.id, WorkspaceSearchCursor.exhausted.is_(False))

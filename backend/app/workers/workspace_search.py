@@ -115,6 +115,7 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
             run = await get_run(session, rid)
             if run.status != "running":
                 return  # already stopped before this job ran — nothing to do
+            my_pass = run.stats_json.get("passes", 1)
 
             sources = await paper_sources.get(session)
             transport = ctx.get("transport")
@@ -129,8 +130,8 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
                     if iteration > 0:
                         await asyncio.sleep(BATCH_PACING_SECONDS)
                     await session.refresh(run)
-                    if run.status != "running":
-                        return
+                    if run.status != "running" or run.stats_json.get("passes", 1) != my_pass:
+                        return  # stopped, or a Continue started a newer pass that a newer job owns
                     if _now() >= deadline:
                         break  # wall-clock backstop — falls through to the shared terminal-state write below
                     if not await _try_lock(session, rid):
