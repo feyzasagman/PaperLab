@@ -403,7 +403,7 @@ Systematic search and screening:
 - `stop_search_run`: stops a search run that is still going;
 - `list_hits`: a run's results, filtered by your decision, with any AI suggestion and each hit's source type, peer-review status, published DOI and venue;
 - `review_hits`: records your screening decisions on hits, with a reason when you exclude, and optional `tags` that land on the paper when it is imported;
-- `run_prescreen`: has your default model suggest include, exclude or unsure for undecided hits (a remote model is refused, naming its host, since your abstracts would leave your machine; a workspace-wide run over 500 hits asks for `confirm`, which never lifts the remote refusal: pick a local default model or start it from the web app);
+- `run_prescreen`: has your default model suggest include, exclude or unsure for undecided hits (a remote default model is refused, naming its host, unless you agreed and the assistant passes `allow_remote`, since your abstracts would leave your machine; a workspace-wide run over 500 hits asks for `confirm`; `run_ids` queues several search runs as one job);
 - `enrich_hits`: fills peer-review, published DOI and venue, and missing abstracts, for hits found before those existed, from Semantic Scholar in the background (call it again to see how many are left); it also clears the "no abstract" suggestion of undecided hits that now have one, so `run_prescreen` picks them up again;
 - `stop_prescreen`: stops AI pre-screening that is running; the suggestions made so far stay;
 - `get_screening_suggestions`: undecided hits with a suggestion, best score first, with the same triage fields;

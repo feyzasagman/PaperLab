@@ -4,6 +4,7 @@ the suggestion columns and the workspace's job state, never stage1_status."""
 import logging
 import time
 import uuid
+from collections.abc import Collection
 from datetime import datetime, timezone
 
 from sqlalchemy import select, text
@@ -47,7 +48,7 @@ async def _suggest_one(llm, workspace: Workspace, hit: WorkspaceSearchHit, ref: 
         return SuggestionV2("unsure", None, "model error", flags=["model_error"])
 
 
-async def _auto_import(session, workspace: Workspace, run_id: uuid.UUID | None) -> None:
+async def _auto_import(session, workspace: Workspace, run_ids: Collection[uuid.UUID] | None) -> None:
     """Imports the free-PDF hits rated at or above the owner's bar, and queues their ingest (D232). Never decides."""
     query = select(WorkspaceSearchHit.id).where(
         WorkspaceSearchHit.workspace_id == workspace.id,
@@ -56,8 +57,8 @@ async def _auto_import(session, workspace: Workspace, run_id: uuid.UUID | None) 
         WorkspaceSearchHit.stage1_status.is_(None),
         WorkspaceSearchHit.acquisition_status == "not_attempted",
     )
-    if run_id is not None:
-        query = query.where(WorkspaceSearchHit.run_id == run_id)
+    if run_ids is not None:
+        query = query.where(WorkspaceSearchHit.run_id.in_(run_ids))
     ids = list((await session.execute(query)).scalars())
     if not ids:
         return
@@ -67,7 +68,7 @@ async def _auto_import(session, workspace: Workspace, run_id: uuid.UUID | None) 
         await queue.enqueue("ingest_paper", str(paper_id))
 
 
-async def suggest_screening(ctx: dict, workspace_id: str) -> None:
+async def suggest_screening(ctx: dict, workspace_id: str, run_ids: list[str] | None = None) -> None:
     wid = uuid.UUID(workspace_id)
     # The advisory lock is session-level: Postgres ties it to one physical connection, not to our ORM `session`
     # object. But `session`'s own connection can rotate to a *different* pooled connection on every
@@ -97,10 +98,15 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                 label = f"{connection.label} · {model.name}"
                 pool = await load_pool(session, wid)
                 rows = {hit.id: (hit, ref) for hit, ref in pool.rows}
-                run_id = workspace.suggest_run_id
+                # A multi-run job names its runs; otherwise the single run (or none) the start recorded.
+                scope = (
+                    {uuid.UUID(r) for r in run_ids} if run_ids is not None
+                    else None if workspace.suggest_run_id is None else {workspace.suggest_run_id}
+                )
                 deadline = time.monotonic() + SUGGEST_JOB_TIMEOUT - SAFETY_MARGIN
                 hit_deadline = False
-                for hit_id in suggestion_queue(pool, run_id)[: workspace.suggest_total or None]:  # D265: start sets it to the cap
+                queue_ids = suggestion_queue(pool, run_ids=scope)[: workspace.suggest_total or None]  # D265: the cap
+                for hit_id in queue_ids:
                     await session.refresh(workspace)
                     if workspace.suggest_status != "running":
                         break
@@ -133,7 +139,7 @@ async def suggest_screening(ctx: dict, workspace_id: str) -> None:
                     workspace.suggest_status == "running" and time.monotonic() < deadline
                     and workspace.auto_import_min_relevance is not None
                 ):
-                    await _auto_import(session, workspace, run_id)
+                    await _auto_import(session, workspace, scope)
             except (LLMUnavailable, Conflict) as exc:
                 workspace.suggest_error = (
                     "Set up a chat model in Settings first" if isinstance(exc, Conflict) else str(exc)
