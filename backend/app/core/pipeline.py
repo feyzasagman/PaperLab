@@ -37,7 +37,7 @@ from app.core.source_registry import DISCOVERY_SOURCE_IDS
 from app.models import PaperStatus
 from app.providers.base import LLMError, LLMUnavailable
 from app.schemas.papers import PaperOut
-from app.schemas.workspace_search import HitOut, ScreeningStateOut, SearchRunOut
+from app.schemas.workspace_search import HitOut, ScreeningStateOut, SearchRunOut, SearchRunSummary
 
 workspace_id = workspaces.by_name
 
@@ -184,6 +184,13 @@ async def get_search_run(session: AsyncSession, run_id: uuid.UUID) -> SearchRunO
     return SearchRunOut.model_validate(await workspace_search.get_run(session, run_id))
 
 
+async def list_search_runs(session: AsyncSession, workspace: str, limit: int = 20) -> list[SearchRunSummary]:
+    runs = await workspace_search.list_runs(
+        session, await workspace_id(session, workspace), max(1, min(limit, MAX_HITS))
+    )
+    return [SearchRunSummary.from_run(run, count) for run, count in runs]
+
+
 async def stop_search_run(session: AsyncSession, run_id: uuid.UUID) -> SearchRunOut:
     return SearchRunOut.model_validate(await workspace_search.stop_run(session, run_id))
 
@@ -235,7 +242,7 @@ async def _refuse_remote(session: AsyncSession, allow_remote: bool) -> None:
     """There is no confirm dialog over MCP: a remote default model runs only when the caller says the owner agreed."""
     model = await screening._default_model(session)
     if model is not None and not model[1] and not allow_remote:
-        raise Conflict("remote_model_needs_confirm", model=model[0])
+        raise Conflict("remote_model_needs_confirm", model=model[0], host=model[2])
 
 
 async def get_screening_criteria(session: AsyncSession, workspace: str) -> ScreeningStateOut:
@@ -258,14 +265,32 @@ async def set_screening_criteria(
     return ScreeningStateOut.model_validate(state)
 
 
-async def run_prescreen(session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None) -> ScreeningStateOut:
-    """Starts AI pre-screening. There is no confirm dialog over MCP, so a remote default model is refused."""
+PRESCREEN_CONFIRM_ABOVE = 500  # a workspace-wide run once queued 13,720 hits and ran for 4 hours
+
+
+async def run_prescreen(
+    session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None, confirm: bool = False
+) -> ScreeningStateOut:
+    """Starts AI pre-screening. There is no confirm dialog over MCP, so a remote default model is refused, and so
+    is a workspace-wide queue over PRESCREEN_CONFIRM_ABOVE hits unless confirm is set."""
     ws = await workspace_id(session, workspace)
     if run_id is not None:
         await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
     await _refuse_remote(session, False)
+    if run_id is None and not confirm:
+        # ponytail: loads the pool twice on a workspace-wide call (here and in start_suggestions); pass the count
+        # through if it shows up in timings.
+        queued = len(screening.suggestion_queue(await screening.load_pool(session, ws)))
+        if queued > PRESCREEN_CONFIRM_ABOVE:
+            raise Conflict("prescreen_needs_confirm", queued=queued, limit=PRESCREEN_CONFIRM_ABOVE)
     state = await screening.start_suggestions(session, ws, False, run_id)
     await queue.enqueue("suggest_screening", str(ws))
+    return ScreeningStateOut.model_validate(state)
+
+
+async def stop_prescreen(session: AsyncSession, workspace: str) -> ScreeningStateOut:
+    """Stops pre-screening; idle when nothing runs, and a second call on a stuck 'stopping' resets it."""
+    state = await screening.stop_suggestions(session, await workspace_id(session, workspace))
     return ScreeningStateOut.model_validate(state)
 
 

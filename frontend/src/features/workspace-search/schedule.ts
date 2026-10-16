@@ -34,3 +34,12 @@ export const ERRORS: Record<string, string> = {
 
 /** A server error code as a readable sentence (unknown codes pass through). */
 export const errorText = (code: string | undefined) => (code ? (ERRORS[code] ?? code) : null)
+
+/** "5 minutes ago", "yesterday", "in 2 hours". */
+export function relative(iso: string): string {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+  if (Math.abs(minutes) < 60) return rtf.format(-minutes, 'minute')
+  if (Math.abs(minutes) < 1440) return rtf.format(-Math.round(minutes / 60), 'hour')
+  return rtf.format(-Math.round(minutes / 1440), 'day')
+}

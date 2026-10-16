@@ -43,6 +43,7 @@ import {
   type SavedSearchCreate,
   type SavedSearchUpdate,
   type SearchRun,
+  type SearchRunSummary,
   type SearchRunCreate,
   type SearchSourceIn,
   type SnowballRequest,
@@ -503,6 +504,15 @@ export const useSearchRun = (workspaceId: string, runId: string | null) =>
     queryFn: () => api.getSearchRun(workspaceId, runId!),
     enabled: runId !== null,
     refetchInterval: (query) => searchRunPollInterval(query.state.data),
+  })
+
+/** The workspace's recent runs, newest first; polls only while one is still running. */
+export const useSearchRuns = (workspaceId: string) =>
+  useQuery({
+    queryKey: keys.searchRuns(workspaceId),
+    queryFn: () => api.listSearchRuns(workspaceId),
+    refetchInterval: (query) =>
+      query.state.data?.some((r: SearchRunSummary) => r.status === 'running') ? PAPERS_POLL_MS : false,
   })
 
 /** A run's hits, keyset-paginated; `stage1Status`/`acquisitionStatus` each filter to one status ('all' when omitted). */

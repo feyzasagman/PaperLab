@@ -8,17 +8,9 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { SavedSearchDialog } from './SavedSearchDialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { describeSchedule, describeYears, errorText } from './schedule'
+import { describeSchedule, describeYears, errorText, relative } from './schedule'
 
 const localTime = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-
-function relative(iso: string): string {
-  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
-  if (Math.abs(minutes) < 60) return rtf.format(-minutes, 'minute')
-  if (Math.abs(minutes) < 1440) return rtf.format(-Math.round(minutes / 60), 'hour')
-  return rtf.format(-Math.round(minutes / 1440), 'day')
-}
 
 type Editing = SavedSearch | 'new' | null
 

@@ -355,7 +355,7 @@ async def test_pausing_an_unknown_saved_search_says_so(session):
 
 from screening_pool import make_pool  # noqa: E402
 
-from app.core import screening  # noqa: E402
+from app.core import pipeline, screening  # noqa: E402
 
 
 def _model(monkeypatch, local: bool):
@@ -380,12 +380,34 @@ async def test_run_prescreen_starts_and_enqueues_with_a_local_model(session, job
     assert jobs.jobs == [("suggest_screening", str(workspace.id))]
 
 
+async def test_stop_prescreen_stops_a_running_prescreen(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    workspace, _ = await _pool(session)
+    result(await call("run_prescreen", workspace=workspace.name))
+    assert result(await call("stop_prescreen", workspace=workspace.name))["suggest_status"] == "stopping"
+
+
+async def test_stop_prescreen_while_idle_is_a_no_op(session):
+    workspace, _ = await _pool(session)
+    assert result(await call("stop_prescreen", workspace=workspace.name))["suggest_status"] == "idle"
+
+
 async def test_run_prescreen_with_a_remote_model_asks_and_starts_nothing(session, jobs, monkeypatch):
     _model(monkeypatch, False)
     workspace, _ = await _pool(session)
     response = await call("run_prescreen", workspace=workspace.name)
     assert response.is_error and response.structured_content["error"] == "remote_model_needs_confirm"
     assert response.structured_content["model"] == "Test · model"
+    assert response.structured_content["host"] == "api.example.com"
+    assert jobs.jobs == [] and workspace.suggest_status == "idle"
+
+
+async def test_run_prescreen_confirm_never_lifts_the_remote_refusal(session, jobs, monkeypatch):
+    _model(monkeypatch, False)
+    workspace, _ = await _pool(session)
+    response = await call("run_prescreen", workspace=workspace.name, confirm=True)
+    assert response.is_error and response.structured_content["error"] == "remote_model_needs_confirm"
+    assert response.structured_content["host"] == "api.example.com"
     assert jobs.jobs == [] and workspace.suggest_status == "idle"
 
 
@@ -525,3 +547,55 @@ async def test_a_field_over_4000_characters_is_refused(session):
 async def test_an_unknown_workspace_is_unknown_workspace_for_criteria():
     response = await call("get_screening_criteria", workspace="No such workspace")
     assert response.is_error and response.structured_content["error"] == "unknown_workspace"
+
+
+async def test_list_search_runs_newest_first_with_hit_counts_and_only_this_workspace(session, jobs):
+    await new_workspace(session, "Many runs")
+    await new_workspace(session, "Other runs")
+    first = result(await call("start_search_run", workspace=f"Many runs {RUN}", query="one", sources=["arxiv"]))
+    second = result(await call("start_search_run", workspace=f"Many runs {RUN}", query="two", sources=["arxiv"]))
+    result(await call("start_search_run", workspace=f"Other runs {RUN}", query="foreign", sources=["arxiv"]))
+    runs = result(await call("list_search_runs", workspace=f"Many runs {RUN}"))
+    assert [r["id"] for r in runs] == [second["id"], first["id"]]
+    assert runs[0]["query_text"] == "two" and runs[0]["hit_count"] == 0 and runs[0]["sources_json"] == ["arxiv"]
+    assert "stats_json" not in runs[0]
+
+
+async def test_list_search_runs_of_an_empty_workspace_is_empty(session):
+    await new_workspace(session, "No runs")
+    assert result(await call("list_search_runs", workspace=f"No runs {RUN}")) == []
+
+
+async def test_list_search_runs_clamps_the_limit(session, jobs):
+    await new_workspace(session, "Clamp runs")
+    ws = f"Clamp runs {RUN}"
+    for query in ("one", "two"):
+        result(await call("start_search_run", workspace=ws, query=query, sources=["arxiv"]))
+    assert len(result(await call("list_search_runs", workspace=ws, limit=-1))) == 1
+    assert len(result(await call("list_search_runs", workspace=ws, limit=1))) == 1
+
+
+async def test_run_prescreen_without_a_run_refuses_a_big_queue_unless_confirmed(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    monkeypatch.setattr(pipeline, "PRESCREEN_CONFIRM_ABOVE", 2)
+    workspace, _ = await _pool(session)  # 3 hits queued
+    refused = await call("run_prescreen", workspace=workspace.name)
+    assert refused.is_error and refused.structured_content["error"] == "prescreen_needs_confirm"
+    assert (refused.structured_content["queued"], refused.structured_content["limit"]) == (3, 2)
+    assert jobs.jobs == [] and workspace.suggest_status == "idle"
+    assert result(await call("run_prescreen", workspace=workspace.name, confirm=True))["suggest_status"] == "running"
+
+
+async def test_run_prescreen_at_the_limit_starts_without_confirm(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    monkeypatch.setattr(pipeline, "PRESCREEN_CONFIRM_ABOVE", 3)
+    workspace, _ = await _pool(session)
+    assert result(await call("run_prescreen", workspace=workspace.name))["suggest_status"] == "running"
+
+
+async def test_run_prescreen_for_one_run_never_needs_confirm(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    monkeypatch.setattr(pipeline, "PRESCREEN_CONFIRM_ABOVE", 0)
+    workspace, (hit, *_) = await _pool(session)
+    state = result(await call("run_prescreen", workspace=workspace.name, run_id=str(hit.run_id)))
+    assert state["suggest_status"] == "running"

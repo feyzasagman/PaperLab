@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import httpx
-from sqlalchemy import delete, or_, select, tuple_, update
+from sqlalchemy import delete, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -372,6 +372,21 @@ async def get_run(session: AsyncSession, run_id, workspace_id=None) -> Workspace
     if run is None or (workspace_id is not None and run.workspace_id != workspace_id):
         raise NotFound(f"search run {run_id} not found")
     return run
+
+
+async def list_runs(
+    session: AsyncSession, workspace_id: uuid.UUID, limit: int = 20
+) -> list[tuple[WorkspaceSearchRun, int]]:
+    """A workspace's runs, newest first, each with the number of hits it added."""
+    rows = await session.execute(
+        select(WorkspaceSearchRun, func.count(WorkspaceSearchHit.id))
+        .outerjoin(WorkspaceSearchHit, WorkspaceSearchHit.run_id == WorkspaceSearchRun.id)
+        .where(WorkspaceSearchRun.workspace_id == workspace_id)
+        .group_by(WorkspaceSearchRun.id)
+        .order_by(WorkspaceSearchRun.started_at.desc())
+        .limit(limit)
+    )
+    return [(run, count) for run, count in rows.all()]
 
 
 # Own constants, deliberately not references.py's REFS_CAP/CITING_CAP — the two features stay decoupled even

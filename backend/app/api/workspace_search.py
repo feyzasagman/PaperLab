@@ -27,6 +27,7 @@ from app.schemas.workspace_search import (
     ScreeningStateOut,
     SearchRunCreate,
     SearchRunOut,
+    SearchRunSummary,
     SnowballOut,
     SnowballRequest,
     Stage1Status,
@@ -71,6 +72,16 @@ async def restart_run(
 @router.post("/runs/{run_id}/stop")
 async def stop_run(workspace_id: uuid.UUID, run_id: uuid.UUID, session: SessionDep) -> SearchRunOut:
     return await workspace_search.stop_run(session, run_id, workspace_id=workspace_id)
+
+
+@router.get("/runs")
+async def list_runs(
+    workspace_id: uuid.UUID, session: SessionDep, limit: Annotated[int, Query(ge=1, le=100)] = 20
+) -> list[SearchRunSummary]:
+    return [
+        SearchRunSummary.from_run(run, count)
+        for run, count in await workspace_search.list_runs(session, workspace_id, limit)
+    ]
 
 
 @router.get("/runs/{run_id}")

@@ -31,14 +31,14 @@ mcp = MCPServer(
         "by DOI, arXiv ID or PDF link with add_paper (free copies only), file them with add_paper_to_workspace and "
         "take them out with remove_paper_from_workspace. "
         "Systematic search: start_search_run, then get_search_run until it finishes "
-        "(stop_search_run ends one early); read results with list_hits, "
+        "(stop_search_run ends one early; list_search_runs shows a workspace's runs); read results with list_hits, "
         "record the owner's screening with review_hits, pull papers in with import_hit, widen with snowball. "
         "After full-text reading, record set_eligibility; get_prisma gives the flow counts. "
         "Saved searches: create_saved_search runs a search on a schedule, list_saved_searches shows them and "
         "set_saved_search_enabled pauses or resumes one. "
         "Notes: list_notes reads them, create_note saves one on a passage it quotes exactly. "
         "AI pre-screening: get_screening_criteria reads the question and criteria, set_screening_criteria saves them "
-        "(ask the owner first; it clears the suggestions), run_prescreen starts it, "
+        "(ask the owner first; it clears the suggestions), run_prescreen starts it, stop_prescreen stops it, "
         "get_screening_suggestions reads the results and accept_suggestions "
         "accepts some. Claims: verify_claim and verify_claims check a claim against the papers it cites, with a "
         "quote as evidence. Evidence cards: generate_evidence_card starts one (about a minute per paper), "
@@ -196,6 +196,16 @@ async def get_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
         return await pipeline.get_search_run(session, run_id)
 
 
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def list_search_runs(workspace: str, limit: int = 20) -> list[pipeline.SearchRunSummary]:
+    """Use to see a workspace's search runs, newest first: status, query, sources, per-source result counts and
+    how many hits each run added. Pass a run's id to get_search_run for full stats or to list_hits/run_prescreen
+    to scope them."""
+    async with sessions() as session:
+        return await pipeline.list_search_runs(session, workspace, limit)
+
+
 @mcp.tool()
 @recoverable
 async def stop_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
@@ -257,12 +267,26 @@ async def set_screening_criteria(
 
 @mcp.tool()
 @recoverable
-async def run_prescreen(workspace: str, run_id: uuid.UUID | None = None) -> pipeline.ScreeningStateOut:
-    """Use to have the default model suggest include, exclude or unsure for each undecided hit (all hits, or one run).
-    It runs in the background; a remote model is refused with remote_model_needs_confirm, since its provider would
-    receive the abstracts. Suggestions are never decisions."""
+async def run_prescreen(
+    workspace: str, run_id: uuid.UUID | None = None, confirm: bool = False
+) -> pipeline.ScreeningStateOut:
+    """Use to have the default model suggest include, exclude or unsure for each undecided hit. It runs in the
+    background. Without run_id it covers every undecided hit in the workspace; above 500 queued hits it is refused
+    with prescreen_needs_confirm and the count, so ask the owner, then call again with confirm=true. A remote model
+    is refused with remote_model_needs_confirm, naming the model and the host that would receive the abstracts;
+    confirm=true never lifts that, so ask the owner to pick a local default model or start pre-screening from the
+    web app. Suggestions are never decisions."""
     async with sessions() as session:
-        return await pipeline.run_prescreen(session, workspace, run_id)
+        return await pipeline.run_prescreen(session, workspace, run_id, confirm)
+
+
+@mcp.tool()
+@recoverable
+async def stop_prescreen(workspace: str) -> pipeline.ScreeningStateOut:
+    """Use to stop AI pre-screening that is running in a workspace. Suggestions made so far stay; a second call on
+    one that is stuck stopping resets it."""
+    async with sessions() as session:
+        return await pipeline.stop_prescreen(session, workspace)
 
 
 @mcp.tool()

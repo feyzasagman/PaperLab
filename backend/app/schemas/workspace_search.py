@@ -43,6 +43,30 @@ class SearchRunOut(BaseModel):
     stats_json: dict
 
 
+class SearchRunSummary(BaseModel):
+    """A run without its full stats_json, so a list of them stays small."""
+
+    id: uuid.UUID
+    query_text: str
+    status: str
+    started_at: datetime
+    stopped_at: datetime | None
+    sources_json: list[str]
+    per_source_raw_count: dict[str, int]
+    failed_sources: list[str]
+    hit_count: int
+
+    @classmethod
+    def from_run(cls, run, hit_count: int) -> "SearchRunSummary":
+        stats = run.stats_json or {}
+        return cls(
+            id=run.id, query_text=run.query_text, status=run.status, started_at=run.started_at,
+            stopped_at=run.stopped_at, sources_json=run.sources_json,
+            per_source_raw_count=stats.get("per_source_raw_count", {}),
+            failed_sources=stats.get("failed_sources", []), hit_count=hit_count,
+        )
+
+
 class HitOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

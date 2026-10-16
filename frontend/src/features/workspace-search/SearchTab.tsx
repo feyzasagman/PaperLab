@@ -6,6 +6,7 @@ import { SOURCE_NAMES } from '@/features/discovery/candidateMeta'
 import { SearchControls } from './SearchControls'
 import { HitTable } from './HitTable'
 import { SavedSearches } from './SavedSearches'
+import { RunsList } from './RunsList'
 import { ScreeningAssist } from './ScreeningAssist'
 
 /** The sources that failed on a run, each with its error text when the server gave a string; tolerant of bad shapes. */
@@ -49,6 +50,7 @@ export function SearchTab({
         onStop={() => runId && stopRun.mutate(runId)}
       />
       <SavedSearches workspaceId={workspaceId} currentQuery={query} onRunStarted={onRunIdChange} />
+      <RunsList workspaceId={workspaceId} runId={runId} onSelect={onRunIdChange} />
       <ScreeningAssist workspaceId={workspaceId} />
       {run.data && (
         <>
