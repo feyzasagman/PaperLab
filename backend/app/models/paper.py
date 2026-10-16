@@ -42,6 +42,9 @@ class Paper(Base):
     source_type: Mapped[str | None] = mapped_column(Text)
     peer_reviewed: Mapped[str] = mapped_column(Text, server_default=text("'unknown'"))
     published_doi: Mapped[str | None] = mapped_column(Text)
+    published_venue: Mapped[str | None] = mapped_column(Text)
+    # When enrich_papers last asked Semantic Scholar about this paper, whatever it answered: asked once only.
+    published_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_retracted: Mapped[bool] = mapped_column(server_default=text("false"))
     oa_status: Mapped[str | None] = mapped_column(Text)
     oa_url: Mapped[str | None] = mapped_column(Text)

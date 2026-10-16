@@ -1,0 +1,174 @@
+"""M61 enrich_papers: S2 batch answers give library papers their published version. Offline (MockTransport)."""
+
+import uuid
+from contextlib import asynccontextmanager
+
+import httpx
+import pytest
+from mcp_fixtures import *  # noqa: F403
+
+from app.core import hit_enrichment, paper_enrichment, workspaces
+from app.models.paper import Paper
+from app.providers import semantic_scholar
+from app.workers.paper_enrichment import enrich_papers as worker_enrich_papers
+from app.workers.settings import WorkerSettings
+
+pytestmark = pytest.mark.anyio
+
+EMNLP = {
+    "externalIds": {"DOI": "10.18653/V1/2023.EMNLP-MAIN.1", "ArXiv": "2301.00001"},
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "journal": {"name": "Proceedings of EMNLP"}, "publicationTypes": ["Conference"],
+}
+ICML = {
+    "externalIds": {"ArXiv": "2301.00002"}, "venue": "International Conference on Machine Learning",
+    "journal": {"name": "ArXiv"}, "publicationTypes": ["Conference"],
+}
+ARXIV_ONLY = {
+    "externalIds": {"ArXiv": "2301.00003"}, "venue": "arXiv.org", "journal": {"name": "ArXiv"},
+    "publicationTypes": ["JournalArticle"],
+}
+
+
+def uid() -> str:
+    return uuid.uuid4().hex[:10]
+
+
+async def library(session, *papers: Paper):
+    ws = await workspaces.create(session, f"Enrich papers {uid()}")
+    session.add_all(papers)
+    await session.flush()
+    for paper in papers:
+        await workspaces.add_paper(session, ws.id, paper.id)
+    return ws
+
+
+def paper(doi: str | None, **fields) -> Paper:
+    return Paper(title=f"P {uid()}", file_path="/nonexistent.pdf", page_count=5, doi=doi, **fields)
+
+
+def arxiv_paper(**fields) -> Paper:
+    # a unique arXiv id per paper (doi is unique); the S2 answers are positional, so the id never has to match
+    return paper(f"10.48550/arxiv.2301.{int(uid(), 16) % 10**6:06d}", **fields)
+
+
+def s2_client(handler):
+    return semantic_scholar.new_client(transport=httpx.MockTransport(handler), retry_429=False)
+
+
+async def run(session, ws, answers):
+    async with s2_client(lambda request: httpx.Response(200, json=answers)) as http:
+        return await paper_enrichment.enrich(session, http, ws.id)
+
+
+async def test_an_arxiv_copy_gets_its_published_version(session):
+    p = arxiv_paper()
+    ws = await library(session, p)
+    out = await run(session, ws, [EMNLP])
+    assert (out.looked_up, out.filled, out.not_found, out.remaining) == (1, 1, 0, 0)
+    assert p.published_doi == "10.18653/v1/2023.emnlp-main.1"
+    assert p.published_venue == "Proceedings of EMNLP"
+    assert p.peer_reviewed == "true" and p.published_checked_at is not None
+
+
+async def test_an_icml_paper_without_a_doi_gets_venue_and_peer_review(session):
+    p = arxiv_paper(peer_reviewed="false", source_type="preprint")
+    ws = await library(session, p)
+    await run(session, ws, [ICML])
+    assert p.published_venue == "International Conference on Machine Learning"
+    assert p.published_doi is None
+    assert p.peer_reviewed == "true"
+    assert p.source_type == "preprint"  # kept
+
+
+async def test_an_arxiv_only_answer_changes_nothing_but_stamps(session):
+    p = arxiv_paper()
+    ws = await library(session, p)
+    out = await run(session, ws, [ARXIV_ONLY])
+    assert out.filled == 0
+    assert (p.published_doi, p.published_venue, p.peer_reviewed) == (None, None, "unknown")
+    assert p.published_checked_at is not None
+
+
+async def test_manual_fields_are_never_overwritten(session):
+    p = arxiv_paper(peer_reviewed="false", manual_fields=["peer_reviewed"])
+    ws = await library(session, p)
+    await run(session, ws, [EMNLP])
+    assert p.peer_reviewed == "false"
+    assert p.published_doi == "10.18653/v1/2023.emnlp-main.1" and p.published_venue == "Proceedings of EMNLP"
+
+
+async def test_every_manual_field_is_kept(session):
+    p = arxiv_paper(
+        peer_reviewed="false", published_doi="10.1/mine", published_venue="Mine",
+        manual_fields=["peer_reviewed", "published_doi", "published_venue"],
+    )
+    ws = await library(session, p)
+    await run(session, ws, [EMNLP])
+    assert (p.peer_reviewed, p.published_doi, p.published_venue) == ("false", "10.1/mine", "Mine")
+
+
+async def test_the_papers_own_doi_is_not_its_published_doi(session):
+    p = paper(f"10.1234/own-{uid()}")
+    answer = {
+        "externalIds": {"DOI": p.doi.upper(), "ArXiv": "2301.00009"}, "journal": {"name": "Nature"},
+        "publicationTypes": ["JournalArticle"],
+    }
+    ws = await library(session, p)
+    await run(session, ws, [answer])
+    assert p.published_doi is None
+    assert p.published_checked_at is not None
+
+
+async def test_own_doi_venue_and_files_are_untouched(session):
+    p = arxiv_paper(venue="My venue")
+    doi = p.doi
+    ws = await library(session, p)
+    await run(session, ws, [EMNLP])
+    assert (p.doi, p.venue, p.file_path, p.status) == (doi, "My venue", "/nonexistent.pdf", "uploaded")
+
+
+async def test_a_second_run_finds_nothing(session):
+    p, none = arxiv_paper(), paper(None)
+    ws = await library(session, p, none)
+    await run(session, ws, [EMNLP])
+    assert none.published_checked_at is not None  # no S2 id: never asked, stamped
+    assert await paper_enrichment.papers_to_enrich(session, ws.id) == []
+
+
+async def test_rate_limit_stops_cleanly_and_leaves_the_rest(session, monkeypatch):
+    first, second = arxiv_paper(), arxiv_paper()
+    ws = await library(session, first, second)
+    monkeypatch.setattr(paper_enrichment, "CHUNK", 1)
+
+    async def no_sleep(_):
+        pass
+
+    monkeypatch.setattr(hit_enrichment, "sleep", no_sleep)
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json=[EMNLP]) if len(calls) == 1 else httpx.Response(429)
+
+    async with s2_client(handler) as http:
+        out = await paper_enrichment.enrich(session, http, ws.id)
+    assert out.rate_limited and out.looked_up == 1 and out.remaining == 1
+    assert len(await paper_enrichment.papers_to_enrich(session, ws.id)) == 1
+
+
+async def test_the_worker_job_runs_enrich_and_stores_no_result(session, monkeypatch):
+    from app.workers import paper_enrichment as worker
+
+    @asynccontextmanager
+    async def test_session():
+        yield session
+
+    monkeypatch.setattr(worker, "SessionLocal", test_session)
+    p = arxiv_paper()
+    ws = await library(session, p)
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=[ICML]))
+    await worker.enrich_papers({"transport": transport}, str(ws.id))
+    assert p.published_venue == "International Conference on Machine Learning"
+    entries = [f for f in WorkerSettings.functions if getattr(f, "coroutine", f) is worker_enrich_papers]
+    assert len(entries) == 1 and entries[0].keep_result_s == 0

@@ -114,7 +114,7 @@ def _wait_seconds(response: httpx.Response, attempt: int) -> float:
     return min(max(asked, 0.0), MAX_WAIT)
 
 
-async def _batch_with_backoff(http: httpx.AsyncClient, ids: list[str]) -> list[dict | None] | None:
+async def batch_with_backoff(http: httpx.AsyncClient, ids: list[str]) -> list[dict | None] | None:
     """The chunk's answers, or None after MAX_429 consecutive 429s. Other HTTP errors raise."""
     for attempt in range(MAX_429):
         try:
@@ -142,7 +142,7 @@ async def enrich(
     for start in range(0, len(refs), CHUNK):
         chunk = refs[start : start + CHUNK]
         try:
-            answers = await _batch_with_backoff(http, [key for _, key in chunk])
+            answers = await batch_with_backoff(http, [key for _, key in chunk])
             if answers is not None and len(answers) != len(chunk):
                 raise httpx.DecodingError(f"S2 answered {len(answers)} papers for {len(chunk)} ids")
         except httpx.HTTPError:
