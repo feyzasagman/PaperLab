@@ -17,7 +17,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
 from app.core import graph, library, notes, pipeline, screening, workspaces
-from app.core.errors import CODE, KINDS, DomainError
+from app.core.errors import DomainError, error_code
 from app.db import SessionLocal
 
 # ponytail: the embedding model loads on the first search (seconds). Warm it up in a lifespan if a first search
@@ -68,11 +68,10 @@ def recoverable(tool):
         try:
             return await tool(*args, **kwargs)
         except DomainError as exc:
-            message = str(exc)
-            if CODE.fullmatch(message):
-                error = {"error": message, **exc.details}
-            else:
-                error = {"error": KINDS.get(type(exc), "invalid_input"), "detail": message, **exc.details}
+            code = error_code(exc)
+            error = {"error": code, **exc.details}
+            if code != str(exc):
+                error = {"error": code, "detail": str(exc), **exc.details}
             return CallToolResult(
                 content=[TextContent(type="text", text=json.dumps(error))], structured_content=error, is_error=True
             )

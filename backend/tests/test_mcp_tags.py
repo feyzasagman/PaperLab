@@ -206,7 +206,7 @@ async def test_list_papers_without_full_text(session, tmp_path):
         await workspaces.add_paper(session, ws.id, paper.id)
     await call("tag_papers", workspace=name, tag="Q1", paper_ids=[str(full.id), str(bare.id)])
 
-    session.expire_all()  # the test session shares its identity map with the server; has_chunks was loaded before chunking
+    session.expire_all()  # the test session is the server's too; has_chunks was loaded before chunking
 
     def ids(rows):
         return {r["id"] for r in result(rows)}
@@ -215,3 +215,4 @@ async def test_list_papers_without_full_text(session, tmp_path):
     assert ids(await call("list_papers", workspace=name, full_text=True)) == {str(full.id)}
     assert ids(await call("list_papers", workspace=name)) == {str(full.id), str(bare.id)}
     assert ids(await call("list_papers", workspace=name, full_text=False, tags=["Q1"])) == {str(bare.id)}
+    assert ids(await call("list_papers", workspace=name, full_text=True, tags=["Q1"])) == {str(full.id)}

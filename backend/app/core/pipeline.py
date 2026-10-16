@@ -5,6 +5,7 @@ every read and write is an existing service's. Results are the API's own schemas
 fields.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass, fields
 from datetime import datetime
@@ -202,6 +203,9 @@ async def _add_link(session, providers, link, workspace_uuid) -> AddPaperResult:
     return await _queued(session, paper, workspace_uuid)
 
 
+logger = logging.getLogger(__name__)
+
+
 async def _add(session, providers, kind, value, workspace_uuid) -> AddPaperResult:
     if kind == "link":
         return await _add_link(session, providers, value, workspace_uuid)
@@ -242,7 +246,9 @@ def _distinct(identifiers: list[str]) -> list[tuple[str, tuple[str, str] | None,
     return out
 
 
-async def add_papers(session: AsyncSession, identifiers: list[str], workspace: str | None = None) -> list[AddPapersItem]:
+async def add_papers(
+    session: AsyncSession, identifiers: list[str], workspace: str | None = None
+) -> list[AddPapersItem]:
     """add_paper for up to MAX_ADD_PAPERS identifiers with one set of providers; each item keeps its own error."""
     if len(identifiers) > MAX_ADD_PAPERS:
         raise InvalidInput("too_many_identifiers", max=MAX_ADD_PAPERS)
@@ -257,6 +263,10 @@ async def add_papers(session: AsyncSession, identifiers: list[str], workspace: s
                     continue
                 except DomainError as exc:
                     error = error_code(exc)
+                except Exception:  # one provider's surprise must not lose the items already added
+                    logger.exception("add_papers failed on %s", text)
+                    await session.rollback()  # a failed flush leaves the session unusable until then
+                    error = "failed"
             items.append(AddPapersItem(text, error=error))
     return items
 

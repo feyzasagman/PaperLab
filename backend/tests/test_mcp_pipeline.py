@@ -9,7 +9,7 @@ from mcp_fixtures import *  # noqa: F403
 from mcp_fixtures import call, result
 from pdf_papers import chunked_paper
 
-from app.core import discovery, papers, pdf_links, workspaces
+from app.core import discovery, papers, pdf_links, pipeline, workspaces
 from app.core.candidates import Candidate
 from app.models import PaperStatus
 from app.providers import discovery_fake
@@ -273,3 +273,21 @@ async def test_add_papers_over_the_cap(jobs):
     response = await call("add_papers", identifiers=[f"10.1/{n}" for n in range(51)])
     assert response.is_error and response.structured_content["error"] == "too_many_identifiers"
     assert response.structured_content["max"] == 50 and jobs.jobs == []
+
+
+async def test_add_papers_carries_on_after_an_unexpected_failure(session, jobs, monkeypatch):
+    real = pipeline._add
+
+    async def flaky(session, providers, kind, value, workspace_uuid):
+        if kind == "arxiv":
+            raise RuntimeError("provider blew up")
+        return await real(session, providers, kind, value, workspace_uuid)
+
+    monkeypatch.setattr(pipeline, "_add", flaky)
+    ids = [FREE_DOI, discovery_fake.FREE_ARXIV_ID, f"{discovery_fake.DOI_PREFIX}nope"]
+
+    items = result(await call("add_papers", identifiers=ids))
+
+    outcomes = [(i["status"], i["error"]) for i in items]
+    assert outcomes == [("queued", None), (None, "failed"), (None, "no_matching_paper")]
+    assert jobs.jobs[0] == ("ingest_paper", items[0]["paper_id"])

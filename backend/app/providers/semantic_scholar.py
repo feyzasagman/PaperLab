@@ -120,7 +120,9 @@ async def citations(http: httpx.AsyncClient, key: str, cap: int) -> list[dict] |
     return await _edge(http, key, "citations", "citingPaper", cap)
 
 
-async def search_page(http: httpx.AsyncClient, title: str, page_size: int, cursor: int) -> tuple[list[dict], int | None]:
+async def search_page(
+    http: httpx.AsyncClient, title: str, page_size: int, cursor: int
+) -> tuple[list[dict], int | None]:
     """One page of Semantic Scholar results."""
     params = {"query": title, "offset": cursor, "limit": page_size, "fields": PAPER_FIELDS}
     response = await http.get("/graph/v1/paper/search", params=params)
