@@ -2,11 +2,13 @@
 
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import httpx
 import pytest
 from mcp_fixtures import *  # noqa: F403
 from mcp_fixtures import call, result
+from sqlalchemy import update
 
 from app.core import hit_enrichment, paper_enrichment, workspaces
 from app.models.paper import Paper
@@ -211,3 +213,93 @@ async def test_list_tags_counts_a_published_arxiv_copy_as_peer_reviewed(session)
     after = result(await call("list_tags", workspace=ws.name))
     assert (before[0]["peer_reviewed"], before[0]["preprint"]) == (0, 1)
     assert (after[0]["peer_reviewed"], after[0]["preprint"]) == (1, 0)
+
+
+# --- fix round 1
+
+
+async def test_a_hand_edit_made_while_the_batch_runs_is_kept(session, monkeypatch):
+    p = arxiv_paper(peer_reviewed="false")
+    ws = await library(session, p)
+    real = paper_enrichment.batch_with_backoff
+
+    async def edit_then_answer(http, ids):
+        await session.execute(
+            update(Paper).where(Paper.id == p.id).values(manual_fields=["peer_reviewed", "published_venue"])
+            .execution_options(synchronize_session=False)
+        )
+        return await real(http, ids)
+
+    monkeypatch.setattr(paper_enrichment, "batch_with_backoff", edit_then_answer)
+    await run(session, ws, [EMNLP])
+    await session.refresh(p)
+    assert (p.peer_reviewed, p.published_venue) == ("false", None)
+    assert p.published_doi == "10.18653/v1/2023.emnlp-main.1"
+
+
+async def test_a_paper_that_is_not_a_preprint_gets_no_published_version(session):
+    p = paper(f"10.1038/nature-{uid()}", peer_reviewed="false", source_type="journal_article")
+    answer = {
+        "externalIds": {"DOI": p.doi}, "journal": {"name": "Nature"}, "publicationTypes": ["JournalArticle"],
+    }
+    ws = await library(session, p)
+    await run(session, ws, [answer])
+    assert (p.published_venue, p.published_doi, p.peer_reviewed) == (None, None, "false")
+
+
+async def test_a_normal_paper_still_fills_empty_fields(session):
+    p = paper(f"10.1038/nature-{uid()}")
+    answer = {"externalIds": {"DOI": p.doi}, "journal": {"name": "Nature"}, "publicationTypes": ["JournalArticle"]}
+    ws = await library(session, p)
+    await run(session, ws, [answer])
+    assert (p.source_type, p.peer_reviewed, p.published_venue) == ("journal_article", "true", None)
+
+
+async def test_peer_review_is_never_lowered_and_a_preprint_answer_can_still_give_a_doi(session):
+    p = arxiv_paper(peer_reviewed="true")
+    answer = {
+        "externalIds": {"DOI": "10.1234/Pub", "ArXiv": "2301.1"}, "venue": "arXiv.org", "journal": {"name": "ArXiv"},
+    }
+    ws = await library(session, p)
+    await run(session, ws, [answer])
+    assert (p.published_doi, p.peer_reviewed) == ("10.1234/pub", "true")
+    q = arxiv_paper()
+    ws = await library(session, q)
+    await run(session, ws, [answer])
+    assert (q.published_doi, q.peer_reviewed) == ("10.1234/pub", "unknown")
+
+
+async def test_a_hand_set_source_type_blocks_peer_review(session):
+    p = arxiv_paper(source_type="preprint", manual_fields=["source_type"])
+    ws = await library(session, p)
+    await run(session, ws, [ICML])
+    assert p.peer_reviewed == "unknown" and p.published_venue
+
+
+async def test_reingest_does_not_flip_a_published_copy_back_to_false(session):
+    from app.core import enrichment
+
+    p = arxiv_paper(peer_reviewed="true", published_venue="ICML")
+    session.add(p)
+    await session.flush()
+    await enrichment.fill_source_type(session, p.id, "article", None)
+    await session.refresh(p)
+    assert p.peer_reviewed == "true"
+    plain = arxiv_paper()
+    session.add(plain)
+    await session.flush()
+    await enrichment.fill_source_type(session, plain.id, "article", None)
+    await session.refresh(plain)
+    assert plain.peer_reviewed == "false"  # unchanged behaviour without a published version
+
+
+async def test_a_doi_correction_asks_semantic_scholar_again(session):
+    from app.core import enrichment
+
+    p = arxiv_paper(published_checked_at=datetime.now(timezone.utc))
+    session.add(p)
+    await session.flush()
+    await enrichment.correct_metadata(session, p.id, {"title": "Retitled"})
+    assert p.published_checked_at is not None
+    await enrichment.correct_metadata(session, p.id, {"doi": f"10.1234/new-{uid()}"})
+    assert p.published_checked_at is None

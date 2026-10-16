@@ -55,24 +55,32 @@ def s2_id(paper: Paper) -> str | None:
     return f"DOI:{doi}"
 
 
+def is_preprint_copy(paper: Paper) -> bool:
+    return (paper.doi or "").lower().startswith(ARXIV_DOI_PREFIX) or paper.source_type == "preprint"
+
+
 def apply_s2(paper: Paper, answer: dict) -> bool:
-    """Sets published_doi, published_venue and peer_reviewed from an S2 paper that is a published version (even over
-    "false"), and source_type when empty. Fields in manual_fields are skipped. True when anything changed."""
+    """Fills from an S2 paper; fields in manual_fields are skipped (a hand-set source_type also blocks peer_reviewed).
+    Any paper: source_type when empty, peer_reviewed "true" when "unknown" and the type is peer-reviewed. A preprint
+    copy (arXiv DOI or source_type "preprint") also gets published_doi and published_venue (never its own DOI), and
+    peer_reviewed "true" even over "false". peer_reviewed is never lowered. True when anything changed."""
     source_type, published_doi, published_venue = s2_triage(answer)
+    preprint = is_preprint_copy(paper)
     if published_doi and published_doi == normalize_doi(paper.doi or ""):
         published_doi = None  # the paper's own DOI is not its published version's
-    if not (published_doi or published_venue):
+    if preprint and not (published_doi or published_venue):
         return False  # an arXiv-only answer: nothing to learn
-    found = {
-        "published_doi": published_doi,
-        "published_venue": published_venue,
-        "peer_reviewed": peer_reviewed_of(source_type) if source_type else None,
-    }
+    found: dict[str, str | None] = {}
+    if preprint:
+        found |= {"published_doi": published_doi, "published_venue": published_venue}
     if not paper.source_type:
         found["source_type"] = source_type
+    peer = peer_reviewed_of(source_type) == "true"
+    if peer and (preprint or paper.peer_reviewed == "unknown") and "source_type" not in paper.manual_fields:
+        found["peer_reviewed"] = "true"
     changed = False
     for field, value in found.items():
-        if value and value != "unknown" and field not in paper.manual_fields and getattr(paper, field) != value:
+        if value and field not in paper.manual_fields and getattr(paper, field) != value:
             setattr(paper, field, value)
             changed = True
     return changed
@@ -103,6 +111,9 @@ async def enrich(session: AsyncSession, http: httpx.AsyncClient, ws: uuid.UUID) 
             logger.warning("Semantic Scholar kept answering 429; stopping with %d papers left", remaining)
             return PaperEnrichResult(looked_up, filled, not_found, remaining, True)
         looked_up += len(chunk)
+        # The batch (and any 429 wait) can take long: re-read the papers so a hand edit made meanwhile is seen.
+        ids = [paper.id for paper, _ in chunk]
+        await session.execute(select(Paper).where(Paper.id.in_(ids)).execution_options(populate_existing=True))
         asked_at = datetime.now(timezone.utc)
         for (paper, _), answer in zip(chunk, answers, strict=True):
             paper.published_checked_at = asked_at

@@ -375,11 +375,15 @@ async def enrich_hits(workspace: str, run_id: uuid.UUID | None = None) -> pipeli
 @recoverable
 async def enrich_papers(workspace: str) -> pipeline.EnrichPapersQueued:
     """Use to find out whether papers in a workspace that are the arXiv copy of a published paper (an ICML or EMNLP
-    paper, say) were published, and where. It asks Semantic Scholar in the background and fills published_venue,
-    published_doi and peer_reviewed (true when a published version is found), shown by get_paper, list_papers and
-    search_library. A paper's own DOI, venue and files are never changed, and anything the owner edited by hand is
-    kept, even peer_reviewed. Only runs when called; each paper is asked once. `queued` is how many papers have not
-    been asked yet: call again later to see what is left. A count above 0 can mean a job is still running
+    paper, say) were published, and where. It asks Semantic Scholar in the background. For an arXiv copy
+    (or a paper whose source type is preprint) it fills published_venue and published_doi, and sets peer_reviewed to
+    true when the published version is peer-reviewed; it never sets peer_reviewed to false, and sets published_*
+    on no other paper. Any paper gets an empty source_type or an unknown peer_reviewed filled. Shown by get_paper,
+    list_papers and search_library. A paper's own DOI, venue and files are never changed, and anything the owner
+    edited by hand is kept, even peer_reviewed (a hand-set source_type also keeps it).
+    Only runs when called; each paper is asked once. `queued` is how many papers have not been asked yet: call
+    again later to
+    see what is left. A count above 0 can mean a job is still running
     (`already_running` is true and a second call starts nothing) or a rate-limited stop. With Semantic Scholar
     turned off in Settings nothing is queued (`s2_off`)."""
     async with sessions() as session:
