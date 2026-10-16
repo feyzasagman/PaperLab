@@ -104,13 +104,11 @@ async def test_arxiv_search_page_matches_any_word_in_any_field_best_first(monkey
     assert seen[1]["search_query"] == "all:mode OR all:collapse"  # no parentheses or operators reach arXiv
 
 
-async def test_arxiv_search_page_stops_at_the_result_cap(monkeypatch):
+async def test_arxiv_pages_past_200(monkeypatch):
     _capture_arxiv(monkeypatch, 20)
     async with httpx.AsyncClient() as http:
-        _, before_cap = await arxiv.search_page(http, "learning", page_size=20, cursor=arxiv.MAX_SEARCH_RESULTS - 40)
-        _, at_cap = await arxiv.search_page(http, "learning", page_size=20, cursor=arxiv.MAX_SEARCH_RESULTS - 20)
-    assert before_cap == arxiv.MAX_SEARCH_RESULTS - 20
-    assert at_cap is None  # full page, but an OR query never runs dry
+        _, next_cursor = await arxiv.search_page(http, "learning", page_size=20, cursor=200)
+    assert next_cursor == 220  # a full page means more; the per-pass limit now lives in the worker
 
 
 async def test_arxiv_search_page_of_stopwords_sends_nothing(monkeypatch):

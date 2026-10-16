@@ -264,6 +264,89 @@ async def test_worker_marks_exhausted_when_the_iteration_cap_is_hit(session, wor
     assert reloaded.status == "exhausted"
 
 
+def _fake_pages(monkeypatch, per_source_total: dict[str, int | None], page_size: int = 50) -> dict[str, list[int]]:
+    """Every source serves `page_size` unmapped items per page; one with a total ends after that many (a short
+    page gives next_cursor None), one with None never ends. Returns the cursors each source was asked for."""
+    from app.core import workspace_search as core_module
+
+    asked: dict[str, list[int]] = {source: [] for source in per_source_total}
+
+    def make(source: str):
+        async def page(client, query, size, cursor):
+            asked[source].append(cursor)
+            total = per_source_total[source]
+            if total is not None and cursor + size >= total:
+                return [{}] * max(total - cursor, 0), None
+            return [{}] * size, cursor + size
+
+        return page
+
+    for source in per_source_total:
+        monkeypatch.setitem(core_module._PAGE_FUNCS, source, make(source))
+        monkeypatch.setitem(core_module._MAPPERS, source, lambda raw: None)
+        monkeypatch.setitem(core_module.PAGE_SIZE_BY_SOURCE, source, page_size)
+    return asked
+
+
+async def _cursors(session, run) -> dict[str, WorkspaceSearchCursor]:
+    rows = (
+        await session.execute(select(WorkspaceSearchCursor).where(WorkspaceSearchCursor.run_id == run.id))
+    ).scalars()
+    return {c.source: c for c in rows}
+
+
+async def test_a_source_pauses_after_200_raw_results_in_a_pass(session, worker, monkeypatch):
+    asked = _fake_pages(monkeypatch, {"arxiv": None})
+    run = await _new_run(session, "running")
+    session.add(WorkspaceSearchCursor(run_id=run.id, source="arxiv", cursor_json={"value": 0}))
+    await session.commit()
+
+    await worker_module.run_workspace_search(worker, str(run.id))
+
+    assert asked["arxiv"] == [0, 50, 100, 150]  # 4 pages of 50, then the pause: no fifth fetch
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert reloaded.status == "exhausted"
+    assert reloaded.stats_json["paused_sources"] == ["arxiv"]
+    assert reloaded.stats_json["pass_raw_count"] == {"arxiv": 200}
+    assert "cut_short" not in reloaded.stats_json  # a pause is not the backstop
+    cursor = (await _cursors(session, run))["arxiv"]
+    assert cursor.exhausted is False
+    assert cursor.cursor_json == {"value": 200, "paused": True}
+
+
+async def test_a_pass_ends_when_every_source_is_paused_or_finished(session, worker, monkeypatch):
+    asked = _fake_pages(monkeypatch, {"arxiv": None, "crossref": 120})
+    run = await _new_run(session, "running", ["arxiv", "crossref"])
+    for source in ("arxiv", "crossref"):
+        session.add(WorkspaceSearchCursor(run_id=run.id, source=source, cursor_json={"value": 0}))
+    await session.commit()
+
+    await worker_module.run_workspace_search(worker, str(run.id))
+
+    assert asked["arxiv"] == [0, 50, 100, 150]
+    assert asked["crossref"] == [0, 50, 100]  # finished on its short page, never asked again
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert reloaded.status == "exhausted"
+    assert reloaded.stats_json["paused_sources"] == ["arxiv"]  # the finished source is not "paused"
+    cursors = await _cursors(session, run)
+    assert cursors["crossref"].exhausted is True and cursors["arxiv"].exhausted is False
+
+
+async def test_a_cut_short_pass_does_not_list_a_paused_source_as_unfinished(session, worker, monkeypatch):
+    _fake_pages(monkeypatch, {"arxiv": None, "crossref": None})
+    monkeypatch.setattr(worker_module, "MAX_BATCH_ITERATIONS", 2)
+    run = await _new_run(session, "running", ["arxiv", "crossref"])
+    session.add(WorkspaceSearchCursor(run_id=run.id, source="arxiv", cursor_json={"value": 0, "paused": True}))
+    session.add(WorkspaceSearchCursor(run_id=run.id, source="crossref", cursor_json={"value": 0}))
+    await session.commit()
+
+    await worker_module.run_workspace_search(worker, str(run.id))
+
+    reloaded = await session.get(WorkspaceSearchRun, run.id, populate_existing=True)
+    assert reloaded.stats_json["cut_short"] is True
+    assert reloaded.stats_json["unfinished_sources"] == ["crossref"]
+
+
 async def test_worker_stops_via_wall_clock_deadline_before_the_iteration_cap(session, worker, monkeypatch):
     """MAX_BATCH_ITERATIONS bounds the loop by count, but nothing tied that to wall-clock time before this fix —
     200 iterations of pacing plus per-source HTTP calls can land in the same ballpark as SEARCH_RUN_JOB_TIMEOUT

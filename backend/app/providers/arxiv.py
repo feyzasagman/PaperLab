@@ -13,9 +13,6 @@ import httpx
 BASE_URL = "https://export.arxiv.org"
 TIMEOUT = httpx.Timeout(10.0)
 MAX_TITLE_WORDS = 12
-# ponytail: a search run's OR query never runs dry, so paging stops here; past this arXiv's relevance order is noise.
-# Raise it if runs show relevant papers still arriving on the last page.
-MAX_SEARCH_RESULTS = 200
 NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 # arXiv's title index leaves these out, so `ti:of` matches nothing and empties the whole AND query (probed
 # 2026-09-17, each against `ti:learning`). CORE's parser reads and/or/not, in any case, as operators and answers 500.
@@ -86,7 +83,7 @@ async def search_page(
     }  # fmt: skip
     response = await http.get("/api/query", params=params)
     entries = _entries(response.raise_for_status())
-    more = len(entries) == page_size and cursor + page_size < MAX_SEARCH_RESULTS
+    more = len(entries) == page_size  # an OR query never runs dry: the run's per-pass limit pauses it
     next_cursor = cursor + page_size if more else None
     return entries, next_cursor
 

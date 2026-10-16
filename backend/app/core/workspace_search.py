@@ -53,6 +53,9 @@ if TYPE_CHECKING:
 # cooldowns give a real chance for that, while a source that's persistently broken (an unauthenticated S2/CORE
 # 429, expected by default per spec §16) still gives up for good once every backoff step is spent.
 SOURCE_ERROR_CAP = 6
+# Raw results one source may fetch in a single pass before it pauses (overshoot is at most one page). A paused
+# source is not exhausted: continue_run resumes it from its next page.
+PER_SOURCE_PASS_LIMIT = 200
 # The search job's timeout (see workers/workspace_search.py); here so core (saved_searches) needn't import workers.
 SEARCH_RUN_JOB_TIMEOUT = 1800
 _ERROR_BACKOFF_SECONDS = (10, 30, 90, 180, 300)
@@ -185,7 +188,7 @@ async def search_batch(session: AsyncSession, providers: Providers, run: Workspa
     now = _now()
     for source in run.sources_json:
         cursor = cursors.get(source)
-        if cursor is None or cursor.exhausted:
+        if cursor is None or cursor.exhausted or cursor.cursor_json.get("paused"):
             continue
         retry_after = cursor.cursor_json.get("retry_after")
         if retry_after and now < datetime.fromisoformat(retry_after):

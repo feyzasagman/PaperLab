@@ -1247,3 +1247,27 @@ async def test_search_batch_drops_known_out_of_range_years_and_keeps_undated(ses
     assert result.out_of_range["arxiv"] >= 1
     assert result.raw_counts["arxiv"] + result.out_of_range["arxiv"] == 3  # PAGE_PAPERS page size
     assert result.new_hits == result.raw_counts["arxiv"]  # only undated fixtures, if any, are stored
+
+
+async def test_search_batch_skips_a_paused_source(session, fake_providers, monkeypatch):
+    from app.core import workspace_search as core_module
+
+    asked = []
+
+    async def arxiv_search(http, query, page_size, cursor):
+        asked.append(cursor)
+        return [], cursor + page_size
+
+    monkeypatch.setitem(core_module._PAGE_FUNCS, "arxiv", arxiv_search)
+    run = await _new_run(session, ["arxiv"])
+    cursor = (
+        await session.execute(select(WorkspaceSearchCursor).where(WorkspaceSearchCursor.run_id == run.id))
+    ).scalar_one()
+    cursor.cursor_json = {"value": 200, "paused": True}
+    await session.flush()
+
+    result = await search_batch(session, fake_providers, run)
+
+    assert asked == []  # a paused source is not fetched
+    assert result.raw_counts == {} and result.errors == {}
+    assert cursor.cursor_json == {"value": 200, "paused": True} and not cursor.exhausted
