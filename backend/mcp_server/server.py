@@ -281,7 +281,8 @@ async def list_hits(
     limit: int = 50,
 ) -> pipeline.HitPage:
     """Use to read search results waiting for screening. Filter by run and by status (undecided, relevant,
-    not_relevant, maybe); pass next_cursor back to page. Each hit may carry an AI suggestion — a suggestion only,
+    not_relevant, maybe); pass next_cursor back to page. Each hit shows source_type, peer_review, published_doi and
+    published_venue to tell preprints from published work, and may carry an AI suggestion — a suggestion only,
     never a decision."""
     async with sessions() as session:
         return await pipeline.list_hits(session, workspace, run_id, status, cursor, limit)
@@ -293,7 +294,8 @@ async def get_screening_suggestions(
     workspace: str, run_id: uuid.UUID | None = None, min_relevance: int | None = None, cursor: str | None = None,
 ) -> pipeline.HitPage:
     """Use to read the AI's suggestions on undecided hits, best score first. min_relevance (1 to 5) hides weaker
-    ones; pass next_cursor back to page. These are suggestions only; nothing here is a decision."""
+    ones; pass next_cursor back to page. Hits carry source_type, peer_review, published_doi and published_venue.
+    These are suggestions only; nothing here is a decision."""
     async with sessions() as session:
         return await pipeline.get_screening_suggestions(session, workspace, run_id, min_relevance, cursor)
 

@@ -28,6 +28,7 @@ from app.core.source_registry import MAPPERS as _MAPPERS
 from app.core.source_registry import PAGE_FUNCS as _PAGE_FUNCS
 from app.core.source_registry import PAGE_SIZE_BY_SOURCE
 from app.core.source_registry import STARTING_CURSOR_VALUE as _STARTING_CURSOR_VALUE
+from app.core.source_types import peer_reviewed_of
 from app.models.references import ExternalRef, paper_references
 from app.models.workspace_search import (
     SearchRunEligibility,
@@ -617,6 +618,10 @@ def _hit_out_dict(
         doi=ref.doi if ref else None,
         abstract=ref.abstract if ref else None,
         sources=ref.sources if ref else [],
+        source_type=ref.source_type if ref else None,
+        published_doi=ref.published_doi if ref else None,
+        published_venue=ref.published_venue if ref else None,
+        peer_review=peer_reviewed_of(ref.source_type if ref else None),
         stage2_status=stage2_status,
         stage2_exclude_reason=stage2_exclude_reason,
     )

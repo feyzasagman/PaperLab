@@ -599,3 +599,34 @@ async def test_run_prescreen_for_one_run_never_needs_confirm(session, jobs, monk
     workspace, (hit, *_) = await _pool(session)
     state = result(await call("run_prescreen", workspace=workspace.name, run_id=str(hit.run_id)))
     assert state["suggest_status"] == "running"
+
+
+async def test_list_hits_carries_triage_fields(session):
+    from screening_pool import make_pool
+    from sqlalchemy import update
+
+    from app.models.references import ExternalRef
+
+    ws, (hit,) = await make_pool(session, [("abstract", None)])
+    hit.suggestion = "include"
+    hit.suggestion_relevance = 4
+    await session.execute(update(ExternalRef).where(ExternalRef.id == hit.external_ref_id).values(
+        source_type="journal_article", published_doi="10.1/pub", published_venue="J. Things 4"))
+    await session.commit()
+
+    for tool in ("list_hits", "get_screening_suggestions"):
+        (out,) = result(await call(tool, workspace=ws.name))["hits"]
+        assert (out["source_type"], out["published_doi"], out["published_venue"], out["peer_review"]) == (
+            "journal_article", "10.1/pub", "J. Things 4", "true")
+
+
+async def test_a_hit_without_a_ref_has_unknown_peer_review(session):
+    from screening_pool import make_pool
+
+    ws, (hit,) = await make_pool(session, [("abstract", None)])
+    hit.external_ref_id = None
+    await session.commit()
+
+    (out,) = result(await call("list_hits", workspace=ws.name))["hits"]
+    assert (out["source_type"], out["published_doi"], out["published_venue"], out["peer_review"]) == (
+        None, None, None, "unknown")
