@@ -49,7 +49,7 @@ EXPECTED_TOOLS = {
     "run_prescreen": None, "stop_prescreen": None, "get_screening_suggestions": True, "accept_suggestions": None,
     "verify_claim": None, "verify_claims": None,
     "generate_evidence_card": None, "get_evidence_card": True, "list_evidence_cards": True,
-    "export_citations": True, "enrich_hits": None,
+    "export_citations": True, "enrich_hits": None, "enrich_papers": None,
     "list_tags": True, "tag_papers": None, "untag_papers": None, "rename_tag": None, "delete_tag": None,
 }
 
@@ -99,6 +99,7 @@ async def test_search_library_returns_ids_and_structure_not_prose(session, tmp_p
         "distance": 0.0,
         "source_type": None,
         "peer_reviewed": "unknown",
+        "published_venue": None,
         "evidence_access": "full_text",
     }
 
@@ -203,6 +204,23 @@ async def test_get_paper_sends_every_note_with_its_provenance(session, tmp_path)
 
     assert (card["title"], [s["title"] for s in card["sections"]]) == ("Carded paper", ["1 Introduction", "2 Method"])
     assert [(n["provenance"], n["body"], n["page"]) for n in card["notes"]] == [("llm", "Claims can be checked.", 1)]
+
+
+async def test_get_paper_and_search_show_the_published_venue(session, tmp_path, embedder):
+    paper, _, vectors = await chunked_paper(session, tmp_path, title="Published copy")
+    paper.published_venue = "International Conference on Machine Learning"
+    workspace = await workspaces.create(session, f"MCP venue {RUN}")
+    await workspaces.add_paper(session, workspace.id, paper.id)
+    await session.commit()
+    embedder.vectors["search_query: venue?"] = vectors[0]
+
+    card = (await call("get_paper", paper_id=str(paper.id))).structured_content
+    listed = (await call("list_papers", workspace=workspace.name)).structured_content["result"]
+    found = (await call("search_library", query="venue?", workspace=workspace.name)).structured_content["result"]
+
+    assert card["published_venue"] == "International Conference on Machine Learning"
+    assert [p["published_venue"] for p in listed] == ["International Conference on Machine Learning"]
+    assert {p["published_venue"] for p in found} == {"International Conference on Machine Learning"}
 
 
 async def test_get_paper_shows_reading_pass_and_triage(session, tmp_path):

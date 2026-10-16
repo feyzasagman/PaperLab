@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 from mcp_fixtures import *  # noqa: F403
+from mcp_fixtures import call, result
 
 from app.core import hit_enrichment, paper_enrichment, workspaces
 from app.models.paper import Paper
@@ -172,3 +173,41 @@ async def test_the_worker_job_runs_enrich_and_stores_no_result(session, monkeypa
     assert p.published_venue == "International Conference on Machine Learning"
     entries = [f for f in WorkerSettings.functions if getattr(f, "coroutine", f) is worker_enrich_papers]
     assert len(entries) == 1 and entries[0].keep_result_s == 0
+
+
+async def test_enrich_papers_queues_once_and_reports_already_running(session, jobs):
+    ws = await library(session, arxiv_paper(), arxiv_paper(), paper(None))
+    first = result(await call("enrich_papers", workspace=ws.name))
+    second = result(await call("enrich_papers", workspace=ws.name))
+    assert first == {"queued": 2, "already_running": False, "s2_off": False}
+    assert second == {"queued": 2, "already_running": True, "s2_off": False}
+    assert jobs.jobs == [("enrich_papers", str(ws.id))]
+    await run(session, ws, [EMNLP, EMNLP])
+    assert result(await call("enrich_papers", workspace=ws.name))["queued"] == 0
+
+
+async def test_enrich_papers_with_s2_off(session, jobs, monkeypatch):
+    from app.core import paper_sources
+    from app.core.source_registry import SOURCE_IDS
+
+    ws = await library(session, arxiv_paper())
+    off = paper_sources.SourceSettings(enabled={**dict.fromkeys(SOURCE_IDS, True), "semantic_scholar": False})
+
+    async def get(_session):
+        return off
+
+    monkeypatch.setattr(paper_sources, "get", get)
+    out = result(await call("enrich_papers", workspace=ws.name))
+    assert out == {"queued": 0, "already_running": False, "s2_off": True}
+    assert jobs.jobs == []
+
+
+async def test_list_tags_counts_a_published_arxiv_copy_as_peer_reviewed(session):
+    p = arxiv_paper(source_type="preprint", peer_reviewed="false")
+    ws = await library(session, p)
+    await call("tag_papers", workspace=ws.name, tag="T", paper_ids=[str(p.id)])
+    before = result(await call("list_tags", workspace=ws.name))
+    await run(session, ws, [EMNLP])
+    after = result(await call("list_tags", workspace=ws.name))
+    assert (before[0]["peer_reviewed"], before[0]["preprint"]) == (0, 1)
+    assert (after[0]["peer_reviewed"], after[0]["preprint"]) == (1, 0)
