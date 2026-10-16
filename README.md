@@ -401,6 +401,7 @@ Systematic search and screening:
 - `get_search_run`: how a search run is going, and what it found;
 - `list_search_runs`: a workspace's search runs, newest first, with status, sources and hit counts;
 - `stop_search_run`: stops a search run that is still going;
+- `continue_search_run`: fetches the next results of a run that stopped, was cut short or paused at 200 results per source (hits already found are never added twice);
 - `list_hits`: a run's results, filtered by your decision, with any AI suggestion and each hit's source type, peer-review status, published DOI and venue;
 - `review_hits`: records your screening decisions on hits, with a reason when you exclude, and optional `tags` that land on the paper when it is imported;
 - `run_prescreen`: has your default model suggest include, exclude or unsure for undecided hits (a remote default model is refused, naming its host, unless you agreed and the assistant passes `allow_remote`, since your abstracts would leave your machine; a workspace-wide run over 500 hits asks for `confirm`; `run_ids` queues several search runs as one job);

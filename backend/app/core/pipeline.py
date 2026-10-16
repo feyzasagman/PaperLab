@@ -313,6 +313,13 @@ async def stop_search_run(session: AsyncSession, run_id: uuid.UUID) -> SearchRun
     return await workspace_search.run_out(session, await workspace_search.stop_run(session, run_id))
 
 
+async def continue_search_run(session: AsyncSession, run_id: uuid.UUID) -> SearchRunOut:
+    run = await workspace_search.get_run(session, run_id)
+    run = await workspace_search.continue_run(session, run.workspace_id, run.id)
+    await queue.enqueue("run_workspace_search", str(run.id))
+    return await workspace_search.run_out(session, run)
+
+
 DECISIONS = ("relevant", "not_relevant", "maybe")
 REASONS = ("wrong_topic", "wrong_study_type", "duplicate", "language", "inaccessible", "other")
 MAX_HITS = 100
