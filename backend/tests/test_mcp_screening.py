@@ -672,3 +672,11 @@ async def test_run_ids_over_the_limit_need_confirm(session, jobs, monkeypatch):
     assert jobs.jobs == [] and workspace.suggest_status == "idle"
     ok = result(await call("run_prescreen", workspace=workspace.name, run_ids=[str(r1), str(r2)], confirm=True))
     assert ok["suggest_status"] == "running"
+
+
+async def test_empty_run_ids_are_refused(session, jobs, monkeypatch):
+    _model(monkeypatch, True)
+    workspace, _ = await _runs(session)
+    response = await call("run_prescreen", workspace=workspace.name, run_ids=[])
+    assert response.is_error and response.structured_content["error"] == "run_ids_empty"
+    assert jobs.jobs == [] and workspace.suggest_status == "idle"

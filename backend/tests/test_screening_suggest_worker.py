@@ -84,10 +84,6 @@ def worker(session, monkeypatch):
     monkeypatch.setattr(worker_module, "engine", SimpleNamespace(connect=shared_connection))
 
     def use(llm):
-        async def resolve(_session, _model_id):  # no default model needed in the test database
-            return SimpleNamespace(label="Test"), SimpleNamespace(name="scripted")
-
-        monkeypatch.setattr(worker_module.llm_connections, "resolve", resolve)
         monkeypatch.setattr(worker_module, "build_llm", lambda connection, name, transport=None: llm)
         return llm
 

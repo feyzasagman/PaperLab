@@ -277,6 +277,8 @@ async def run_prescreen(
     unless confirm is set. The two are independent. run_ids queues several runs as one job."""
     if run_id is not None and run_ids is not None:
         raise InvalidInput("run_id_or_run_ids")
+    if run_ids is not None and not run_ids:
+        raise InvalidInput("run_ids_empty")
     ws = await workspace_id(session, workspace)
     run_ids = None if run_ids is None else list(dict.fromkeys(run_ids))
     for each in [run_id] if run_id is not None else run_ids or []:
