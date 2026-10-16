@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 ENRICH_JOB_TIMEOUT = 3600
 
 
-async def _arxiv_fallback(session, refs, transport) -> int:
+async def _arxiv_fallback(session, refs, transport) -> hit_enrichment.ArxivResult:
     if transport is None and settings.discovery_provider == "fake":
         transport = discovery_fake.transport()
     async with arxiv.new_client(transport=transport) as http:
-        return (await hit_enrichment.arxiv_abstracts(session, http, refs)).filled
+        return await hit_enrichment.arxiv_abstracts(session, http, refs)
 
 
 async def enrich_hits(ctx: dict, workspace_id: str, run_id: str | None = None) -> None:
@@ -37,9 +37,10 @@ async def enrich_hits(ctx: dict, workspace_id: str, run_id: str | None = None) -
             retry_429=False,
         ) as http:
             ws, run = uuid.UUID(workspace_id), uuid.UUID(run_id) if run_id else None
-            pending = await hit_enrichment.refs_to_enrich(session, ws, run)
             outcome = await hit_enrichment.enrich(session, http, ws, run)
         if not outcome.rate_limited:  # leave arXiv for the next call when S2 is busy
-            outcome = replace(outcome, arxiv_filled=await _arxiv_fallback(session, pending, ctx.get("arxiv_transport")))
+            refs = await hit_enrichment.refs_for_arxiv(session, ws, run)
+            result = await _arxiv_fallback(session, refs, ctx.get("arxiv_transport"))
+            outcome = replace(outcome, arxiv_filled=result.filled, arxiv_rate_limited=result.rate_limited)
         outcome = replace(outcome, suggestions_cleared=await hit_enrichment.clear_stale_no_abstract(session, ws))
     logger.info("enrich_hits for %s: %s", workspace_id, outcome)

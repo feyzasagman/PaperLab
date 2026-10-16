@@ -12,7 +12,7 @@ import httpx
 from sqlalchemy import func, null, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.candidates import s2_triage
+from app.core.candidates import _ARXIV_VERSION, ARXIV_ID, s2_triage
 from app.core.source_types import ARXIV_DOI_PREFIX
 from app.models.references import ExternalRef
 from app.models.workspace_search import WorkspaceSearchHit
@@ -27,7 +27,7 @@ MAX_429 = 4  # consecutive 429s on one chunk before the job stops
 ARXIV_CHUNK = 100  # arXiv's id_list limit
 ARXIV_PAUSE = 3.0  # arXiv asks for one request every 3 seconds
 ARXIV_BUSY = (429, 503)
-_VERSION = re.compile(r"v\d+$")
+_ARXIV_FULL = re.compile(ARXIV_ID)
 
 
 @dataclass(frozen=True)
@@ -39,14 +39,34 @@ class EnrichResult:
     rate_limited: bool = False
     suggestions_cleared: int = 0
     arxiv_filled: int = 0
+    arxiv_rate_limited: bool = False
+
+
+def _hit_refs(ws: uuid.UUID, run_id: uuid.UUID | None):
+    hits = select(WorkspaceSearchHit.external_ref_id).where(WorkspaceSearchHit.workspace_id == ws)
+    return hits if run_id is None else hits.where(WorkspaceSearchHit.run_id == run_id)
+
+
+async def refs_for_arxiv(session: AsyncSession, ws: uuid.UUID, run_id: uuid.UUID | None) -> list[ExternalRef]:
+    """Refs of the workspace's hits (optionally one run's) with an arXiv id and no abstract. Unlike refs_to_enrich
+    there is no triage_checked_at filter, so what an earlier arXiv stop left is asked again.
+    ponytail: an arXiv id arXiv doesn't know stays queued; mark such refs if that ever shows up."""
+    query = (
+        select(ExternalRef)
+        .where(
+            ExternalRef.id.in_(_hit_refs(ws, run_id)),
+            ExternalRef.external_ids["arxiv"].astext.is_not(None),
+            func.btrim(func.coalesce(ExternalRef.abstract, "")) == "",
+        )
+        .order_by(ExternalRef.id)
+    )
+    return list((await session.execute(query)).scalars())
 
 
 async def refs_to_enrich(session: AsyncSession, ws: uuid.UUID, run_id: uuid.UUID | None) -> list[ExternalRef]:
     """Refs of the workspace's hits (optionally one run's) with a DOI or arXiv id and no source_type or
     abstract, that Semantic Scholar was not asked about yet."""
-    hits = select(WorkspaceSearchHit.external_ref_id).where(WorkspaceSearchHit.workspace_id == ws)
-    if run_id is not None:
-        hits = hits.where(WorkspaceSearchHit.run_id == run_id)
+    hits = _hit_refs(ws, run_id)
     wanted = ExternalRef.doi.is_not(None) | ExternalRef.external_ids["arxiv"].astext.is_not(None)
     missing = ExternalRef.source_type.is_(None) | (func.btrim(func.coalesce(ExternalRef.abstract, "")) == "")
     query = (
@@ -153,11 +173,11 @@ class ArxivResult:
 
 
 def _arxiv_id(ref: ExternalRef) -> str | None:
-    found = ((ref.external_ids or {}).get("arxiv") or "").strip().lower()
-    return _VERSION.sub("", found) or None
+    found = _ARXIV_VERSION.sub("", ((ref.external_ids or {}).get("arxiv") or "").strip().lower())
+    return found if _ARXIV_FULL.fullmatch(found) else None  # one malformed id would make arXiv reject the chunk
 
 
-async def _arxiv_with_backoff(http: httpx.AsyncClient, ids: list[str], sleep) -> list[dict] | None:
+async def _arxiv_with_backoff(http: httpx.AsyncClient, ids: list[str]) -> list[dict] | None:
     """The chunk's entries, or None after MAX_429 consecutive 429/503s. Other HTTP errors raise."""
     for attempt in range(MAX_429):
         try:
@@ -170,8 +190,23 @@ async def _arxiv_with_backoff(http: httpx.AsyncClient, ids: list[str], sleep) ->
     return None
 
 
+async def _arxiv_one_by_one(http: httpx.AsyncClient, ids: list[str]) -> list[dict]:
+    """After a 400 for the whole chunk: arXiv rejects the chunk if any id is bad, so ask for each id alone."""
+    found = []
+    for key in ids:
+        await sleep(ARXIV_PAUSE)
+        try:
+            entry = await arxiv.get(http, key)
+        except httpx.HTTPError:
+            logger.exception("arXiv lookup of %s failed; going on", key)
+            continue
+        if entry:
+            found.append(entry)
+    return found
+
+
 async def arxiv_abstracts(
-    session: AsyncSession, http: httpx.AsyncClient, refs: list[ExternalRef], *, sleep=sleep
+    session: AsyncSession, http: httpx.AsyncClient, refs: list[ExternalRef]
 ) -> ArxivResult:
     """Fills the empty abstracts of refs that have an arXiv id, ARXIV_CHUNK ids per request, ARXIV_PAUSE seconds
     apart, committing per chunk. A chunk that fails is logged and skipped; four 429/503s in a row stop it."""
@@ -182,7 +217,12 @@ async def arxiv_abstracts(
             await sleep(ARXIV_PAUSE)
         chunk = wanted[start : start + ARXIV_CHUNK]
         try:
-            entries = await _arxiv_with_backoff(http, [key for _, key in chunk], sleep)
+            entries = await _arxiv_with_backoff(http, [key for _, key in chunk])
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 400:
+                logger.exception("arXiv lookup of %d ids failed; going on", len(chunk))
+                continue
+            entries = await _arxiv_one_by_one(http, [key for _, key in chunk])
         except httpx.HTTPError:
             logger.exception("arXiv lookup of %d ids failed; going on", len(chunk))
             continue

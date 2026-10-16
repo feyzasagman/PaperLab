@@ -363,7 +363,7 @@ async def enrich_hits(workspace: str, run_id: uuid.UUID | None = None) -> pipeli
     second call starts nothing), a rate-limited stop or a failed chunk. A hit Semantic Scholar couldn't fill is
     asked once only. Hits whose 'no abstract' suggestion is now out of date are cleared (`suggestions_cleared`), so
     run_prescreen picks them up again.
-    Refused (source_off) when Semantic Scholar is turned off in Settings."""
+    With Semantic Scholar turned off in Settings nothing is queued (`s2_off`)."""
     async with sessions() as session:
         return await pipeline.enrich_hits(session, workspace, run_id)
 

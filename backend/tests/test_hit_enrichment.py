@@ -186,7 +186,7 @@ async def test_enrich_hits_tool_queues_once_with_the_count(session, jobs):
     done = ref("done", doi="10.1/c", source_type="preprint", abstract="Has one.")
     ws, run = await pool(session, [ref("a", doi="10.1/a"), ref("b", doi="10.1/b"), done])
     out = result(await call("enrich_hits", workspace=ws.name))
-    assert out == {"queued": 2, "already_running": False, "suggestions_cleared": 0}
+    assert out == {"queued": 2, "already_running": False, "suggestions_cleared": 0, "s2_off": False}
     assert jobs.jobs == [("enrich_hits", str(ws.id), None)]
     result(await call("enrich_hits", workspace=ws.name, run_id=str(run.id)))
     assert jobs.jobs[-1] == ("enrich_hits", str(ws.id), str(run.id))
@@ -196,15 +196,15 @@ async def test_a_second_enrich_hits_while_a_job_runs_queues_nothing(session, job
     ws, _ = await pool(session, [ref("a", doi="10.1/a")])
     first = result(await call("enrich_hits", workspace=ws.name))
     second = result(await call("enrich_hits", workspace=ws.name))
-    assert first == {"queued": 1, "already_running": False, "suggestions_cleared": 0}
-    assert second == {"queued": 1, "already_running": True, "suggestions_cleared": 0}
+    assert first == {"queued": 1, "already_running": False, "suggestions_cleared": 0, "s2_off": False}
+    assert second == {"queued": 1, "already_running": True, "suggestions_cleared": 0, "s2_off": False}
     assert jobs.jobs == [("enrich_hits", str(ws.id), None)]
 
 
 async def test_enrich_hits_with_nothing_to_do_queues_nothing(session, jobs):
     ws, _ = await pool(session, [ref("done", doi="10.1/c", source_type="preprint", abstract="Has one.")])
     out = result(await call("enrich_hits", workspace=ws.name))
-    assert out == {"queued": 0, "already_running": False, "suggestions_cleared": 0}
+    assert out == {"queued": 0, "already_running": False, "suggestions_cleared": 0, "s2_off": False}
     assert jobs.jobs == []
 
 
@@ -254,8 +254,14 @@ async def test_enrich_hits_is_refused_when_semantic_scholar_is_off(session, jobs
         return off
 
     monkeypatch.setattr(paper_sources, "get", get)
-    response = await call("enrich_hits", workspace=ws.name)
-    assert response.is_error and response.structured_content["error"] == "source_off"
+    done = ref("done", abstract="Has one.")
+    other, _ = await pool(session, [done])
+    suggest(await hit_of(session, done), ["no_abstract"])
+    await session.flush()
+    assert result(await call("enrich_hits", workspace=other.name)) == {
+        "queued": 0, "already_running": False, "suggestions_cleared": 1, "s2_off": True,
+    }
+    assert result(await call("enrich_hits", workspace=ws.name))["s2_off"] is True
     assert jobs.jobs == []
 
 
@@ -314,7 +320,7 @@ async def test_enrich_hits_clears_even_with_nothing_to_enrich(session, jobs):
     suggest(await hit_of(session, done), ["no_abstract"])
     await session.flush()
     out = result(await call("enrich_hits", workspace=ws.name))
-    assert out == {"queued": 0, "already_running": False, "suggestions_cleared": 1}
+    assert out == {"queued": 0, "already_running": False, "suggestions_cleared": 1, "s2_off": False}
     assert jobs.jobs == []
     assert (await hit_of(session, done)).suggestion is None
 
@@ -371,47 +377,39 @@ def id_list(request) -> list[str]:
     return request.url.params["id_list"].split(",")
 
 
-async def test_arxiv_fallback_fills_only_empty_abstracts_and_paces_requests(session):
+async def test_arxiv_fallback_fills_only_empty_abstracts_and_paces_requests(session, waits):
     refs = arxiv_refs(150)
     has_one = ref("has one", abstract="Mine.", external_ids={"arxiv": "2301.99999"})
     no_arxiv = ref("no arxiv", doi="10.1/n")
     ws, _ = await pool(session, [*refs, has_one, no_arxiv])
-    sent, sleeps = [], []
-
-    async def sleep(seconds):
-        sleeps.append(seconds)
+    sent = []
 
     def handler(request):
         sent.append(id_list(request))
         return httpx.Response(200, text=atom(id_list(request)))
 
     async with arxiv_client(handler) as http:
-        outcome = await hit_enrichment.arxiv_abstracts(session, http, [*refs, has_one, no_arxiv], sleep=sleep)
+        outcome = await hit_enrichment.arxiv_abstracts(session, http, [*refs, has_one, no_arxiv])
 
-    assert [len(ids) for ids in sent] == [100, 50] and sleeps == [3.0]
+    assert [len(ids) for ids in sent] == [100, 50] and waits == [3.0]
     assert (outcome.asked, outcome.filled, outcome.rate_limited) == (150, 150, False)
     assert refs[0].abstract == "Abstract of 2301.00000." and has_one.abstract == "Mine." and no_arxiv.abstract is None
 
 
-async def test_arxiv_429_then_success_and_four_429s_stop(session, monkeypatch):
+async def test_arxiv_429_then_success_and_four_429s_stop(session, monkeypatch, waits):
     monkeypatch.setattr(hit_enrichment, "ARXIV_CHUNK", 2)
     refs = arxiv_refs(4)
     ws, _ = await pool(session, refs)
-    sleeps = []
-
-    async def sleep(seconds):
-        sleeps.append(seconds)
-
     answers = iter([
         httpx.Response(429, headers={"Retry-After": "7"}),
         httpx.Response(200, text=atom(["2301.00000"])),  # arXiv answers one of the two ids
     ])
     async with arxiv_client(lambda request: next(answers)) as http:
-        outcome = await hit_enrichment.arxiv_abstracts(session, http, refs[:2], sleep=sleep)
-    assert sleeps == [7] and (outcome.asked, outcome.filled, outcome.rate_limited) == (2, 1, False)
+        outcome = await hit_enrichment.arxiv_abstracts(session, http, refs[:2])
+    assert waits == [7] and (outcome.asked, outcome.filled, outcome.rate_limited) == (2, 1, False)
     assert refs[0].abstract and refs[1].abstract is None
 
-    sleeps.clear()
+    waits.clear()
     calls = []
 
     def busy(request):
@@ -419,8 +417,8 @@ async def test_arxiv_429_then_success_and_four_429s_stop(session, monkeypatch):
         return httpx.Response(503 if len(calls) % 2 else 429)
 
     async with arxiv_client(busy) as http:
-        outcome = await hit_enrichment.arxiv_abstracts(session, http, refs[1:], sleep=sleep)
-    assert len(calls) == 4 and sleeps == [2, 5, 15]  # stopped after the 4th in a row; the rest is left
+        outcome = await hit_enrichment.arxiv_abstracts(session, http, refs[1:])
+    assert len(calls) == 4 and waits == [2, 5, 15]  # stopped after the 4th in a row; the rest is left
     assert outcome.rate_limited and outcome.filled == 0 and refs[2].abstract is None
 
 
@@ -459,3 +457,51 @@ async def test_job_skips_arxiv_after_an_s2_rate_limit(session, monkeypatch):
 async def hit_enrichment_reset(session, r):
     r.triage_checked_at = None
     await session.flush()
+
+
+async def test_arxiv_gaps_are_queued_again_after_a_stop(session, jobs, monkeypatch, waits):
+    from app.workers import hit_enrichment as worker
+
+    @asynccontextmanager
+    async def test_session():
+        yield session
+
+    monkeypatch.setattr(worker, "SessionLocal", test_session)
+    stamped = [ref(f"s{n}", external_ids={"arxiv": f"2301.{n:05d}"}, triage_checked_at=NOW) for n in range(2)]
+    ws, _ = await pool(session, stamped)  # S2 already asked about both, neither has an abstract
+    assert result(await call("enrich_hits", workspace=ws.name))["queued"] == 2
+    s2 = httpx.MockTransport(lambda request: httpx.Response(500))
+
+    busy = httpx.MockTransport(lambda request: httpx.Response(429))
+    await worker.enrich_hits({"transport": s2, "arxiv_transport": busy}, str(ws.id))
+    assert all(r.abstract is None for r in stamped)
+    assert result(await call("enrich_hits", workspace=ws.name))["queued"] == 2  # the stop left them queued
+
+    fine = httpx.MockTransport(lambda request: httpx.Response(200, text=atom(id_list(request))))
+    await worker.enrich_hits({"transport": s2, "arxiv_transport": fine}, str(ws.id))
+    assert all(r.abstract for r in stamped)
+    assert result(await call("enrich_hits", workspace=ws.name))["queued"] == 0
+
+
+async def test_a_400_for_the_chunk_is_re_asked_one_id_at_a_time(session, waits):
+    ok = arxiv_refs(2)
+    odd = ref("odd", external_ids={"arxiv": "2301.99999"})  # well-formed, but arXiv rejects it
+    junk = ref("junk", external_ids={"arxiv": "not an id"})  # never sent
+    ws, _ = await pool(session, [*ok, odd, junk])
+    sent = []
+
+    def handler(request):
+        ids = id_list(request)
+        sent.append(ids)
+        if "2301.99999" in ids and len(ids) > 1:
+            return httpx.Response(400)
+        return httpx.Response(200, text=atom(ids, skip=("2301.99999",)))
+
+    async with arxiv_client(handler) as http:
+        outcome = await hit_enrichment.arxiv_abstracts(session, http, [*ok, odd, junk])
+
+    assert sent[0] == ["2301.00000", "2301.00001", "2301.99999"]
+    assert sent[1:] == [["2301.00000"], ["2301.00001"], ["2301.99999"]]
+    assert waits == [3.0, 3.0, 3.0]
+    assert all(r.abstract for r in ok) and odd.abstract is None and junk.abstract is None
+    assert (outcome.filled, outcome.rate_limited) == (2, False)
