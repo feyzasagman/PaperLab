@@ -16,6 +16,7 @@ from app.workers.harvest import (
     harvest_iacr_eprint,
     harvest_medrxiv,
 )
+from app.workers.hit_enrichment import ENRICH_JOB_TIMEOUT, enrich_hits
 from app.workers.ingest import MAX_TRIES, ingest_paper, reembed_paper
 from app.workers.references import fetch_references
 from app.workers.saved_searches import schedule_saved_searches
@@ -49,6 +50,8 @@ class WorkerSettings:
         _to_ingest_queue("reembed_paper"),
         fetch_references,
         func(run_workspace_search, timeout=SEARCH_RUN_JOB_TIMEOUT),
+        # no stored result: the job id frees as soon as it ends, so a re-run after a rate-limited stop starts
+        func(enrich_hits, timeout=ENRICH_JOB_TIMEOUT, keep_result=0),
         func(suggest_screening, timeout=SUGGEST_JOB_TIMEOUT),
         func(generate_evidence_cards, timeout=EVIDENCE_CARDS_JOB_TIMEOUT, max_tries=EVIDENCE_CARDS_MAX_TRIES),
     ]

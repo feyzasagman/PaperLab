@@ -106,6 +106,19 @@ def test_an_arxiv_location_gives_a_published_paper_its_arxiv_pdf_first():
     ]
 
 
+def test_an_openalex_article_hosted_on_arxiv_is_a_preprint():
+    work = {
+        "title": "On arXiv",
+        "type": "article",
+        "primary_location": {"source": {"display_name": "arXiv (Cornell University)"}},
+    }
+
+    candidate = from_work(work)
+
+    assert candidate.source_type == "preprint"
+    assert candidate.published_venue is None
+
+
 def test_a_work_missing_optional_fields_still_maps():
     candidate = from_work({"title": None, "primary_location": {"source": None}})
 

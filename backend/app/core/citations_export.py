@@ -355,7 +355,7 @@ async def export_papers(
         papers = await workspaces.papers(session, workspace_id)
     else:
         if len(paper_ids or []) > MAX_SELECTION:
-            raise InvalidInput("too_many_papers")
+            raise InvalidInput("too_many_papers", max=MAX_SELECTION)
         ids = list(dict.fromkeys(paper_ids or []))
         found = {p.id: p for p in await session.scalars(select(Paper).where(Paper.id.in_(ids)))}
         if missing := [i for i in ids if i not in found]:

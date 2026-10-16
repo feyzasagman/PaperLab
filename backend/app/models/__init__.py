@@ -13,6 +13,7 @@ from app.models.paper_sources import PaperSources
 from app.models.references import ExternalRef, NoteEmbedding, paper_references
 from app.models.saved_search import SavedSearch
 from app.models.setup import Setup
+from app.models.tag import WorkspaceTag, hit_tags, paper_tags
 from app.models.workspace import Workspace, workspace_papers
 
 __all__ = [
@@ -40,12 +41,15 @@ __all__ = [
     "SavedSearch",
     "Setup",
     "Workspace",
+    "WorkspaceTag",
     "cell_table",
     "chart_datasets",
+    "hit_tags",
     "note_anchors",
     "note_charts",
     "note_papers",
     "paper_references",
+    "paper_tags",
     "paper_authors",
     "paper_topics",
     "workspace_papers",
