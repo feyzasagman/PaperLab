@@ -208,7 +208,8 @@ async def test_an_omniroute_server_on_this_machine_counts_as_cloud_once_it_answe
 
     rows = {c["id"]: c for c in (await client.get("/api/llm/connections")).json()}
     assert (rows[omniroute["id"]]["is_local"], rows[plain["id"]]["is_local"]) == (False, True)
-    model = (await client.post(f"/api/llm/connections/{omniroute['id']}/models", json={"name": "auto/best-free"})).json()
+    added = await client.post(f"/api/llm/connections/{omniroute['id']}/models", json={"name": "auto/best-free"})
+    model = added.json()
     chat_models = {m["id"]: m for m in (await client.get("/api/llm/models")).json()}
     assert chat_models[model["id"]]["is_local"] is False
 

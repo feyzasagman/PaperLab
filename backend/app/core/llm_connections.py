@@ -234,7 +234,10 @@ async def list_chat_models(session: AsyncSession) -> list[ChatModelView]:
         .join(LLMConnection, LLMModel.connection_id == LLMConnection.id)
         .order_by(LLMConnection.label, LLMModel.name)
     )
-    return [ChatModelView(m.id, m.name, c.label, is_local(c.kind, c.base_url, c.cloud_proxy), m.is_default) for m, c in rows]
+    return [
+        ChatModelView(m.id, m.name, c.label, is_local(c.kind, c.base_url, c.cloud_proxy), m.is_default)
+        for m, c in rows
+    ]
 
 
 async def add_model(session: AsyncSession, connection_id: uuid.UUID, name: str, exist_ok: bool = False) -> ModelView:

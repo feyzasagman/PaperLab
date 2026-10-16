@@ -114,6 +114,16 @@ def test_is_local_goes_by_host_only(kind, base_url, local):
     assert connections.is_local(kind, base_url) is local
 
 
+async def test_a_new_address_forgets_that_the_old_server_was_a_cloud_router(session):
+    connection = await openai_connection(session, base_url="http://host.docker.internal:20128/v1")
+    await connections.record_cloud_proxy(session, await connections.get_connection_row(session, connection.id), True)
+
+    renamed = await connections.update_connection(session, connection.id, {"label": "Renamed " + connection.label})
+    moved = await connections.update_connection(session, connection.id, {"base_url": "http://host.docker.internal:1234/v1"})
+
+    assert (renamed.is_local, moved.is_local) == (False, True)
+
+
 async def test_a_taken_label_is_a_conflict_on_create_and_on_rename(session):
     first, second = await openai_connection(session), await openai_connection(session)
 
