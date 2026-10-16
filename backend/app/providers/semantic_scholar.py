@@ -13,7 +13,7 @@ from app.providers.openalex import json_body
 
 BASE_URL = "https://api.semanticscholar.org"
 TIMEOUT = httpx.Timeout(10.0)
-PAPER_FIELDS = "title,year,venue,authors,externalIds,openAccessPdf,citationCount,abstract"
+PAPER_FIELDS = "title,year,venue,authors,externalIds,openAccessPdf,citationCount,abstract,publicationTypes,journal"
 # The default pool is recent papers only, and its picks for BERT were weak. all-cs also served a biology DOI.
 RECOMMENDATION_POOL = "all-cs"
 PAGE = 100  # references/citations page size (M7.5 D79)

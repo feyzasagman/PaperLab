@@ -69,6 +69,7 @@ async def test_get_parses_the_entry_without_its_version(arxiv_api):
         "authors": ["Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova"],
         "year": 2018,
         "doi": None,
+        "journal_ref": None,
     }
     assert arxiv_api.requests[0].url.params["id_list"] == "1810.04805"
 
@@ -90,6 +91,7 @@ async def test_an_old_style_id_whitespace_in_the_title_and_the_doi_are_normalise
         "authors": ["Yosuke Imamura"],
         "year": 1999,
         "doi": "10.1143/ptp.101.1155",
+        "journal_ref": None,
         "abstract": None,
     }
 

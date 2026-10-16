@@ -13,7 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app.core.enrichment import ARXIV_DOI_PREFIX, abstract_text, short_id
+from app.core.enrichment import ARXIV_DOI_PREFIX, abstract_text, normalize_doi, short_id
+from app.core.source_types import source_type_of
 
 # CandidateIn (app/schemas/discovery.py) rejects a candidate over either limit with 422; capping here first means
 # the Add button never shows for a candidate its own endpoint would then refuse.
@@ -48,6 +49,10 @@ class Candidate:
     pdf_urls: list[str] = field(default_factory=list)
     sources: tuple[str, ...] = ()
     paper_id: uuid.UUID | None = None
+    # M59 hit triage: what kind of source this is and, for a preprint with a published version, where it appeared.
+    source_type: str | None = None
+    published_doi: str | None = None
+    published_venue: str | None = None
 
 
 def arxiv_from_doi(doi: str | None) -> str | None:
@@ -66,6 +71,36 @@ def ordered_pdf_urls(arxiv_id: str | None, *links: str | None) -> list[str]:
     return list(deduped)[:MAX_PDF_URLS]
 
 
+S2_TYPES = {
+    "JournalArticle": "journal_article", "Conference": "proceedings", "Review": "journal_article",
+    "Book": "book", "BookSection": "chapter",
+}  # fmt: skip
+
+
+def s2_triage(paper: Mapping[str, Any]) -> tuple[str | None, str | None, str | None]:
+    """(source_type, published_doi, published_venue) from a Semantic Scholar paper. An arXiv-only paper with no
+    journal is a preprint; an arXiv paper that also has a DOI is the published version's DOI."""
+    ids = paper.get("externalIds") or {}
+    journal_name = (paper.get("journal") or {}).get("name")
+    source_type = next((S2_TYPES[t] for t in paper.get("publicationTypes") or [] if t in S2_TYPES), None)
+    if source_type is None and ids.get("ArXiv") and not journal_name:
+        source_type = "preprint"
+    doi = normalize_doi(ids.get("DOI") or "") if ids.get("ArXiv") else None
+    if doi and doi.startswith(ARXIV_DOI_PREFIX):
+        doi = None
+    venue = None if source_type == "preprint" else journal_name or paper.get("venue") or None
+    return source_type, doi, venue
+
+
+def arxiv_triage(entry: Mapping[str, Any]) -> tuple[str | None, str | None, str | None]:
+    """(source_type, published_doi, published_venue) from an arXiv entry: a journal_ref means it was published."""
+    journal_ref = (entry.get("journal_ref") or "").strip() or None
+    if not journal_ref:
+        return "preprint", None, None
+    doi = normalize_doi(entry.get("doi") or "")
+    return "journal_article", None if doi and doi.startswith(ARXIV_DOI_PREFIX) else doi, journal_ref
+
+
 def from_work(work: dict[str, Any]) -> Candidate:
     doi = (work.get("doi") or "").removeprefix("https://doi.org/").lower() or None
     best = work.get("best_oa_location") or {}
@@ -77,6 +112,7 @@ def from_work(work: dict[str, Any]) -> Candidate:
     source = (work.get("primary_location") or {}).get("source") or {}
     authors = [a["author"]["display_name"] for a in work.get("authorships") or [] if a.get("author")]
     external_ids = {k: v for k, v in {"openalex": short_id(work.get("id")), "arxiv": arxiv_id}.items() if v}
+    source_type = source_type_of(work.get("type"), doi)
     return Candidate(
         title=work.get("title") or "Untitled",
         authors=authors[:MAX_AUTHORS],
@@ -88,6 +124,8 @@ def from_work(work: dict[str, Any]) -> Candidate:
         abstract=abstract_text(work.get("abstract_inverted_index")),
         pdf_urls=ordered_pdf_urls(arxiv_id, best.get("pdf_url"), *(place.get("pdf_url") for place in locations)),
         sources=("openalex",),
+        source_type=source_type,
+        published_venue=None if source_type == "preprint" else source.get("display_name"),
     )
 
 
@@ -96,6 +134,7 @@ def from_s2(paper: dict[str, Any]) -> Candidate:
     doi = (ids.get("DOI") or "").lower() or None
     arxiv_id = (ids.get("ArXiv") or "").lower() or arxiv_from_doi(doi)
     external_ids = {k: v for k, v in {"semantic_scholar": paper.get("paperId"), "arxiv": arxiv_id}.items() if v}
+    source_type, published_doi, published_venue = s2_triage(paper)
     return Candidate(
         title=paper.get("title") or "Untitled",
         authors=[a["name"] for a in paper.get("authors") or [] if a.get("name")][:MAX_AUTHORS],
@@ -107,6 +146,9 @@ def from_s2(paper: dict[str, Any]) -> Candidate:
         abstract=paper.get("abstract") or None,
         pdf_urls=ordered_pdf_urls(arxiv_id, (paper.get("openAccessPdf") or {}).get("url")),
         sources=("semantic_scholar",),
+        source_type=source_type,
+        published_doi=published_doi,
+        published_venue=published_venue,
     )
 
 
@@ -129,6 +171,7 @@ def with_s2(candidate: Candidate, paper: dict[str, Any] | None) -> Candidate:
 def from_arxiv(entry: Mapping[str, Any]) -> Candidate:
     """An entry from providers/arxiv.py: its arXiv ID already has no version, and is always present (a parsed
     entry with no id is filtered out by providers/arxiv.py's own _entry())."""
+    source_type, published_doi, published_venue = arxiv_triage(entry)
     return Candidate(
         title=entry["title"] or "Untitled",
         authors=list(entry["authors"])[:MAX_AUTHORS],
@@ -138,6 +181,9 @@ def from_arxiv(entry: Mapping[str, Any]) -> Candidate:
         abstract=entry.get("abstract"),
         pdf_urls=ordered_pdf_urls(entry["arxiv_id"]),
         sources=("arxiv",),
+        source_type=source_type,
+        published_doi=published_doi,
+        published_venue=published_venue,
     )
 
 
@@ -153,16 +199,20 @@ def from_crossref(item: Mapping[str, Any]) -> Candidate | None:
     ]
     [year, *_] = ((item.get("issued") or {}).get("date-parts") or [[None]])[0] or [None]
     arxiv_id = arxiv_from_doi(doi)
+    venue = next(iter(item.get("container-title") or []), None)
+    source_type = source_type_of(item.get("type"), doi, crossref=True)
     return Candidate(
         title=next(iter(item.get("title") or []), None) or "Untitled",
         authors=[name for name in names if name][:MAX_AUTHORS],
         year=year,
-        venue=next(iter(item.get("container-title") or []), None),
+        venue=venue,
         doi=doi,
         external_ids={"arxiv": arxiv_id} if arxiv_id else {},
         cited_by_count=item.get("is-referenced-by-count"),
         pdf_urls=ordered_pdf_urls(arxiv_id),
         sources=("crossref",),
+        source_type=source_type,
+        published_venue=None if source_type == "preprint" else venue,
     )
 
 
@@ -503,6 +553,9 @@ def _combined(records: list[Candidate]) -> Candidate:
         abstract=first("abstract"),
         pdf_urls=ordered_pdf_urls(arxiv_id, *(url for r in records for url in r.pdf_urls)),
         sources=tuple(dict.fromkeys(source for r in records for source in r.sources)),
+        source_type=first("source_type"),
+        published_doi=first("published_doi"),
+        published_venue=first("published_venue"),
     )
 
 

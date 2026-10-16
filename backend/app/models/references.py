@@ -46,6 +46,10 @@ class ExternalRef(Base):
     # union'd across every merge that touches this row, never just the most recent one.
     sources: Mapped[list[str]] = mapped_column(JSONB, server_default=text("'[]'"))
     external_ids: Mapped[dict[str, str]] = mapped_column(JSONB, server_default=text("'{}'"))
+    # M59 hit triage: filled at search time from what the providers return; null when no source said.
+    source_type: Mapped[str | None] = mapped_column(Text)
+    published_doi: Mapped[str | None] = mapped_column(Text)
+    published_venue: Mapped[str | None] = mapped_column(Text)
 
 
 paper_references = Table(
