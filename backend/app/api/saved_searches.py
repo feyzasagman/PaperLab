@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Response
 
 from app.api.deps import SessionDep
-from app.core import saved_searches, schedules
+from app.core import saved_searches, schedules, workspace_search
 from app.schemas.saved_searches import SavedSearchCreate, SavedSearchOut, SavedSearchUpdate
 from app.schemas.workspace_search import SearchRunOut
 
@@ -55,4 +55,4 @@ async def delete_saved_search(workspace_id: uuid.UUID, saved_search_id: uuid.UUI
 
 @router.post("/{saved_search_id}/run", status_code=201)
 async def run_saved_search(workspace_id: uuid.UUID, saved_search_id: uuid.UUID, session: SessionDep) -> SearchRunOut:
-    return await saved_searches.run_now(session, workspace_id, saved_search_id)
+    return await workspace_search.run_out(session, await saved_searches.run_now(session, workspace_id, saved_search_id))

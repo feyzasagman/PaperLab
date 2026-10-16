@@ -42,6 +42,7 @@ EXPECTED_TOOLS = {
     "list_workspaces": True, "create_workspace": None, "list_papers": True, "add_paper": None, "add_papers": None,
     "add_paper_to_workspace": None, "remove_paper_from_workspace": None,
     "start_search_run": None, "get_search_run": True, "list_search_runs": True, "stop_search_run": None,
+    "continue_search_run": None,
     "list_hits": True, "review_hits": None, "import_hit": None, "snowball": None,
     "set_eligibility": None, "get_prisma": True, "list_notes": True,
     "create_saved_search": None, "list_saved_searches": True, "set_saved_search_enabled": None,

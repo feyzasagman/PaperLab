@@ -631,60 +631,138 @@ async def test_stop_run_sets_status_and_stopped_at(session):
     assert stopped.stopped_at is not None
 
 
-@pytest.mark.asyncio
-async def test_start_run_on_a_stopped_run_resumes_its_cursors(session):
-    from app.core.workspace_search import start_run, stop_run
-    workspace = Workspace(name=f"Resume {uuid.uuid4().hex[:8]}")
-    session.add(workspace)
-    await session.flush()
-    await session.commit()
-    run = await start_run(session, workspace.id, "bert", filters={}, sources=["arxiv"])
-    cursor = (await session.execute(
-        select(WorkspaceSearchCursor).where(WorkspaceSearchCursor.run_id == run.id)
-    )).scalar_one()
-    cursor.cursor_json = {"value": 40}
-    await session.commit()
-    await stop_run(session, run.id)
-
-    resumed = await start_run(session, workspace.id, "bert", filters={}, sources=["arxiv"], run_id=run.id)
-
-    assert resumed.id == run.id
-    assert resumed.status == "running"
-    reloaded_cursor = (await session.execute(
-        select(WorkspaceSearchCursor).where(WorkspaceSearchCursor.run_id == run.id)
-    )).scalar_one()
-    assert reloaded_cursor.cursor_json == {"value": 40}
-
-
-@pytest.mark.asyncio
-async def test_start_run_raises_conflict_on_already_running(session):
-    from app.core.errors import Conflict
+async def _stopped_run_with_cursors(session, cursors: dict[str, tuple[dict, bool]], status="stopped", stats=None):
+    """A run whose cursors are given as {source: (cursor_json, exhausted)}."""
     from app.core.workspace_search import start_run
-    workspace = Workspace(name=f"Conflict {uuid.uuid4().hex[:8]}")
+    workspace = Workspace(name=f"Continue {uuid.uuid4().hex[:8]}")
     session.add(workspace)
     await session.flush()
     await session.commit()
-    run = await start_run(session, workspace.id, "bert", filters={}, sources=["arxiv"])
+    run = await start_run(session, workspace.id, "bert", filters={}, sources=list(cursors))
+    for cursor in (await session.execute(
+        select(WorkspaceSearchCursor).where(WorkspaceSearchCursor.run_id == run.id)
+    )).scalars():
+        cursor.cursor_json, cursor.exhausted = cursors[cursor.source]
+    run.status, run.stats_json = status, stats or {}
+    await session.commit()
+    return workspace, run
 
-    with pytest.raises(Conflict):
-        await start_run(session, workspace.id, "bert", filters={}, sources=["arxiv"], run_id=run.id)
+
+async def _cursor_rows(session, run) -> dict[str, WorkspaceSearchCursor]:
+    rows = (await session.execute(
+        select(WorkspaceSearchCursor).where(WorkspaceSearchCursor.run_id == run.id)
+    )).scalars()
+    return {c.source: c for c in rows}
 
 
 @pytest.mark.asyncio
-async def test_start_run_raises_not_found_for_cross_workspace_run(session):
+async def test_continue_resumes_a_stopped_run_where_each_source_stopped(session):
+    from app.core.workspace_search import continue_run
+    workspace, run = await _stopped_run_with_cursors(session, {
+        "arxiv": ({"value": 200, "paused": True, "retry_after": "2999-01-01T00:00:00+00:00"}, False),
+        "semantic_scholar": ({"value": 40}, False),
+        "crossref": ({"value": 90}, True),
+    }, stats={
+        "passes": 2, "per_source_raw_count": {"arxiv": 200}, "per_source_out_of_range": {"arxiv": 3},
+        "per_source_error": {"semantic_scholar": "boom"}, "failed_sources": ["crossref"],
+        "pass_raw_count": {"arxiv": 200}, "last_batch_new_hits": 7, "cut_short": True,
+        "unfinished_sources": ["semantic_scholar"], "paused_sources": ["arxiv"],
+    })
+
+    resumed = await continue_run(session, workspace.id, run.id)
+
+    assert resumed.status == "running" and resumed.stopped_at is None
+    assert resumed.stats_json == {
+        "passes": 3, "per_source_raw_count": {"arxiv": 200}, "per_source_out_of_range": {"arxiv": 3},
+        "per_source_error": {"semantic_scholar": "boom"}, "failed_sources": ["crossref"],
+        "pass_raw_count": {}, "last_batch_new_hits": 0,
+    }
+    cursors = await _cursor_rows(session, run)
+    assert cursors["arxiv"].cursor_json == {"value": 200}  # next page kept, pause and cooldown cleared
+    assert cursors["semantic_scholar"].cursor_json == {"value": 40}
+    assert cursors["crossref"].cursor_json == {"value": 90} and cursors["crossref"].exhausted is True
+
+
+@pytest.mark.asyncio
+async def test_continue_counts_a_first_continue_as_the_second_pass(session):
+    from app.core.workspace_search import continue_run
+    workspace, run = await _stopped_run_with_cursors(session, {"arxiv": ({"value": 5}, False)})
+
+    resumed = await continue_run(session, workspace.id, run.id)
+
+    assert resumed.stats_json["passes"] == 2
+
+
+@pytest.mark.asyncio
+async def test_continue_refuses_when_nothing_is_left(session):
+    from app.core.errors import Conflict
+    from app.core.workspace_search import continue_run
+    workspace, run = await _stopped_run_with_cursors(
+        session, {"arxiv": ({"value": 9}, True), "crossref": ({"value": 9}, True)}, status="exhausted")
+
+    with pytest.raises(Conflict, match="nothing_left_to_fetch"):
+        await continue_run(session, workspace.id, run.id)
+    assert (await session.get(WorkspaceSearchRun, run.id)).status == "exhausted"
+
+
+@pytest.mark.asyncio
+async def test_continue_refuses_a_running_run(session):
+    from app.core.errors import Conflict
+    from app.core.workspace_search import continue_run
+    workspace, run = await _stopped_run_with_cursors(session, {"arxiv": ({"value": 5}, False)}, status="running")
+
+    with pytest.raises(Conflict, match="search_run_already_running"):
+        await continue_run(session, workspace.id, run.id)
+
+
+@pytest.mark.asyncio
+async def test_continue_refuses_a_run_of_another_workspace(session):
     from app.core.errors import NotFound
-    from app.core.workspace_search import start_run, stop_run
-    workspace_a = Workspace(name=f"Workspace A {uuid.uuid4().hex[:8]}")
-    workspace_b = Workspace(name=f"Workspace B {uuid.uuid4().hex[:8]}")
-    session.add(workspace_a)
-    session.add(workspace_b)
+    from app.core.workspace_search import continue_run
+    _, run = await _stopped_run_with_cursors(session, {"arxiv": ({"value": 5}, False)})
+    other = Workspace(name=f"Other {uuid.uuid4().hex[:8]}")
+    session.add(other)
     await session.flush()
-    await session.commit()
-    run = await start_run(session, workspace_a.id, "bert", filters={}, sources=["arxiv"])
-    await stop_run(session, run.id)
 
     with pytest.raises(NotFound):
-        await start_run(session, workspace_b.id, "bert", filters={}, sources=["arxiv"], run_id=run.id)
+        await continue_run(session, other.id, run.id)
+    with pytest.raises(NotFound):
+        await continue_run(session, other.id, uuid.uuid4())
+
+
+@pytest.mark.asyncio
+async def test_a_failed_source_is_not_continued_and_cooldown_is_cleared_only_for_live_cursors(session):
+    from app.core.workspace_search import continue_run
+    cooling = {"value": 20, "errors": 2, "retry_after": "2999-01-01T00:00:00+00:00"}
+    workspace, run = await _stopped_run_with_cursors(session, {
+        "arxiv": (cooling, False),
+        "crossref": ({"value": 0, "errors": 6, "retry_after": "2999-01-01T00:00:00+00:00"}, True),  # gave up
+    }, stats={"failed_sources": ["crossref"]})
+    cursors = await _cursor_rows(session, run)
+    cursors["arxiv"].last_error = "429"
+    cursors["crossref"].last_error = "429"
+    await session.commit()
+
+    await continue_run(session, workspace.id, run.id)
+
+    cursors = await _cursor_rows(session, run)
+    assert cursors["arxiv"].cursor_json == {"value": 20, "errors": 2}  # cooldown gone, error count kept
+    assert cursors["arxiv"].last_error == "429"
+    assert cursors["crossref"].exhausted is True
+    assert cursors["crossref"].cursor_json == {"value": 0, "errors": 6, "retry_after": "2999-01-01T00:00:00+00:00"}
+    assert (await session.get(WorkspaceSearchRun, run.id)).stats_json["failed_sources"] == ["crossref"]
+
+
+@pytest.mark.asyncio
+async def test_sources_left_lists_each_runs_non_exhausted_sources(session):
+    from app.core.workspace_search import sources_left
+    _, first = await _stopped_run_with_cursors(
+        session, {"arxiv": ({"value": 1}, False), "crossref": ({"value": 1}, True), "openalex": ({"value": 1}, False)})
+    _, second = await _stopped_run_with_cursors(session, {"arxiv": ({"value": 1}, True)})
+
+    left = await sources_left(session, [first.id, second.id])
+
+    assert left == {first.id: ["arxiv", "openalex"]}
 
 
 @pytest.mark.asyncio
@@ -1247,3 +1325,48 @@ async def test_search_batch_drops_known_out_of_range_years_and_keeps_undated(ses
     assert result.out_of_range["arxiv"] >= 1
     assert result.raw_counts["arxiv"] + result.out_of_range["arxiv"] == 3  # PAGE_PAPERS page size
     assert result.new_hits == result.raw_counts["arxiv"]  # only undated fixtures, if any, are stored
+
+
+async def test_search_batch_skips_a_paused_source(session, fake_providers, monkeypatch):
+    from app.core import workspace_search as core_module
+
+    asked = []
+
+    async def arxiv_search(http, query, page_size, cursor):
+        asked.append(cursor)
+        return [], cursor + page_size
+
+    monkeypatch.setitem(core_module._PAGE_FUNCS, "arxiv", arxiv_search)
+    run = await _new_run(session, ["arxiv"])
+    cursor = (
+        await session.execute(select(WorkspaceSearchCursor).where(WorkspaceSearchCursor.run_id == run.id))
+    ).scalar_one()
+    cursor.cursor_json = {"value": 200, "paused": True}
+    await session.flush()
+
+    result = await search_batch(session, fake_providers, run)
+
+    assert asked == []  # a paused source is not fetched
+    assert result.raw_counts == {} and result.errors == {}
+    assert cursor.cursor_json == {"value": 200, "paused": True} and not cursor.exhausted
+
+
+@pytest.mark.asyncio
+async def test_continue_refuses_while_the_old_job_still_holds_the_run_lock(session, database_url):
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.core.errors import Conflict
+    from app.core.workspace_search import continue_run
+    from app.workers.workspace_search import _TRY_LOCK, _lock_key
+    workspace, run = await _stopped_run_with_cursors(session, {"arxiv": ({"value": 5}, False)})
+
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    async with engine.connect() as other:  # the stopping job, mid-batch, in its own transaction
+        assert await other.scalar(_TRY_LOCK, {"key": _lock_key(run.id)})
+        with pytest.raises(Conflict, match="search_run_still_stopping"):
+            await continue_run(session, workspace.id, run.id)
+    await engine.dispose()
+    reloaded = await session.get(WorkspaceSearchRun, run.id)
+    await session.refresh(reloaded)
+    assert reloaded.status == "stopped" and "passes" not in reloaded.stats_json

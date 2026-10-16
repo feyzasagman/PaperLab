@@ -1,18 +1,22 @@
 // @vitest-environment jsdom
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import * as queries from '@/api/queries'
 import type { SearchRunSummary } from '@/api/client'
+import { api } from '@/api/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RunsList } from './RunsList'
 
 const run = (id: string, query: string): SearchRunSummary => ({
   id, query_text: query, status: 'exhausted', started_at: '2026-10-14T00:00:00Z', stopped_at: null,
   sources_json: ['arxiv'], per_source_raw_count: { arxiv: 3 }, failed_sources: [], hit_count: 3,
+  can_continue: false, sources_left: [], paused_sources: [],
 })
 
 function setup(rows: SearchRunSummary[], runId: string | null = null, onSelect = vi.fn()) {
   vi.spyOn(queries, 'useSearchRuns').mockReturnValue({ data: rows } as any)
-  render(<RunsList workspaceId="w1" runId={runId} onSelect={onSelect} />)
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}><RunsList workspaceId="w1" runId={runId} onSelect={onSelect} /></QueryClientProvider>)
   return onSelect
 }
 
@@ -53,4 +57,56 @@ test('the current run is marked aria-current', () => {
 test('an empty list renders nothing', () => {
   setup([])
   expect(screen.queryByRole('button', { name: /Runs/ })).toBeNull()
+})
+
+const pausedRun = {
+  ...run('r3', 'paused query'), can_continue: true, sources_left: ['arxiv', 'crossref'], paused_sources: ['arxiv', 'crossref'],
+}
+
+test('Continue shows only on can_continue rows, with the full accessible name, as a sibling of the row button', () => {
+  setup([pausedRun, run('r1', 'older query')])
+  fireEvent.click(screen.getByRole('button', { name: 'Runs (2)' }))
+  const buttons = screen.getAllByRole('button', { name: /^Continue/ })
+  expect(buttons).toHaveLength(1)
+  expect(buttons[0].getAttribute('aria-label')).toBe('Continue: fetch the next results from 2 sources')
+  expect(buttons[0].textContent).toBe('Continue')
+  expect(buttons[0].parentElement?.closest('button')).toBeNull()
+})
+
+test('one source left reads "1 source"', () => {
+  setup([{ ...pausedRun, sources_left: ['arxiv'], paused_sources: ['arxiv'] }])
+  fireEvent.click(screen.getByRole('button', { name: 'Runs (1)' }))
+  expect(screen.getByRole('button', { name: 'Continue: fetch the next results from 1 source' })).toBeTruthy()
+})
+
+test('clicking Continue calls the API and does not select the row', async () => {
+  const cont = vi.spyOn(api, 'continueSearchRun').mockResolvedValue({} as never)
+  const onSelect = setup([pausedRun])
+  fireEvent.click(screen.getByRole('button', { name: 'Runs (1)' }))
+  fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+  await waitFor(() => expect(cont).toHaveBeenCalledWith('w1', 'r3'))
+  expect(onSelect).not.toHaveBeenCalled()
+})
+
+test('a paused run says so in plain words instead of "exhausted"', () => {
+  setup([pausedRun])
+  fireEvent.click(screen.getByRole('button', { name: 'Runs (1)' }))
+  expect(screen.getByText(/Paused at 200 results per source per pass; Continue fetches more from 2 sources/)).toBeTruthy()
+  expect(screen.queryByText(/exhausted/)).toBeNull()
+})
+
+test('a refused Continue explains itself on its own row only, and only that row is disabled', async () => {
+  let reject: (e: Error) => void = () => {}
+  vi.spyOn(api, 'continueSearchRun').mockImplementation(() => new Promise((_, r) => { reject = r }) as never)
+  setup([{ ...pausedRun, id: 'ra' }, { ...pausedRun, id: 'rb' }])
+  fireEvent.click(screen.getByRole('button', { name: 'Runs (2)' }))
+  const [first, second] = screen.getAllByRole('button', { name: /^Continue/ })
+  fireEvent.click(first)
+  await waitFor(() => expect((first as HTMLButtonElement).disabled).toBe(true))
+  expect((second as HTMLButtonElement).disabled).toBe(false)
+  reject(new Error('search_run_still_stopping'))
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toBe('Still stopping the last pass; try again in a few seconds.')
+  expect(alert.closest('[data-run]')?.getAttribute('data-run')).toBe('ra')
+  expect(screen.getAllByRole('alert')).toHaveLength(1)
 })

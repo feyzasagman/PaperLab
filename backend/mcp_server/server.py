@@ -31,7 +31,9 @@ mcp = MCPServer(
         "file them with add_paper_to_workspace and "
         "take them out with remove_paper_from_workspace. "
         "Systematic search: start_search_run, then get_search_run until it finishes "
-        "(stop_search_run ends one early; list_search_runs shows a workspace's runs); read results with list_hits, "
+        "(stop_search_run ends one early; continue_search_run fetches the next results of a run that "
+        "stopped, was cut short or paused; "
+        "list_search_runs shows a workspace's runs); read results with list_hits, "
         "record the owner's screening with review_hits, pull papers in with import_hit, widen with snowball. "
         "After full-text reading, record set_eligibility; get_prisma gives the flow counts. "
         "Saved searches: create_saved_search runs a search on a schedule, list_saved_searches shows them and "
@@ -263,7 +265,8 @@ async def start_search_run(
 async def get_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
     """Use to check a search run's progress: status (running, exhausted, stopped) and per-source counts in stats.
     stats_json.failed_sources lists sources that stopped answering (their hits are missing); per_source_error holds
-    the last error seen per source, even for one that later recovered."""
+    the last error seen per source, even for one that later recovered.
+    status exhausted with can_continue=true means a pass ended at the per-source limit, not that the sources ran dry."""
     async with sessions() as session:
         return await pipeline.get_search_run(session, run_id)
 
@@ -273,7 +276,8 @@ async def get_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
 async def list_search_runs(workspace: str, limit: int = 20) -> list[pipeline.SearchRunSummary]:
     """Use to see a workspace's search runs, newest first: status, query, sources, per-source result counts and
     how many hits each run added. Pass a run's id to get_search_run for full stats or to list_hits/run_prescreen
-    to scope them."""
+    to scope them.
+    status exhausted with can_continue=true means a pass ended at the per-source limit, not that the sources ran dry."""
     async with sessions() as session:
         return await pipeline.list_search_runs(session, workspace, limit)
 
@@ -284,6 +288,16 @@ async def stop_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
     """Use to stop a running search early. Hits found so far stay."""
     async with sessions() as session:
         return await pipeline.stop_search_run(session, run_id)
+
+
+@mcp.tool()
+@recoverable
+async def continue_search_run(run_id: uuid.UUID) -> pipeline.SearchRunOut:
+    """Use to fetch the next results of a search run that stopped, was cut short or paused at 200 results per source per
+    pass; hits it already found are never added twice. Refused with nothing_left_to_fetch (every source is finished),
+    search_run_already_running or search_run_still_stopping (the last pass is still winding down; retry shortly)."""
+    async with sessions() as session:
+        return await pipeline.continue_search_run(session, run_id)
 
 
 @mcp.tool(annotations=READ_ONLY)

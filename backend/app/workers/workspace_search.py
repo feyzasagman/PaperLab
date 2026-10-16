@@ -9,7 +9,7 @@ from sqlalchemy import select, text, update
 
 from app.config import settings
 from app.core import discovery, paper_sources, queue, screening
-from app.core.workspace_search import SEARCH_RUN_JOB_TIMEOUT, get_run, search_batch
+from app.core.workspace_search import PER_SOURCE_PASS_LIMIT, SEARCH_RUN_JOB_TIMEOUT, get_run, search_batch
 from app.db import SessionLocal
 from app.models.workspace import Workspace
 from app.models.workspace_search import WorkspaceSearchCursor, WorkspaceSearchRun
@@ -66,22 +66,28 @@ async def _try_lock(session, run_id: uuid.UUID) -> bool:
     return bool(await session.scalar(_TRY_LOCK, {"key": _lock_key(run_id)}))
 
 
-async def _mark_exhausted_unless_stopped(session, run: WorkspaceSearchRun, cut_short: bool = False) -> None:
+async def _mark_exhausted_unless_stopped(
+    session, run: WorkspaceSearchRun, cut_short: bool = False, expected_pass: int | None = None
+) -> None:
     """The loop's shared terminal-state write for both the natural (all-cursors) exit and the bounded-backstop
     (iteration-cap or wall-clock deadline) exit. Re-checks status fresh first: a concurrent Stop landing during
-    the last batch already set a status that must not be clobbered back to "exhausted" (bundled minor)."""
+    the last batch already set a status that must not be clobbered back to "exhausted" (bundled minor). Likewise a
+    Continue that landed after this job's last commit started a newer pass (expected_pass is this job's), which
+    this job must not end."""
     await session.refresh(run)
-    if run.status == "running":
+    if run.status == "running" and (expected_pass is None or run.stats_json.get("passes", 1) == expected_pass):
         if cut_short:
             # D266: the wall-clock or iteration backstop ended the run, not every source running dry: say so, and
             # name the sources still paging, because PRISMA "identified" is then a partial count. Status stays
             # "exhausted" for compatibility; the fields are additive.
-            unfinished = (await session.scalars(
-                select(WorkspaceSearchCursor.source).where(
+            cursors = (await session.scalars(
+                select(WorkspaceSearchCursor).where(
                     WorkspaceSearchCursor.run_id == run.id, WorkspaceSearchCursor.exhausted.is_(False)
                 ).order_by(WorkspaceSearchCursor.source)
             )).all()
-            run.stats_json = {**run.stats_json, "cut_short": True, "unfinished_sources": list(unfinished)}
+            # a paused source is waiting for Continue, not cut short
+            unfinished = [c.source for c in cursors if not c.cursor_json.get("paused")]
+            run.stats_json = {**run.stats_json, "cut_short": True, "unfinished_sources": unfinished}
         run.status = "exhausted"
         run.stopped_at = datetime.now(timezone.utc)
         await session.commit()
@@ -113,6 +119,7 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
             run = await get_run(session, rid)
             if run.status != "running":
                 return  # already stopped before this job ran — nothing to do
+            my_pass = run.stats_json.get("passes", 1)
 
             sources = await paper_sources.get(session)
             transport = ctx.get("transport")
@@ -127,8 +134,8 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
                     if iteration > 0:
                         await asyncio.sleep(BATCH_PACING_SECONDS)
                     await session.refresh(run)
-                    if run.status != "running":
-                        return
+                    if run.status != "running" or run.stats_json.get("passes", 1) != my_pass:
+                        return  # stopped, or a Continue started a newer pass that a newer job owns
                     if _now() >= deadline:
                         break  # wall-clock backstop — falls through to the shared terminal-state write below
                     if not await _try_lock(session, rid):
@@ -148,15 +155,19 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
                         logger.warning("workspace search run %s: %s failed: %s", rid, source, per_source_error[source])
                     capped = [s for s in result.sources_exhausted if s in result.errors]  # exhausted by the error cap
                     failed_sources = sorted({*run.stats_json.get("failed_sources", []), *capped})
+                    # includes out-of-range items (unlike per_source_raw_count), so year-filtered sources still pause
+                    pass_raw = dict(run.stats_json.get("pass_raw_count", {}))
+                    for source, count in result.raw_counts.items():
+                        pass_raw[source] = pass_raw.get(source, 0) + count + result.out_of_range.get(source, 0)
                     run.stats_json = {
                         **run.stats_json,
+                        "pass_raw_count": pass_raw,
                         "per_source_error": per_source_error,
                         "failed_sources": failed_sources,
                         "last_batch_new_hits": result.new_hits,
                         "per_source_raw_count": per_source_raw,
                         "per_source_out_of_range": per_source_out,
                     }
-                    await session.commit()
 
                     cursors = (
                         (
@@ -167,12 +178,20 @@ async def run_workspace_search(ctx: dict, run_id: str) -> None:
                         .scalars()
                         .all()
                     )
-                    if cursors and all(c.exhausted for c in cursors):
-                        await _mark_exhausted_unless_stopped(session, run)
+                    for c in cursors:  # the per-pass limit: pause (not exhaust) a source that has had its share
+                        if not c.exhausted and pass_raw.get(c.source, 0) >= PER_SOURCE_PASS_LIMIT:
+                            c.cursor_json = {**c.cursor_json, "paused": True}
+                    done = bool(cursors) and all(c.exhausted or c.cursor_json.get("paused") for c in cursors)
+                    if done:
+                        paused = sorted(c.source for c in cursors if not c.exhausted)
+                        run.stats_json = {**run.stats_json, "paused_sources": paused}
+                    await session.commit()
+                    if done:
+                        await _mark_exhausted_unless_stopped(session, run, expected_pass=my_pass)
                         return
                 # Reached by running out of iterations or hitting the wall-clock deadline without every source
                 # naturally exhausting — still a valid terminal state (C2 part 3), not a failure.
-                await _mark_exhausted_unless_stopped(session, run, cut_short=True)
+                await _mark_exhausted_unless_stopped(session, run, cut_short=True, expected_pass=my_pass)
             finally:
                 await providers.aclose()
         except Exception:

@@ -7,6 +7,7 @@ import pytest
 from mcp_fixtures import *  # noqa: F403
 from mcp_fixtures import call, result
 from pdf_papers import chunked_paper
+from sqlalchemy import select
 
 from app.core import discovery, paper_sources, workspace_search, workspaces
 from app.core import notes as notes_core
@@ -14,6 +15,7 @@ from app.core.paper_sources import SourceSettings
 from app.core.source_registry import SOURCE_IDS
 from app.models import Note
 from app.models.note import Provenance
+from app.models.workspace_search import WorkspaceSearchCursor
 from app.providers import discovery_fake
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group("references")]
@@ -61,6 +63,44 @@ async def test_an_unknown_source_names_the_valid_ones(session):
     response = await call("start_search_run", workspace=f"Bad source {RUN}", query="q", sources=["google_scholar"])
     assert response.is_error and response.structured_content["error"] == "unknown_source"
     assert "arxiv" in response.structured_content["valid"]
+
+
+async def _stopped_run(session, label):
+    await new_workspace(session, label)
+    run = result(await call("start_search_run", workspace=f"{label} {RUN}", query="q", sources=["arxiv"]))
+    result(await call("stop_search_run", run_id=run["id"]))
+    return run
+
+
+async def test_continue_search_run_enqueues_once_and_runs_again(session, jobs):
+    run = await _stopped_run(session, "Continue")
+    again = result(await call("continue_search_run", run_id=run["id"]))
+
+    assert again["status"] == "running" and again["stats_json"]["passes"] == 2
+    assert jobs.jobs == [("run_workspace_search", run["id"]), ("run_workspace_search", run["id"])]
+    busy = await call("continue_search_run", run_id=run["id"])
+    assert busy.is_error and busy.structured_content["error"] == "search_run_already_running"
+
+
+async def test_continue_search_run_nothing_left(session, jobs):
+    run = await _stopped_run(session, "Nothing left")
+    cursors = (await session.scalars(select(WorkspaceSearchCursor).where(
+        WorkspaceSearchCursor.run_id == uuid.UUID(run["id"])))).all()
+    for cursor in cursors:
+        cursor.exhausted = True
+    await session.commit()
+
+    refused = await call("continue_search_run", run_id=run["id"])
+    assert refused.is_error and refused.structured_content["error"] == "nothing_left_to_fetch"
+    assert len(jobs.jobs) == 1
+
+
+async def test_list_and_get_show_can_continue(session, jobs):
+    run = await _stopped_run(session, "Can continue")
+    seen = result(await call("get_search_run", run_id=run["id"]))
+    assert seen["can_continue"] is True and seen["sources_left"] == ["arxiv"]
+    listed = result(await call("list_search_runs", workspace=f"Can continue {RUN}"))
+    assert listed[0]["can_continue"] is True and listed[0]["sources_left"] == ["arxiv"]
 
 
 async def test_a_double_stop_is_a_readable_conflict(session):

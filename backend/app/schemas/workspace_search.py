@@ -28,6 +28,14 @@ class SearchRunCreate(BaseModel):
     query_overrides: dict = {}
 
 
+def _continuation(status: str, stats: dict, left: list[str]) -> dict:
+    """What the UI and the tools need to offer Continue: a run that isn't running and still has sources to page."""
+    return {
+        "can_continue": status != "running" and bool(left), "sources_left": left,
+        "paused_sources": stats.get("paused_sources", []),
+    }
+
+
 class SearchRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,6 +49,13 @@ class SearchRunOut(BaseModel):
     started_at: datetime
     stopped_at: datetime | None
     stats_json: dict
+    # Filled by workspace_search.run_out from the run's cursors (defaults: a bare run row still validates).
+    can_continue: bool = False
+    sources_left: list[str] = []
+    paused_sources: list[str] = []  # sources that hit the per-pass limit in the latest pass
+
+    def with_continuation(self, left: list[str]) -> "SearchRunOut":
+        return self.model_copy(update=_continuation(self.status, self.stats_json, left))
 
 
 class SearchRunSummary(BaseModel):
@@ -55,11 +70,15 @@ class SearchRunSummary(BaseModel):
     per_source_raw_count: dict[str, int]
     failed_sources: list[str]
     hit_count: int
+    can_continue: bool = False
+    sources_left: list[str] = []
+    paused_sources: list[str] = []
 
     @classmethod
-    def from_run(cls, run, hit_count: int) -> "SearchRunSummary":
+    def from_run(cls, run, hit_count: int, left: list[str] | None = None) -> "SearchRunSummary":
         stats = run.stats_json or {}
         return cls(
+            **_continuation(run.status, stats, left or []),
             id=run.id, query_text=run.query_text, status=run.status, started_at=run.started_at,
             stopped_at=run.stopped_at, sources_json=run.sources_json,
             per_source_raw_count=stats.get("per_source_raw_count", {}),

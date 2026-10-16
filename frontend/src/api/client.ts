@@ -76,7 +76,12 @@ export type GraphNode = components['schemas']['GraphNode']
 export type GraphLink = components['schemas']['GraphLink']
 export type LibraryGraph = components['schemas']['GraphOut']
 export type PaperLinkOut = components['schemas']['LinkOut']
-export type SearchRun = components['schemas']['SearchRunOut']
+// The three continue fields are intersected in by hand until gen:api sees them.
+export type SearchRun = components['schemas']['SearchRunOut'] & {
+  can_continue?: boolean
+  sources_left?: string[]
+  paused_sources?: string[]
+}
 // Written by hand to match the backend's SearchRunSummary until gen:api sees the list route.
 export type SearchRunSummary = {
   id: string
@@ -88,6 +93,9 @@ export type SearchRunSummary = {
   per_source_raw_count: Record<string, number>
   failed_sources: string[]
   hit_count: number
+  can_continue: boolean
+  sources_left: string[]
+  paused_sources: string[]
 }
 export type SavedSearch = components['schemas']['SavedSearchOut']
 export type SavedSearchCreate = components['schemas']['SavedSearchCreate']
@@ -335,6 +343,8 @@ export const api = {
     request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs`, sendJson('POST', body)),
   stopSearchRun: (workspaceId: string, runId: string) =>
     request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs/${runId}/stop`, { method: 'POST' }),
+  continueSearchRun: (workspaceId: string, runId: string) =>
+    request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs/${runId}`, { method: 'POST' }),
   getEvidenceCard: (paperId: string) => request<EvidenceCard>(`/api/papers/${paperId}/evidence-card`),
   generateEvidenceCard: (paperId: string, regenerate: boolean, confirm: boolean) =>
     request<EvidenceCard[]>(`/api/papers/${paperId}/evidence-card`, sendJson('POST', { regenerate, confirm })),
