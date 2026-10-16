@@ -1,7 +1,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Table, Text, func, text
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    PrimaryKeyConstraint,
+    Table,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,13 +37,15 @@ paper_tags = Table(
     "paper_tags",
     Base.metadata,
     Column("workspace_id", UUID(as_uuid=True), nullable=False),
-    Column("paper_id", UUID(as_uuid=True), primary_key=True),
-    Column("tag_id", UUID(as_uuid=True), ForeignKey("workspace_tags.id", ondelete="CASCADE"), primary_key=True),
+    Column("paper_id", UUID(as_uuid=True), nullable=False),
+    Column("tag_id", UUID(as_uuid=True), ForeignKey("workspace_tags.id", ondelete="CASCADE"), nullable=False),
+    PrimaryKeyConstraint("tag_id", "paper_id"),
     ForeignKeyConstraint(
         ["workspace_id", "paper_id"],
         ["workspace_papers.workspace_id", "workspace_papers.paper_id"],
         ondelete="CASCADE",
     ),
+    Index("ix_paper_tags_paper", "workspace_id", "paper_id"),
 )
 
 hit_tags = Table(
