@@ -9,8 +9,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import ARRAY, and_, any_, bindparam, func, or_, select
 from sqlalchemy import delete as delete_rows
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -218,11 +219,12 @@ async def paper_ids(
     return set(await session.scalars(query))
 
 
-async def apply_hit_tags(session: AsyncSession, ws: uuid.UUID, hits: Sequence[WorkspaceSearchHit]) -> None:
-    """Copies the hits' tags onto their papers, for hits whose paper is a member of the workspace. No commit."""
-    ids = [h.id for h in hits if h.paper_id is not None]
-    if not ids:
-        return
+def _any_of(ids: Sequence[uuid.UUID]):
+    """A single array parameter, so thousands of ids stay far below asyncpg's 32767 bind-parameter limit."""
+    return any_(bindparam("hit_ids", list(ids), type_=ARRAY(PG_UUID(as_uuid=True))))
+
+
+async def _copy_to_papers(session: AsyncSession, ws: uuid.UUID, hit_ids: Sequence[uuid.UUID]) -> None:
     wanted = (
         select(WorkspaceSearchHit.workspace_id, WorkspaceSearchHit.paper_id, hit_tags.c.tag_id)
         .join(hit_tags, hit_tags.c.hit_id == WorkspaceSearchHit.id)
@@ -231,7 +233,7 @@ async def apply_hit_tags(session: AsyncSession, ws: uuid.UUID, hits: Sequence[Wo
             (workspace_papers.c.workspace_id == WorkspaceSearchHit.workspace_id)
             & (workspace_papers.c.paper_id == WorkspaceSearchHit.paper_id),
         )
-        .where(WorkspaceSearchHit.id.in_(ids), WorkspaceSearchHit.workspace_id == ws)
+        .where(WorkspaceSearchHit.id == _any_of(hit_ids), WorkspaceSearchHit.workspace_id == ws)
     )
     await session.flush()  # an INSERT..SELECT doesn't autoflush the hits' fresh paper_id
     await session.execute(
@@ -239,17 +241,20 @@ async def apply_hit_tags(session: AsyncSession, ws: uuid.UUID, hits: Sequence[Wo
     )
 
 
+async def apply_hit_tags(session: AsyncSession, ws: uuid.UUID, hits: Sequence[WorkspaceSearchHit]) -> None:
+    """Copies the hits' tags onto their papers, for hits whose paper is a member of the workspace. No commit."""
+    if hits:
+        await _copy_to_papers(session, ws, [h.id for h in hits])
+
+
 async def tag_hits(session: AsyncSession, ws: uuid.UUID, names: list[str], hit_ids: Sequence[uuid.UUID]) -> None:
     """Stores the tags on the workspace's hits (creating missing tags); a hit already imported tags its paper too."""
-    hits = list(
-        await session.scalars(
-            select(WorkspaceSearchHit).where(WorkspaceSearchHit.workspace_id == ws, WorkspaceSearchHit.id.in_(hit_ids))
-        )
-    )
-    if not names or not hits:
+    if not names or not hit_ids:
         return
     tag_ids = {(await get_or_create(session, ws, name)).id for name in names}
-    rows = [{"hit_id": h.id, "tag_id": t} for h in hits for t in tag_ids]
-    await session.execute(insert(hit_tags).values(rows).on_conflict_do_nothing())
-    await apply_hit_tags(session, ws, hits)
+    mine = select(WorkspaceSearchHit.id, WorkspaceTag.id).where(
+        WorkspaceSearchHit.workspace_id == ws, WorkspaceSearchHit.id == _any_of(hit_ids), WorkspaceTag.id.in_(tag_ids)
+    )
+    await session.execute(insert(hit_tags).from_select(["hit_id", "tag_id"], mine).on_conflict_do_nothing())
+    await _copy_to_papers(session, ws, hit_ids)
     await session.commit()

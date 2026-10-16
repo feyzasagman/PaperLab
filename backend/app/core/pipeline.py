@@ -351,6 +351,8 @@ async def accept_suggestions(
     go on the accepted hits only."""
     if len(hit_ids) > MAX_ACCEPT_HITS:
         raise InvalidInput("too_many_hits", max=MAX_ACCEPT_HITS)
+    for name in tags_ or ():
+        tags.normalize(name)  # refuse a bad name before any decision is written
     ws = await workspace_id(session, workspace)
     accepted = await screening.accept_suggestions(session, ws, hit_ids)
     if tags_:
@@ -369,6 +371,8 @@ async def review_hits(
         raise InvalidInput("invalid_decision", decisions=list(DECISIONS), reasons=list(REASONS))
     if decision == "not_relevant" and reason is None:
         raise InvalidInput("reason_required", reasons=list(REASONS))
+    for name in tags_ or ():
+        tags.normalize(name)  # refuse a bad name before any decision is written
     ws = await workspace_id(session, workspace)
     own = await workspace_search.owned_hit_ids(session, ws, hit_ids)
     kept_reason = reason if decision == "not_relevant" else None

@@ -838,7 +838,7 @@ async def import_hits(
     )
     hits = (await session.execute(query)).scalars().all()
 
-    imported, failed, paper_ids = 0, 0, []
+    imported, failed, paper_ids, done = 0, 0, [], []
     for hit in hits:
         if hit.acquisition_status in ("imported", "manual"):
             # "manual" is its own provenance (spec §4.4/M30b's PRISMA export need it distinguished from an
@@ -856,6 +856,7 @@ async def import_hits(
             hit.paper_id = existing_id
             await _record_snowball_citation(session, hit, ref.id)
             imported += 1
+            done.append(hit)
             continue
         if ref is not None and not ref.pdf_urls and ref.doi:
             # Unpaywall's real role (spec §6): DOI-only PDF enrichment for a candidate missing one, applied
@@ -885,8 +886,9 @@ async def import_hits(
         await _record_snowball_citation(session, hit, ref.id)
         imported += 1
         paper_ids.append(paper.id)
+        done.append(hit)
 
-    await tags.apply_hit_tags(session, workspace_id, hits)
+    await tags.apply_hit_tags(session, workspace_id, done)  # only hits imported now: a removed tag stays removed
     await session.commit()
     return ImportResult(imported, failed, paper_ids)
 
@@ -914,6 +916,7 @@ async def upload_hit_pdf(
         hit.acquisition_status = "manual"
         hit.paper_id = ref.imported_as
         await _record_snowball_citation(session, hit, ref.id)
+        await tags.apply_hit_tags(session, workspace_id, [hit])
         await session.commit()
         return _hit_out_dict(hit, ref), False
 
@@ -929,5 +932,6 @@ async def upload_hit_pdf(
     hit.paper_id = paper.id
     if ref is not None:
         await _record_snowball_citation(session, hit, ref.id)
+    await tags.apply_hit_tags(session, workspace_id, [hit])
     await session.commit()
     return _hit_out_dict(hit, ref), True

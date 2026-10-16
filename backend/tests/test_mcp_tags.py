@@ -10,7 +10,7 @@ from pdf_papers import TWO_LINE_QUOTE, chunked_paper
 from screening_pool import make_pool
 from sqlalchemy import select
 
-from app.core import discovery, workspace_search, workspaces
+from app.core import discovery, tags, workspace_search, workspaces
 from app.core.paper_sources import SourceSettings
 from app.core.source_registry import SOURCE_IDS
 from app.models import Paper, hit_tags
@@ -162,10 +162,26 @@ async def test_import_hit_with_tags_and_an_already_imported_hit(session):
 
 async def test_skipped_hits_get_no_tags(session):
     ws, _ = await make_pool(session, [("a", None)])
-    foreign = uuid.uuid4()
-    out = result(await call("review_hits", workspace=ws.name, hit_ids=[str(foreign)], decision="maybe", tags=["T"]))
-    assert out == {"updated": 0, "skipped": [str(foreign)]}
+    other, (foreign,) = await make_pool(session, [("b", None)])
+    out = result(await call("review_hits", workspace=ws.name, hit_ids=[str(foreign.id)], decision="maybe", tags=["T"]))
+    assert out == {"updated": 0, "skipped": [str(foreign.id)]}
     assert (await session.execute(select(hit_tags))).all() == []
+
+
+async def test_tag_hits_survives_thousands_of_ids(session):
+    ws, hits = await make_pool(session, [("a", None)] * 3)
+    ids = [uuid.uuid4() for _ in range(40000)] + [h.id for h in hits]
+    await tags.tag_hits(session, ws.id, ["A", "B", "C", "D"], ids)
+    rows = (await session.execute(select(hit_tags.c.hit_id))).scalars().all()
+    assert len(rows) == 12 and set(rows) == {h.id for h in hits}
+
+
+async def test_an_invalid_tag_name_refuses_before_any_decision_is_written(session):
+    ws, (hit,) = await make_pool(session, [("a", None)])
+    out = await call("review_hits", workspace=ws.name, hit_ids=[str(hit.id)], decision="relevant", tags=[""])
+    assert out.is_error and out.structured_content["error"] == "invalid_tag_name"
+    await session.refresh(hit)
+    assert hit.stage1_status is None
 
 
 async def test_accept_suggestions_with_tags(session):

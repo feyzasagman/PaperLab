@@ -1555,3 +1555,39 @@ async def test_import_hits_over_http_applies_the_tags_given_at_screening(session
     assert resp.status_code == 200
     await session.refresh(hit)
     assert await tags.paper_ids(session, hit.workspace_id, ["Q1"]) == {hit.paper_id}
+
+
+async def test_a_second_import_does_not_give_back_a_tag_that_was_removed(session, client, discovery_api):
+    from app.core import tags
+    from app.models.workspace_search import WorkspaceSearchHit
+
+    discovery_api.pdf_host.reply("/paper.pdf", 200, content=b"%PDF-1.4 fake content")
+    hit_id = await _make_importable_hit(session, pdf_urls=["https://pdf.example/paper.pdf"])
+    hit = await session.get(WorkspaceSearchHit, hit_id)
+    ws = hit.workspace_id
+    await tags.tag_hits(session, ws, ["Q1"], [hit_id])
+    await client.post(f"/api/workspaces/{ws}/search/hits/import", json={"hit_ids": [str(hit_id)]})
+    await session.refresh(hit)
+    await tags.untag_papers(session, ws, "Q1", [hit.paper_id])
+
+    await client.post(f"/api/workspaces/{ws}/search/hits/import", json={})
+
+    assert await tags.paper_ids(session, ws, ["Q1"]) == set()
+
+
+async def test_a_manual_upload_applies_the_tags_given_at_screening(session, client, arq):
+    from app.core import tags
+    from app.models.workspace_search import WorkspaceSearchHit
+
+    hit_id = await _make_importable_hit(session, pdf_urls=[])
+    hit = await session.get(WorkspaceSearchHit, hit_id)
+    await tags.tag_hits(session, hit.workspace_id, ["Q1"], [hit_id])
+
+    resp = await client.post(
+        f"/api/workspaces/{hit.workspace_id}/search/hits/{hit_id}/upload",
+        files={"file": ("paper.pdf", b"%PDF-1.4 real enough for the check", "application/pdf")},
+    )
+
+    assert resp.status_code == 200
+    await session.refresh(hit)
+    assert await tags.paper_ids(session, hit.workspace_id, ["Q1"]) == {hit.paper_id}
