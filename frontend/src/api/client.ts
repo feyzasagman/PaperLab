@@ -77,6 +77,18 @@ export type GraphLink = components['schemas']['GraphLink']
 export type LibraryGraph = components['schemas']['GraphOut']
 export type PaperLinkOut = components['schemas']['LinkOut']
 export type SearchRun = components['schemas']['SearchRunOut']
+// Written by hand to match the backend's SearchRunSummary until gen:api sees the list route.
+export type SearchRunSummary = {
+  id: string
+  query_text: string
+  status: string
+  started_at: string
+  stopped_at: string | null
+  sources_json: string[]
+  per_source_raw_count: Record<string, number>
+  failed_sources: string[]
+  hit_count: number
+}
 export type SavedSearch = components['schemas']['SavedSearchOut']
 export type SavedSearchCreate = components['schemas']['SavedSearchCreate']
 export type SavedSearchUpdate = components['schemas']['SavedSearchUpdate']
@@ -343,6 +355,8 @@ export const api = {
     request<void>(`/api/workspaces/${workspaceId}/saved-searches/${id}`, { method: 'DELETE' }),
   runSavedSearchNow: (workspaceId: string, id: string) =>
     request<SearchRun>(`/api/workspaces/${workspaceId}/saved-searches/${id}/run`, { method: 'POST' }),
+  listSearchRuns: (workspaceId: string, limit = 20) =>
+    request<SearchRunSummary[]>(`/api/workspaces/${workspaceId}/search/runs?limit=${limit}`),
   getSearchRun: (workspaceId: string, runId: string) =>
     request<SearchRun>(`/api/workspaces/${workspaceId}/search/runs/${runId}`),
   listSearchHits: (
