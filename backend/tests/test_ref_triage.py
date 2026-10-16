@@ -75,3 +75,14 @@ async def test_existing_ref_triage_is_backfilled_only_when_empty(session):
     assert first.id == second.id == third.id
     assert (third.source_type, third.published_doi, third.published_venue) == ("preprint", "10.9/pub", "Journal X")
     await session.rollback()
+
+
+def test_s2_preprint_server_named_as_the_journal_is_not_a_publication():
+    arxiv_only = {"externalIds": {"ArXiv": "2301.01234"}, "venue": "arXiv.org", "publicationTypes": ["JournalArticle"],
+                  "journal": {"name": "ArXiv", "volume": "abs/2301.01234"}}  # fmt: skip
+    assert s2_triage(arxiv_only) == ("preprint", None, None)
+    published = {**arxiv_only, "journal": {"name": "Nature Machine Intelligence"},
+                 "externalIds": {"ArXiv": "2301.01234", "DOI": "10.1038/S42256-023-1"}}  # fmt: skip
+    assert s2_triage(published) == ("journal_article", "10.1038/s42256-023-1", "Nature Machine Intelligence")
+    biorxiv = {"externalIds": {"DOI": "10.1101/2023.1"}, "venue": "bioRxiv", "publicationTypes": ["JournalArticle"]}
+    assert s2_triage(biorxiv) == ("preprint", None, None)

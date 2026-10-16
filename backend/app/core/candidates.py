@@ -77,19 +77,28 @@ S2_TYPES = {
 }  # fmt: skip
 
 
+PREPRINT_SERVERS = re.compile(r"arxiv|biorxiv|medrxiv|ssrn|research square|preprints\.org", re.IGNORECASE)
+
+
 def s2_triage(paper: Mapping[str, Any]) -> tuple[str | None, str | None, str | None]:
-    """(source_type, published_doi, published_venue) from a Semantic Scholar paper. An arXiv-only paper with no
-    journal is a preprint; an arXiv paper that also has a DOI is the published version's DOI."""
+    """(source_type, published_doi, published_venue) from a Semantic Scholar paper. S2 often names the preprint
+    server as the "journal" of a JournalArticle: that is no journal. Such a paper is a preprint; an arXiv paper
+    that also has a non-arXiv DOI gives that DOI as the published version's."""
     ids = paper.get("externalIds") or {}
-    journal_name = (paper.get("journal") or {}).get("name")
-    source_type = next((S2_TYPES[t] for t in paper.get("publicationTypes") or [] if t in S2_TYPES), None)
-    if source_type is None and ids.get("ArXiv") and not journal_name:
+    types = paper.get("publicationTypes") or []
+
+    def real(name: str | None) -> str | None:
+        return None if not name or PREPRINT_SERVERS.search(name) else name
+
+    journal, venue = (paper.get("journal") or {}).get("name"), paper.get("venue")
+    named_server = any(n and PREPRINT_SERVERS.search(n) for n in (journal, venue))
+    source_type = next((S2_TYPES[t] for t in types if t in S2_TYPES), None)
+    if set(types) <= {"JournalArticle"} and not real(journal) and (named_server or ids.get("ArXiv")):
         source_type = "preprint"
     doi = normalize_doi(ids.get("DOI") or "") if ids.get("ArXiv") else None
     if doi and doi.startswith(ARXIV_DOI_PREFIX):
         doi = None
-    venue = None if source_type == "preprint" else journal_name or paper.get("venue") or None
-    return source_type, doi, venue
+    return source_type, doi, None if source_type == "preprint" else real(journal) or real(venue)
 
 
 def arxiv_triage(entry: Mapping[str, Any]) -> tuple[str | None, str | None, str | None]:
