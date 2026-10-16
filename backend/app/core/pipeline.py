@@ -409,26 +409,31 @@ async def run_prescreen(
 class EnrichQueued:
     queued: int
     already_running: bool = False
+    suggestions_cleared: int = 0
+    s2_off: bool = False  # Semantic Scholar is off in Settings: nothing was queued
 
 
 async def enrich_hits(session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None) -> EnrichQueued:
     """Queues the Semantic Scholar backfill for hits not asked about yet. `queued` is how many; calling again shows
     what a rate-limited run left, and `already_running` means a job for it is still going, so nothing new started.
-    A hit Semantic Scholar couldn't fill is asked once only. Refused (source_off) when
-    Semantic Scholar is turned off in Settings."""
+    A hit Semantic Scholar couldn't fill is asked once only; arXiv gaps are asked
+    again. With Semantic Scholar turned off in Settings nothing is queued (`s2_off`). Hits whose 'no abstract'
+    suggestion is now out of date are cleared (`suggestions_cleared`), so run_prescreen picks them up again."""
     ws = await workspace_id(session, workspace)
-    if not (await paper_sources.get(session)).enabled["semantic_scholar"]:
-        raise Conflict("source_off", source="semantic_scholar")
     if run_id is not None:
         await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
-    count = len(await hit_enrichment.refs_to_enrich(session, ws, run_id))
+    cleared = await hit_enrichment.clear_stale_no_abstract(session, ws)  # needs no Semantic Scholar
+    if not (await paper_sources.get(session)).enabled["semantic_scholar"]:
+        return EnrichQueued(0, suggestions_cleared=cleared, s2_off=True)
+    s2_refs = await hit_enrichment.refs_to_enrich(session, ws, run_id)
+    count = len({r.id for r in [*s2_refs, *await hit_enrichment.refs_for_arxiv(session, ws, run_id)]})
     if not count:
-        return EnrichQueued(0)
+        return EnrichQueued(0, suggestions_cleared=cleared)
     # One job per workspace and run at a time: arq refuses a duplicate id while one is queued or running.
     started = await queue.enqueue(
         "enrich_hits", str(ws), str(run_id) if run_id else None, job_id=f"enrich_hits:{ws}:{run_id or 'all'}"
     )
-    return EnrichQueued(count, already_running=not started)
+    return EnrichQueued(count, already_running=not started, suggestions_cleared=cleared)
 
 
 async def stop_prescreen(session: AsyncSession, workspace: str) -> ScreeningStateOut:

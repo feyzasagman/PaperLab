@@ -61,6 +61,13 @@ async def get(http: httpx.AsyncClient, arxiv_id: str) -> dict | None:
     return entries[0] if entries else None
 
 
+async def get_many(http: httpx.AsyncClient, ids: list[str]) -> list[dict]:
+    """The papers arXiv knows among `ids` (one request; callers keep it to 100). Unknown or malformed ids are left
+    out. Raises httpx.HTTPStatusError on an error status, so the caller can back off on 429/503."""
+    response = await http.get("/api/query", params={"id_list": ",".join(ids), "max_results": len(ids)})
+    return _entries(response.raise_for_status())
+
+
 async def search_page(
     http: httpx.AsyncClient, topic: str, page_size: int, cursor: int
 ) -> tuple[list[dict], int | None]:

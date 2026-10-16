@@ -2,20 +2,28 @@
 
 import logging
 import uuid
+from dataclasses import replace
 
 from app.config import settings
 from app.core import hit_enrichment, paper_sources
 from app.db import SessionLocal
-from app.providers import discovery_fake, semantic_scholar
+from app.providers import arxiv, discovery_fake, semantic_scholar
 
 logger = logging.getLogger(__name__)
 
 ENRICH_JOB_TIMEOUT = 3600
 
 
+async def _arxiv_fallback(session, refs, transport) -> hit_enrichment.ArxivResult:
+    if transport is None and settings.discovery_provider == "fake":
+        transport = discovery_fake.transport()
+    async with arxiv.new_client(transport=transport) as http:
+        return await hit_enrichment.arxiv_abstracts(session, http, refs)
+
+
 async def enrich_hits(ctx: dict, workspace_id: str, run_id: str | None = None) -> None:
-    """Never raises for S2 trouble: a rate-limited or failing chunk ends up in the logged result. ctx["transport"] is
-    a test's MockTransport."""
+    """Never raises for S2 or arXiv trouble: a rate-limited or failing chunk ends up in the logged result.
+    ctx["transport"] and ctx["arxiv_transport"] are a test's MockTransports."""
     async with SessionLocal() as session:
         sources = await paper_sources.get(session)
         transport = ctx.get("transport")
@@ -28,7 +36,11 @@ async def enrich_hits(ctx: dict, workspace_id: str, run_id: str | None = None) -
             transport=transport,
             retry_429=False,
         ) as http:
-            outcome = await hit_enrichment.enrich(
-                session, http, uuid.UUID(workspace_id), uuid.UUID(run_id) if run_id else None
-            )
+            ws, run = uuid.UUID(workspace_id), uuid.UUID(run_id) if run_id else None
+            outcome = await hit_enrichment.enrich(session, http, ws, run)
+        if not outcome.rate_limited:  # leave arXiv for the next call when S2 is busy
+            refs = await hit_enrichment.refs_for_arxiv(session, ws, run)
+            result = await _arxiv_fallback(session, refs, ctx.get("arxiv_transport"))
+            outcome = replace(outcome, arxiv_filled=result.filled, arxiv_rate_limited=result.rate_limited)
+        outcome = replace(outcome, suggestions_cleared=await hit_enrichment.clear_stale_no_abstract(session, ws))
     logger.info("enrich_hits for %s: %s", workspace_id, outcome)
