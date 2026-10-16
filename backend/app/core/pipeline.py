@@ -29,6 +29,7 @@ from app.core import (
     saved_searches,
     schedules,
     screening,
+    tags,
     workspace_search,
     workspaces,
 )
@@ -49,9 +50,55 @@ class Removed:
     removed: bool = True
 
 
-async def list_papers(session: AsyncSession, workspace: str) -> list[PaperOut]:
-    rows = await workspaces.papers(session, await workspace_id(session, workspace))
-    return [PaperOut.model_validate(row) for row in rows]
+async def list_papers(
+    session: AsyncSession, workspace: str, tags_: list[str] | None = None, match: Literal["any", "all"] = "any"
+) -> list[PaperOut]:
+    ws = await workspace_id(session, workspace)
+    rows = await workspaces.papers(session, ws)
+    wanted = await tags.paper_ids(session, ws, tags_, match)
+    return [PaperOut.model_validate(row) for row in rows if wanted is None or row.id in wanted]
+
+
+async def list_tags(session: AsyncSession, workspace: str) -> list[tags.TagSummary]:
+    return await tags.summaries(session, await workspace_id(session, workspace))
+
+
+async def tag_papers(
+    session: AsyncSession, workspace: str, tag: str, paper_ids: list[uuid.UUID] | None, dois: list[str] | None
+) -> tags.TagResult:
+    return await tags.tag_papers(session, await workspace_id(session, workspace), tag, paper_ids or (), dois or ())
+
+
+async def untag_papers(
+    session: AsyncSession, workspace: str, tag: str, paper_ids: list[uuid.UUID] | None, dois: list[str] | None
+) -> tags.TagResult:
+    return await tags.untag_papers(session, await workspace_id(session, workspace), tag, paper_ids or (), dois or ())
+
+
+@dataclass(frozen=True)
+class TagRenamed:
+    old: str
+    new: str
+
+
+@dataclass(frozen=True)
+class TagDeleted:
+    tag: str
+    papers: int
+
+
+async def rename_tag(session: AsyncSession, workspace: str, tag: str, new_name: str) -> TagRenamed:
+    ws = await workspace_id(session, workspace)
+    (found,) = await tags.resolve(session, ws, [tag])
+    old = found.name
+    return TagRenamed(old, await tags.rename(session, ws, tag, new_name))
+
+
+async def delete_tag(session: AsyncSession, workspace: str, tag: str) -> TagDeleted:
+    ws = await workspace_id(session, workspace)
+    (found,) = await tags.resolve(session, ws, [tag])
+    name = found.name
+    return TagDeleted(name, await tags.delete(session, ws, tag))
 
 
 async def add_paper_to_workspace(session: AsyncSession, workspace: str, paper_id: uuid.UUID) -> PaperOut:

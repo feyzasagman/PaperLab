@@ -11,7 +11,7 @@ import functools
 import json
 import re
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
@@ -43,6 +43,9 @@ mcp = MCPServer(
         "accepts some. Claims: verify_claim and verify_claims check a claim against the papers it cites, with a "
         "quote as evidence. Evidence cards: generate_evidence_card starts one (about a minute per paper), "
         "get_evidence_card reads it, list_evidence_cards shows a workspace's cards. "
+        "Tags: list_tags shows a workspace's tags with counts and coverage, tag_papers / untag_papers label papers in "
+        "bulk by id or DOI, rename_tag and delete_tag manage them; list_papers, search_library, export_citations, "
+        "list_evidence_cards and list_notes take tags=[…] to scope to them. "
         "Citations: export_citations gives a workspace's papers as BibTeX, RIS, CSL-JSON or APA 7. "
         "An AI suggestion on a hit is a suggestion, never a decision; only review_hits and "
         "accept_suggestions record one, so ask the owner first."
@@ -141,10 +144,61 @@ async def create_workspace(name: str, description: str | None = None) -> workspa
 
 @mcp.tool(annotations=READ_ONLY)
 @recoverable
-async def list_papers(workspace: str) -> list[pipeline.PaperOut]:
-    """Use to see which papers a workspace holds and whether each finished ingesting (status `ready`), newest first."""
+async def list_papers(
+    workspace: str, tags: list[str] | None = None, match: Literal["any", "all"] = "any"
+) -> list[pipeline.PaperOut]:
+    """Use to see which papers a workspace holds and whether each finished ingesting (status `ready`), newest first.
+    Give `tags` to keep only papers carrying any of them (`match` "any") or all of them ("all"); an unknown tag is
+    an error that lists the workspace's tags."""
     async with sessions() as session:
-        return await pipeline.list_papers(session, workspace)
+        return await pipeline.list_papers(session, workspace, tags, match)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@recoverable
+async def list_tags(workspace: str) -> list[pipeline.tags.TagSummary]:
+    """Use to see a workspace's tags (labels inside this one workspace, e.g. one per research question). Each has its
+    paper count and coverage: peer-reviewed / preprint / unknown, and full text / abstract / metadata only."""
+    async with sessions() as session:
+        return await pipeline.list_tags(session, workspace)
+
+
+@mcp.tool()
+@recoverable
+async def tag_papers(
+    workspace: str, tag: str, paper_ids: list[uuid.UUID] | None = None, dois: list[str] | None = None
+) -> pipeline.tags.TagResult:
+    """Use to label papers of a workspace with a tag, by paper id and/or DOI (up to 5000). The tag is created when
+    missing (name 1-64 characters, case-insensitive). It never adds papers to the workspace: papers that are not in
+    it come back in `skipped`, so use add_paper_to_workspace first. Tagging twice is harmless (`unchanged`)."""
+    async with sessions() as session:
+        return await pipeline.tag_papers(session, workspace, tag, paper_ids, dois)
+
+
+@mcp.tool()
+@recoverable
+async def untag_papers(
+    workspace: str, tag: str, paper_ids: list[uuid.UUID] | None = None, dois: list[str] | None = None
+) -> pipeline.tags.TagResult:
+    """Use to take a tag off papers of a workspace, by paper id and/or DOI. The papers and the tag stay."""
+    async with sessions() as session:
+        return await pipeline.untag_papers(session, workspace, tag, paper_ids, dois)
+
+
+@mcp.tool()
+@recoverable
+async def rename_tag(workspace: str, tag: str, new_name: str) -> pipeline.TagRenamed:
+    """Use to rename a tag of a workspace (a change of case alone is fine). An existing name is a conflict."""
+    async with sessions() as session:
+        return await pipeline.rename_tag(session, workspace, tag, new_name)
+
+
+@mcp.tool()
+@recoverable
+async def delete_tag(workspace: str, tag: str) -> pipeline.TagDeleted:
+    """Use to delete a tag from a workspace. Deleting a tag never deletes papers; `papers` says how many carried it."""
+    async with sessions() as session:
+        return await pipeline.delete_tag(session, workspace, tag)
 
 
 @mcp.tool()

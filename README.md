@@ -384,7 +384,10 @@ Library:
 - `related_papers`: library papers connected to one, up to three links away;
 - `list_workspaces`: your workspaces, with their names;
 - `create_workspace`: a new workspace;
-- `list_papers`: the papers in a workspace.
+- `list_papers`: the papers in a workspace, optionally only those with any or all of some tags;
+- `list_tags`: a workspace's tags, with paper counts and coverage;
+- `tag_papers` / `untag_papers`: label papers with a tag, or take it off, by id or DOI;
+- `rename_tag` / `delete_tag`: rename a tag, or delete it (the papers stay).
 
 Adding papers:
 - `add_paper`: a paper by DOI, arXiv ID or PDF link, free copies only, optionally into a workspace;
