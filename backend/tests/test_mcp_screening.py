@@ -554,3 +554,12 @@ async def test_list_search_runs_newest_first_with_hit_counts_and_only_this_works
 async def test_list_search_runs_of_an_empty_workspace_is_empty(session):
     await new_workspace(session, "No runs")
     assert result(await call("list_search_runs", workspace=f"No runs {RUN}")) == []
+
+
+async def test_list_search_runs_clamps_the_limit(session, jobs):
+    await new_workspace(session, "Clamp runs")
+    ws = f"Clamp runs {RUN}"
+    for query in ("one", "two"):
+        result(await call("start_search_run", workspace=ws, query=query, sources=["arxiv"]))
+    assert len(result(await call("list_search_runs", workspace=ws, limit=-1))) == 1
+    assert len(result(await call("list_search_runs", workspace=ws, limit=1))) == 1

@@ -185,7 +185,9 @@ async def get_search_run(session: AsyncSession, run_id: uuid.UUID) -> SearchRunO
 
 
 async def list_search_runs(session: AsyncSession, workspace: str, limit: int = 20) -> list[SearchRunSummary]:
-    runs = await workspace_search.list_runs(session, await workspace_id(session, workspace), limit)
+    runs = await workspace_search.list_runs(
+        session, await workspace_id(session, workspace), max(1, min(limit, MAX_HITS))
+    )
     return [SearchRunSummary.from_run(run, count) for run, count in runs]
 
 
