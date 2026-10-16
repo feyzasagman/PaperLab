@@ -6,7 +6,6 @@ import pytest
 from mcp_fixtures import *  # noqa: F403
 from mcp_fixtures import call, result
 from pdf_papers import TWO_LINE_QUOTE, chunked_paper
-
 from screening_pool import make_pool
 from sqlalchemy import select
 

@@ -816,7 +816,9 @@ async def _ref_prefill(session: AsyncSession, ref: ExternalRef) -> dict:
     (only reachable from upload_hit_pdf; import_hits reuses that paper instead)."""
     candidate = _ref_candidate(ref)
     if await _library_paper_id(session, ref) is not None:
-        candidate = Candidate(title=ref.title, authors=ref.authors, year=ref.year, venue=ref.venue, abstract=ref.abstract)
+        candidate = Candidate(
+            title=ref.title, authors=ref.authors, year=ref.year, venue=ref.venue, abstract=ref.abstract
+        )
     return discovery.prefill(candidate)
 
 

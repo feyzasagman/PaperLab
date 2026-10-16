@@ -1151,8 +1151,8 @@ async def test_clear_hits_for_unknown_workspace_is_404(client):
 
 async def test_snowball_route_stores_hits_and_returns_counts(session, client, fake_providers_all):
     """POST /search/snowball with a seed paper in the workspace returns 200 with new_hits > 0."""
-    from app.models import Paper
     from app.core import workspaces
+    from app.models import Paper
 
     # Create workspace
     ws = await client.post("/api/workspaces", json={"name": "Snowball test"})
@@ -1181,8 +1181,8 @@ async def test_snowball_route_stores_hits_and_returns_counts(session, client, fa
 
 async def test_snowball_route_with_unowned_seed_is_404(session, client, fake_providers_all):
     """POST /search/snowball with a seed_paper_ids entry that isn't in the workspace returns 404."""
-    from app.models import Paper
     from app.core import workspaces
+    from app.models import Paper
 
     # Create two workspaces
     ws1 = await client.post("/api/workspaces", json={"name": "Workspace 1"})
@@ -1492,7 +1492,12 @@ async def test_import_hits_keeps_the_hits_bibliographic_metadata_and_locks_title
     assert resp.json() == {"imported": 1, "failed": 0}
     await session.refresh(hit)
     paper = await session.get(Paper, hit.paper_id)
-    assert (paper.title, paper.authors, paper.year, paper.venue) == ("Imported Meta Title", ["Ada A", "Bo B"], 2025, "Sci Rep")
+    assert (paper.title, paper.authors, paper.year, paper.venue) == (
+        "Imported Meta Title",
+        ["Ada A", "Bo B"],
+        2025,
+        "Sci Rep",
+    )
     assert (paper.doi, paper.abstract) == (ref.doi.lower(), "An abstract.")
     assert set(paper.manual_fields) == {"title", "doi"}
 
@@ -1522,7 +1527,10 @@ async def test_import_hits_whose_doi_is_already_in_the_library_reuses_that_paper
     await session.refresh(ref)
     assert hit.paper_id == existing.id and ref.imported_as == existing.id
     assert hit.acquisition_status == "imported"
-    assert await session.scalar(select(func.count()).select_from(Paper).where(func.lower(Paper.doi) == doi.lower())) == 1
+    count = await session.scalar(
+        select(func.count()).select_from(Paper).where(func.lower(Paper.doi) == doi.lower())
+    )
+    assert count == 1
     assert arq.jobs == []
 
 
@@ -1542,7 +1550,7 @@ async def test_list_runs_over_http_newest_first_with_hit_counts(client, session)
 
 
 async def test_import_hits_over_http_applies_the_tags_given_at_screening(session, client, discovery_api):
-    from app.core import tags, workspaces
+    from app.core import tags
     from app.models.workspace_search import WorkspaceSearchHit
 
     discovery_api.pdf_host.reply("/paper.pdf", 200, content=b"%PDF-1.4 fake content")
