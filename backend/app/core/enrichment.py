@@ -305,6 +305,8 @@ async def fill_source_type(
             source_type, fields = None, {}
     if source_type:
         fields |= {"source_type": source_type, "peer_reviewed": peer_reviewed_of(source_type)}
+    if paper.published_venue or paper.published_doi:  # enrich_papers found it published: not a preprint to rate
+        fields.pop("peer_reviewed", None)
     if fields:
         await _write(session, paper, fields)
         await session.commit()
@@ -371,7 +373,7 @@ async def correct_metadata(session: AsyncSession, paper_id: uuid.UUID, fields: d
         if doi != paper.doi:
             # A different DOI can only mean the stored match (if any) is for the wrong paper. Not locked in
             # manual_fields: enrichment stays free to write back whatever the corrected DOI actually resolves to.
-            clears_match = {"openalex_id": None}
+            clears_match = {"openalex_id": None, "published_checked_at": None}  # enrich_papers asks again
     manual_fields = sorted(set(paper.manual_fields) | fields.keys())
     await session.execute(
         update(Paper).where(Paper.id == paper_id).values(**fields, **clears_match, manual_fields=manual_fields)

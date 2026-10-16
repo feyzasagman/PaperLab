@@ -44,7 +44,8 @@ mcp = MCPServer(
         "quote as evidence. Evidence cards: generate_evidence_card starts one (about a minute per paper), "
         "get_evidence_card reads it, list_evidence_cards shows a workspace's cards. "
         "Older hits: enrich_hits fills their peer-review and published-version data and missing abstracts, "
-        "in the background. "
+        "in the background; enrich_papers does the same for library papers that are the arXiv copy of a published "
+        "paper (venue, DOI, peer review). "
         "Tags: list_tags shows a workspace's tags with counts and coverage, tag_papers / untag_papers label papers in "
         "bulk by id or DOI, rename_tag and delete_tag manage them; list_papers, search_library, export_citations, "
         "list_evidence_cards and list_notes take tags=[…] to scope to them; review_hits, "
@@ -105,7 +106,7 @@ async def get_paper(paper_id: uuid.UUID) -> library.PaperCard:
     null. Only the owner sets them. Each note has a provenance: `human` is the owner's own writing; `llm` and
     `llm_edited` were written by an AI. `source_type`, `peer_reviewed` (true, false or unknown) and `evidence_access`
     (full_text, abstract or metadata: how much of the paper PaperLab holds) say what kind of source it is;
-    `published_doi` is a preprint's published version, when known."""
+    `published_doi` and `published_venue` are a preprint's published version, when known."""
     async with sessions() as session:
         return await library.paper_card(session, paper_id)
 
@@ -368,6 +369,25 @@ async def enrich_hits(workspace: str, run_id: uuid.UUID | None = None) -> pipeli
     With Semantic Scholar turned off in Settings nothing is queued (`s2_off`)."""
     async with sessions() as session:
         return await pipeline.enrich_hits(session, workspace, run_id)
+
+
+@mcp.tool()
+@recoverable
+async def enrich_papers(workspace: str) -> pipeline.EnrichPapersQueued:
+    """Use to find out whether papers in a workspace that are the arXiv copy of a published paper (an ICML or EMNLP
+    paper, say) were published, and where. It asks Semantic Scholar in the background. For an arXiv copy
+    (or a paper whose source type is preprint) it fills published_venue and published_doi, and sets peer_reviewed to
+    true when the published version is peer-reviewed; it never sets peer_reviewed to false, and sets published_*
+    on no other paper. Any paper gets an empty source_type or an unknown peer_reviewed filled. Shown by get_paper,
+    list_papers and search_library. A paper's own DOI, venue and files are never changed, and anything the owner
+    edited by hand is kept, even peer_reviewed (a hand-set source_type also keeps it).
+    Only runs when called; each paper is asked once. `queued` is how many papers have not been asked yet: call
+    again later to
+    see what is left. A count above 0 can mean a job is still running
+    (`already_running` is true and a second call starts nothing) or a rate-limited stop. With Semantic Scholar
+    turned off in Settings nothing is queued (`s2_off`)."""
+    async with sessions() as session:
+        return await pipeline.enrich_papers(session, workspace)
 
 
 @mcp.tool()

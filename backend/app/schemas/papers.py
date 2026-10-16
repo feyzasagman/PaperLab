@@ -27,6 +27,7 @@ class PaperOut(BaseModel):
     source_type: SourceType | None
     peer_reviewed: PeerReviewed
     published_doi: str | None
+    published_venue: str | None
     evidence_access: Literal["full_text", "abstract", "metadata"]
     is_retracted: bool
     oa_status: str | None

@@ -35,6 +35,7 @@ class Passage:
         str | None
     )  # its paper's: journal_article, proceedings, book, chapter, preprint, magazine, thesis, other
     peer_reviewed: str  # true | false | unknown (a heuristic; the owner can set it)
+    published_venue: str | None  # where a preprint was published, when known
     evidence_access: str  # full_text | abstract | metadata
 
 
@@ -69,6 +70,7 @@ class PaperCard:
     peer_reviewed: str
     evidence_access: str
     published_doi: str | None  # a preprint's published version, when known
+    published_venue: str | None
     reading_pass: int
     triage: str | None
     workspaces: list[str]  # names, alphabetical
@@ -125,6 +127,7 @@ async def search(
             distance=round(chunk.distance, 4),
             source_type=papers[chunk.paper_id].source_type,
             peer_reviewed=papers[chunk.paper_id].peer_reviewed,
+            published_venue=papers[chunk.paper_id].published_venue,
             evidence_access=papers[chunk.paper_id].evidence_access,
         )
         for chunk in found
@@ -165,6 +168,7 @@ async def paper_card(session: AsyncSession, paper_id: uuid.UUID) -> PaperCard:
         peer_reviewed=paper.peer_reviewed,
         evidence_access=paper.evidence_access,
         published_doi=paper.published_doi,
+        published_venue=paper.published_venue,
         reading_pass=paper.reading_pass,
         triage=paper.triage,
         workspaces=sorted(await session.scalars(names)),

@@ -22,6 +22,7 @@ TOOLS = [
     "create_workspace",
     "delete_tag",
     "enrich_hits",
+    "enrich_papers",
     "export_citations",
     "generate_evidence_card",
     "get_evidence_card",

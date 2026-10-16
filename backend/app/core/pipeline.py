@@ -23,6 +23,7 @@ from app.core import (
     evidence_cards,
     hit_enrichment,
     notes,
+    paper_enrichment,
     paper_sources,
     papers,
     pdf_links,
@@ -444,6 +445,27 @@ async def enrich_hits(session: AsyncSession, workspace: str, run_id: uuid.UUID |
         "enrich_hits", str(ws), str(run_id) if run_id else None, job_id=f"enrich_hits:{ws}:{run_id or 'all'}"
     )
     return EnrichQueued(count, already_running=not started, suggestions_cleared=cleared)
+
+
+@dataclass(frozen=True)
+class EnrichPapersQueued:
+    queued: int
+    already_running: bool = False
+    s2_off: bool = False  # Semantic Scholar is off in Settings: nothing was queued
+
+
+async def enrich_papers(session: AsyncSession, workspace: str) -> EnrichPapersQueued:
+    """Queues the Semantic Scholar lookup of the workspace's papers' published versions. `queued` is how many papers
+    have not been asked about yet; calling again shows what a rate-limited run left, and `already_running` means a
+    job for it is still going, so nothing new started. With Semantic Scholar off in Settings nothing is queued."""
+    ws = await workspace_id(session, workspace)
+    if not (await paper_sources.get(session)).enabled["semantic_scholar"]:
+        return EnrichPapersQueued(0, s2_off=True)
+    count = len(await paper_enrichment.papers_to_enrich(session, ws))
+    if not count:
+        return EnrichPapersQueued(0)
+    started = await queue.enqueue("enrich_papers", str(ws), job_id=f"enrich_papers:{ws}")
+    return EnrichPapersQueued(count, already_running=not started)
 
 
 async def stop_prescreen(session: AsyncSession, workspace: str) -> ScreeningStateOut:
