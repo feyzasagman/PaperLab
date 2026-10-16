@@ -1,0 +1,22 @@
+# The test stack's memory caps, loaded only by scripts/e2e-stack.sh (COMPOSE_FILE). Your own stack has none.
+# A test container that runs away (an ingest once reached ~5 GB, 2026-10-13) is the one killed: `docker inspect` on it
+# shows OOMKilled=true. Without a cap, Docker's out-of-memory killer takes the biggest process in the VM instead: your
+# idle ingest worker, twice on 2026-10-15.
+# Peaks measured on 2026-10-16 (library, graph-views and search-runs-list specs, 4 workers): frontend 1,412 MiB,
+# ingest-worker 1,061 MiB, api 177, db 143, worker 132, redis 10. The processes that load the search model get 3 GB: its
+# file sits in the page cache, which counts against the cap, and at 1.5 GB ingests slowed until specs timed out.
+# ponytail: caps against a runaway, not a budget; a full run still doesn't fit beside your stack in an 8 GB Docker VM,
+# so keep stopping your ingest worker during a run. Raise a cap when its container shows OOMKilled=true.
+services:
+  db:
+    mem_limit: 512m
+  redis:
+    mem_limit: 128m
+  api:
+    mem_limit: 3g
+  worker:
+    mem_limit: 3g
+  ingest-worker:
+    mem_limit: 3g
+  frontend:
+    mem_limit: 2g
