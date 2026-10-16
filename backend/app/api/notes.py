@@ -1,16 +1,19 @@
+import logging
 import uuid
 from dataclasses import asdict
 from typing import Literal
 
-from fastapi import APIRouter, Response, UploadFile
+from fastapi import APIRouter, HTTPException, Response, UploadFile
 
 from app.api.deps import LLMByModelIdDep, SessionDep
 from app.core import note_suggestions, notes, notes_markdown
 from app.core.errors import InvalidInput
+from app.providers.base import LLMError, LLMUnavailable
 from app.schemas.chat import PromoteRequest
 from app.schemas.note_suggestions import NoteSuggestionOut, NoteSuggestionsOut
 from app.schemas.notes import NoteCreate, NoteOut, NotePapersIn, NoteUpdate
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["notes"])
 
 
@@ -38,8 +41,12 @@ async def set_note_papers(note_id: uuid.UUID, payload: NotePapersIn, session: Se
 async def suggest_notes(paper_id: uuid.UUID, session: SessionDep, llm: LLMByModelIdDep) -> NoteSuggestionsOut:
     """One-click suggestions, not automatic notes (P1 of this feature): the caller shows each as a card the
     reader accepts or dismisses individually, via the unchanged POST /api/notes/promote and this response's
-    own output_id."""
-    suggested = await note_suggestions.suggest(session, paper_id, llm)
+    own output_id. A model failure is a 502 with the provider's message, which is written to be shown."""
+    try:
+        suggested = await note_suggestions.suggest(session, paper_id, llm)
+    except (LLMUnavailable, LLMError) as exc:
+        logger.warning("note suggestions on %s failed: %s", llm.connection_name, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     output_id = await note_suggestions.save_suggestions(session, paper_id, suggested, llm.model, llm.connection_name)
     return NoteSuggestionsOut(
         output_id=output_id,
