@@ -270,23 +270,31 @@ PRESCREEN_CONFIRM_ABOVE = 500  # a workspace-wide run once queued 13,720 hits an
 
 async def run_prescreen(
     session: AsyncSession, workspace: str, run_id: uuid.UUID | None = None, confirm: bool = False,
-    allow_remote: bool = False,
+    allow_remote: bool = False, run_ids: list[uuid.UUID] | None = None,
 ) -> ScreeningStateOut:
     """Starts AI pre-screening. There is no confirm dialog over MCP, so a remote default model is refused unless
     allow_remote is set (the owner agreed), and so is a workspace-wide queue over PRESCREEN_CONFIRM_ABOVE hits
-    unless confirm is set. The two are independent."""
+    unless confirm is set. The two are independent. run_ids queues several runs as one job."""
+    if run_id is not None and run_ids is not None:
+        raise InvalidInput("run_id_or_run_ids")
+    if run_ids is not None and not run_ids:
+        raise InvalidInput("run_ids_empty")
     ws = await workspace_id(session, workspace)
-    if run_id is not None:
-        await workspace_search.get_run(session, run_id, workspace_id=ws)  # NotFound for a foreign run
+    run_ids = None if run_ids is None else list(dict.fromkeys(run_ids))
+    for each in [run_id] if run_id is not None else run_ids or []:
+        await workspace_search.get_run(session, each, workspace_id=ws)  # NotFound for a foreign run
     await _refuse_remote(session, allow_remote)
     if run_id is None and not confirm:
         # ponytail: loads the pool twice on a workspace-wide call (here and in start_suggestions); pass the count
         # through if it shows up in timings.
-        queued = len(screening.suggestion_queue(await screening.load_pool(session, ws)))
+        queued = len(screening.suggestion_queue(await screening.load_pool(session, ws), run_ids=run_ids))
         if queued > PRESCREEN_CONFIRM_ABOVE:
             raise Conflict("prescreen_needs_confirm", queued=queued, limit=PRESCREEN_CONFIRM_ABOVE)
-    state = await screening.start_suggestions(session, ws, allow_remote, run_id)
-    await queue.enqueue("suggest_screening", str(ws))
+    state = await screening.start_suggestions(session, ws, allow_remote, run_id, run_ids=run_ids)
+    if run_ids is None:
+        await queue.enqueue("suggest_screening", str(ws))
+    else:
+        await queue.enqueue("suggest_screening", str(ws), [str(r) for r in run_ids])
     return ScreeningStateOut.model_validate(state)
 
 

@@ -2,6 +2,7 @@
 state of the local-model suggestion job. Suggest only: nothing here ever writes stage1_status."""
 
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -190,21 +191,24 @@ async def set_prescreen_settings(
     return await get_state(session, workspace_id)
 
 
-def suggestion_queue(pool: Pool, run_id: uuid.UUID | None = None) -> list[uuid.UUID]:
+def suggestion_queue(
+    pool: Pool, run_id: uuid.UUID | None = None, run_ids: Collection[uuid.UUID] | None = None
+) -> list[uuid.UUID]:
     """Unscreened hits still without a suggestion and with some text to judge, in ranked order (§4.2); with a
-    run_id, only that run's hits."""
+    run_id, only that run's hits, with run_ids only those runs' hits."""
     order, _ = ranked_order(pool)
     by_id = {hit.id: (hit, ref) for hit, ref in pool.rows}
     return [
         hit_id for hit_id in order
         if by_id[hit_id][0].suggestion is None and hit_text(*by_id[hit_id]).strip()
         and (run_id is None or by_id[hit_id][0].run_id == run_id)
+        and (run_ids is None or by_id[hit_id][0].run_id in run_ids)
     ]
 
 
 async def start_suggestions(
     session: AsyncSession, workspace_id: uuid.UUID, confirm_remote: bool, run_id: uuid.UUID | None = None,
-    limit: int | None = None,
+    limit: int | None = None, run_ids: Collection[uuid.UUID] | None = None,
 ) -> dict:
     """Marks the job running; the route enqueues it. Suggest only (D189): the job never writes stage1_status."""
     pool = await load_pool(session, workspace_id)
@@ -221,7 +225,7 @@ async def start_suggestions(
         raise Conflict(f"Abstracts will be sent to {host} and may cost money")
     workspace.suggest_status = "running"
     workspace.suggest_done = 0
-    queued = len(suggestion_queue(pool, run_id))
+    queued = len(suggestion_queue(pool, run_id, run_ids))
     workspace.suggest_total = queued if limit is None else min(queued, limit)  # the job takes this many, best first
     if run_id is not None and limit is not None and queued > limit:
         run = await session.get(WorkspaceSearchRun, run_id)
