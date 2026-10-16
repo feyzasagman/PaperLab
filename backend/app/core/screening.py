@@ -92,7 +92,7 @@ async def _default_model(session: AsyncSession) -> tuple[str, bool, str] | None:
         return None
     return (
         f"{connection.label} · {model.name}",
-        llm_connections.is_local(connection.kind, connection.base_url),
+        llm_connections.is_local(connection.kind, connection.base_url, connection.cloud_proxy),
         host_of(connection.base_url) if connection.base_url else ANTHROPIC_HOST,
     )
 

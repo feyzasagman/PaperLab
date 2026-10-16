@@ -66,12 +66,13 @@ def key_hint(api_key: str | None) -> str | None:
     return api_key[-KEY_HINT_CHARS:] if api_key and len(api_key) >= KEY_HINT_MIN_LENGTH else None
 
 
-def is_local(kind: str, base_url: str | None) -> bool:
-    """True for localhost, host.docker.internal, or a loopback or private IP. Anthropic is never local.
+def is_local(kind: str, base_url: str | None, cloud_proxy: bool = False) -> bool:
+    """True for localhost, host.docker.internal, or a loopback or private IP. Anthropic is never local, and neither is
+    a server that answered as a cloud router (`cloud_proxy`, set when its model list is read).
 
     ponytail: by host string only, no DNS, so `mybox.local` or a Tailscale 100.x address counts as cloud.
     """
-    if kind == "anthropic" or base_url is None:
+    if kind == "anthropic" or base_url is None or cloud_proxy:
         return False
     host = urlsplit(base_url).hostname or ""
     if host in LOCAL_HOSTS:
@@ -139,7 +140,7 @@ async def _views(session: AsyncSession, *where) -> list[ConnectionView]:
             base_url=c.base_url,
             has_key=c.api_key is not None,
             key_hint=key_hint(c.api_key),
-            is_local=is_local(c.kind, c.base_url),
+            is_local=is_local(c.kind, c.base_url, c.cloud_proxy),
             models=by_connection[c.id],
         )
         for c in connections
@@ -176,6 +177,13 @@ async def get_connection_row(session: AsyncSession, connection_id: uuid.UUID) ->
     return await _row(session, connection_id)
 
 
+async def record_cloud_proxy(session: AsyncSession, connection: LLMConnection, cloud_proxy: bool) -> None:
+    """What the server's last model list showed: a cloud router or not. Writes only on a change."""
+    if connection.cloud_proxy != cloud_proxy:
+        connection.cloud_proxy = cloud_proxy
+        await session.commit()
+
+
 async def create_connection(
     session: AsyncSession, kind: str, label: str, base_url: str | None, api_key: str | None
 ) -> ConnectionView:
@@ -191,8 +199,9 @@ async def create_connection(
 async def update_connection(session: AsyncSession, connection_id: uuid.UUID, changes: dict) -> ConnectionView:
     """`changes` holds only what the request sent (label, base_url, api_key): a missing api_key keeps the key and
     None clears it. Moving to a different host without sending a new key drops the stored key (the new address
-    hasn't proven it accepts it); a path- or port-only change on the same host keeps it. The kind never changes.
-    Raises NotFound, InvalidInput, Conflict."""
+    hasn't proven it accepts it); a path- or port-only change on the same host keeps it. Any new address forgets
+    `cloud_proxy` until the new server's model list is read. The kind never changes. Raises NotFound, InvalidInput,
+    Conflict."""
     connection = await _row(session, connection_id)
     if "label" in changes:
         await _ensure_label_free(session, changes["label"], connection_id)
@@ -200,6 +209,7 @@ async def update_connection(session: AsyncSession, connection_id: uuid.UUID, cha
     host_changed = "base_url" in changes and host_of(base_url) != host_of(connection.base_url)
     key_input = None if (host_changed and "api_key" not in changes) else changes.get("api_key", connection.api_key)
     api_key = _check_key(connection.kind, key_input)
+    connection.cloud_proxy = connection.cloud_proxy and base_url == connection.base_url
     connection.label = changes.get("label", connection.label)
     connection.base_url, connection.api_key = base_url, api_key
     connection.updated_at = func.now()
@@ -224,7 +234,7 @@ async def list_chat_models(session: AsyncSession) -> list[ChatModelView]:
         .join(LLMConnection, LLMModel.connection_id == LLMConnection.id)
         .order_by(LLMConnection.label, LLMModel.name)
     )
-    return [ChatModelView(m.id, m.name, c.label, is_local(c.kind, c.base_url), m.is_default) for m, c in rows]
+    return [ChatModelView(m.id, m.name, c.label, is_local(c.kind, c.base_url, c.cloud_proxy), m.is_default) for m, c in rows]
 
 
 async def add_model(session: AsyncSession, connection_id: uuid.UUID, name: str, exist_ok: bool = False) -> ModelView:

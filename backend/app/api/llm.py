@@ -92,10 +92,12 @@ async def test_connection(connection_id: uuid.UUID, session: SessionDep, transpo
     """Lists the provider's models. A failure is a 200 with ok false and the reason, since the check itself worked."""
     connection = await llm_connections.get_connection_row(session, connection_id)
     try:
-        models = await llm.list_models(connection, transport=transport)
+        listed = await llm.list_models(connection, transport=transport)
     except (LLMUnavailable, LLMError) as exc:
         _log_failure(connection, exc)
         return ConnectionCheckOut(ok=False, model_count=None, message=str(exc))
+    await llm_connections.record_cloud_proxy(session, connection, listed.cloud_proxy)
+    models = listed.names
     if models is None:
         return ConnectionCheckOut(ok=True, model_count=None, message=NO_MODEL_LIST)
     count = f"{len(models)} model" if len(models) == 1 else f"{len(models)} models"
@@ -109,10 +111,12 @@ async def available_models(
     """The provider's model list (Ollama: its installed models). 502 with the reason when the provider fails."""
     connection = await llm_connections.get_connection_row(session, connection_id)
     try:
-        return AvailableModelsOut(models=await llm.list_models(connection, transport=transport))
+        listed = await llm.list_models(connection, transport=transport)
     except (LLMUnavailable, LLMError) as exc:
         _log_failure(connection, exc)
         raise HTTPException(status_code=502, detail=str(exc)) from None
+    await llm_connections.record_cloud_proxy(session, connection, listed.cloud_proxy)
+    return AvailableModelsOut(models=listed.names)
 
 
 @router.post("/connections/{connection_id}/models", status_code=201)

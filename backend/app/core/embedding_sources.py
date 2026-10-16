@@ -102,7 +102,7 @@ def _source(
         name=name_for(kind, model, base_url),
         label=_LABELS.get(kind) or connection.label,
         host=None if connection is None else host_of(base_url),
-        is_local=connection is None or is_local(connection.kind, base_url),
+        is_local=connection is None or is_local(connection.kind, base_url, connection.cloud_proxy),
         rebuild_model=None if row is None else row.rebuild_model,
         rebuild_started_at=None if row is None else row.rebuild_started_at,
         error=None if row is None else row.error,
